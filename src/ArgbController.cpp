@@ -5,7 +5,7 @@ bool ArgbController::begin() {
         strips_[i].updateType(NEO_GRB + NEO_KHZ800);
         strips_[i].updateLength(board::kArgbLedCounts[i]);
         strips_[i].setPin(board::kArgbDataPins[i]);
-        if (!strips_[i].begin()) return false;
+        strips_[i].begin();
         strips_[i].setBrightness(board::kInitialArgbBrightness);
         brightness_[i] = board::kInitialArgbBrightness;
         modes_[i] = Mode::Off;
@@ -25,7 +25,9 @@ void ArgbController::drawSolid(uint8_t channel) {
 bool ArgbController::setSolid(uint8_t channel, uint8_t red, uint8_t green, uint8_t blue) {
     if (channel >= board::kChannelCount) return false;
     modes_[channel] = Mode::Solid;
-    colors_[channel] = {red, green, blue};
+    colors_[channel].r = red;
+    colors_[channel].g = green;
+    colors_[channel].b = blue;
     drawSolid(channel);
     return true;
 }

@@ -2,10 +2,12 @@
 #include "FanController.h"
 #include "ArgbController.h"
 #include "SerialConsole.h"
+#include "CoolingController.h"
 
 FanController fans;
 ArgbController leds;
-SerialConsole console(Serial, fans, leds);
+CoolingController cooling(fans, Serial);
+SerialConsole console(Serial, fans, leds, cooling);
 
 void setup() {
     Serial.begin(115200);
@@ -15,6 +17,10 @@ void setup() {
         // Leave the fan PWM outputs in their last state; do NOT start RGB.
         // For a guaranteed electrical fail-safe, the external driver must
         // release PWM input HIGH whenever the MCU is off or reset.
+        while (true) delay(1000);
+    }
+    if (!cooling.begin()) {
+        Serial.println(F("FATAL: NVS initialization failed"));
         while (true) delay(1000);
     }
     if (!leds.begin()) {
@@ -28,6 +34,7 @@ void loop() {
     console.poll();
     const uint32_t now = millis();
     fans.update(now);
+    cooling.update(now);
     leds.update(now);
     delay(1);
 }

@@ -93,3 +93,13 @@ docs/WIRING.md          - wiring and electrical safety
 .github/workflows/      - CI PlatformIO build and smoke tests
 test/native/            - native g++ smoke tests with hardware mocks
 ```
+
+## v2: Calibration, temperature curves and Windows control app
+
+The desktop app is in [`pc_app`](pc_app/README.md) with a five-point **interactive PWM-vs-temperature graph**. It reads **all available** Temperature sensors from LibreHardwareMonitor's local `data.json` endpoint, allows assigning one sensor or maximum of all temperatures to each of the eight fans, sends values over USB serial, and controls ARGB color/rainbow/brightness. An offline Windows `.exe` is built by GitHub Actions (`Windows desktop application` workflow).
+
+The ESP32-S3 firmware now has **21-point independent PWM/RPM calibration per fan** (0%, 5%, ..., 100%) and five-point temperature PWM curves stored in **Preferences/NVS flash**. Startup defaults to 100% fan PWM, and any AUTO-mode channel without a temperature update for **10 seconds** returns to 100% duty. Pressing CAL in the desktop app starts a sweep *on the ESP32*; it keeps running even when the GUI temporarily stops responding. The ESP32 only saves data on successful calibration or explicit curve save, not continuously.
+
+**Important:** the computer must be running LibreHardwareMonitor and the GUI to feed CPU/GPU temperatures; the ESP32 does *not* measure CPU/GPU temperature by itself. Without temperature updates, the fans run at 100% for safety. Manual overrides bypass the thermal watchdog deliberately. This is a reference firmware requiring real hardware tests before permanent unattended use.
+
+For full details, see [`docs/PROTOCOL.md`](docs/PROTOCOL.md) and [`pc_app/README.md`](pc_app/README.md).

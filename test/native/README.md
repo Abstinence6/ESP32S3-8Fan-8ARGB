@@ -3,9 +3,10 @@
 Run from the project root:
 
 ```sh
-./test/native/run.sh
+bash test/native/run.sh
+python -m unittest discover -s pc_app/tests -v
 ```
 
-The test runner compiles the firmware classes (including `src/main.cpp`) with lightweight host mocks for Arduino and Adafruit NeoPixel. It checks initial PWM, inverted PWM duty, RPM math, independent ARGB channels, serial command handling and malformed inputs.
+The C++ runner builds the firmware source files (with lightweight mocks for Arduino, Adafruit NeoPixel and Preferences). It tests initial PWM, inversion, RPM, automatic fan curves, sensor loss full-speed fail-safe, calibration, NVS persistence across simulated reboots and malformed Serial commands. Python tests validate LibreHardwareMonitor sensor tree parsing and curve/temperature protocol framing.
 
-This is a **smoke test, not a real ESP32-S3 build**. PlatformIO CI compiles the actual firmware when the project is pushed to GitHub. Electrical behavior and timing still require hardware-in-the-loop testing.
+These are **host smoke tests**, not an actual ESP32-S3 build or electrical validation. GitHub Actions runs the PlatformIO cross-compiler. Hardware behavior, fan stall/current, thermals and signal integrity require bench testing.
