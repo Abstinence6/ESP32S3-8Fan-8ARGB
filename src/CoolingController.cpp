@@ -217,9 +217,13 @@ FanController::Type CoolingController::detectedFanType(uint8_t ch) const {
     return fans_.detectedType(ch);
 }
 
+bool CoolingController::canSetManual(uint8_t ch, uint8_t pwm) const {
+    return ch < board::kChannelCount && pwm <= 100 && activeCalibration_ != ch &&
+           fans_.canControl(ch, pwm);
+}
+
 bool CoolingController::setManual(uint8_t ch, uint8_t pwm) {
-    if (ch >= board::kChannelCount || pwm > 100 || activeCalibration_ == ch ||
-        !fans_.canControl(ch, pwm)) return false;
+    if (!canSetManual(ch, pwm)) return false;
     fanMode_[ch] = Mode::Manual;
     manualPwm_[ch] = pwm;
     integral_[ch] = 0;
@@ -398,8 +402,13 @@ void CoolingController::recordFault(uint8_t ch, Fault code, uint32_t nowMs) {
     storage_.putBytes("faults", &store, sizeof(store)); // only when new event occurs
 }
 void CoolingController::updateStall(uint8_t ch, uint32_t nowMs) {
-    if (fanMode_[ch] == Mode::Calibration || !fans_.hasRpmFeedback(ch) || !freshPair(ch, nowMs) ||
-        fans_.getPercent(ch) < saved_[ch].minRun || saved_[ch].stallRpm == 0) {
+    // Stall monitoring continues even when PC telemetry is absent: in this
+    // case the fan is commanded to 100%, but a missing tach is still serious.
+    // Do NOT fault an unconfirmed TACH input: no edges can equally mean an
+    // unplugged fan, a broken TACH line, or a 3-pin power-gated output.
+    if (fanMode_[ch] == Mode::Calibration || !fans_.hasRpmFeedback(ch) ||
+        !fans_.tachObserved(ch) || fans_.getPercent(ch) < saved_[ch].minRun ||
+        saved_[ch].stallRpm == 0) {
         stallSinceMs_[ch] = 0;
         return;
     }
@@ -483,6 +492,7 @@ void CoolingController::update(uint32_t nowMs) {
                 recordFault(ch, Fault::SensorTimeout, nowMs);
                 timeoutRecorded_[ch] = true;
             }
+            updateStall(ch, nowMs);
             continue;
         }
         if (overTemperature(ch)) {
@@ -491,6 +501,7 @@ void CoolingController::update(uint32_t nowMs) {
                 recordFault(ch, Fault::Overheat, nowMs);
                 overheatRecorded_[ch] = true;
             }
+            updateStall(ch, nowMs);
             continue;
         }
         overheatRecorded_[ch] = false;

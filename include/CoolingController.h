@@ -25,6 +25,7 @@ public:
     bool setCurve(uint8_t ch, const CurvePoint* points, bool secondary = false);
     const CurvePoint* curve(uint8_t ch, bool secondary = false) const;
     bool setManual(uint8_t ch, uint8_t pwm);
+    bool canSetManual(uint8_t ch, uint8_t pwm) const;
     bool setFixedRpm(uint8_t ch, uint16_t rpm);
     bool setAuto(uint8_t ch);
     bool startCalibration(uint8_t ch, uint32_t nowMs, bool smart = false);

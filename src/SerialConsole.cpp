@@ -165,6 +165,18 @@ void SerialConsole::handleLine(char* line) {
         printStatus();
         return;
     }
+    if (strcmp(command, "HEALTH") == 0) {
+        char* requested = next();
+        if (requested) {
+            uint8_t ch = 0;
+            if (!parseByte(requested, board::kChannelCount, ch) || ch == 0 || !noMore()) return error();
+            printHealth(ch - 1);
+        } else {
+            for (uint8_t i = 0; i < board::kChannelCount; ++i) printHealth(i);
+        }
+        serial_.println(F("HEALTH_END"));
+        return;
+    }
     if (strcmp(command, "TEMP") == 0 || strcmp(command, "TEMP2") == 0) {
         const bool secondary = strcmp(command, "TEMP2") == 0;
         uint8_t ch = 0;
@@ -239,6 +251,7 @@ void SerialConsole::handleLine(char* line) {
     if (strcmp(command, "AUTO") == 0 || strcmp(command, "ALLAUTO") == 0) {
         if (strcmp(command, "ALLAUTO") == 0) {
             if (!noMore()) return error();
+            if (cooling_.calibrationActive()) { serial_.println(F("ERR calibration busy")); return; }
             for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) cooling_.setAuto(ch);
             serial_.println(F("OK")); return;
         }
@@ -385,9 +398,15 @@ void SerialConsole::handleLine(char* line) {
             !parseByte(next(), 100, percent) || !noMore() || (!all && ch == 0)) return error();
         if (all) {
             if (cooling_.calibrationActive()) { serial_.println(F("ERR calibration busy")); return; }
+            // Preflight every channel before changing any: ALLFAN is atomic.
+            for (uint8_t i = 0; i < board::kChannelCount; ++i) {
+                if (!cooling_.canSetManual(i, percent)) {
+                    serial_.println(F("ERR fan control blocked")); return;
+                }
+            }
             for (uint8_t i = 0; i < board::kChannelCount; ++i) cooling_.setManual(i, percent);
         } else if (!cooling_.setManual(ch - 1, percent)) {
-            serial_.println(F("ERR calibration busy")); return;
+            serial_.println(F("ERR fan control blocked")); return;
         }
         serial_.println(F("OK"));
         return;
@@ -430,7 +449,7 @@ void SerialConsole::handleLine(char* line) {
 
 void SerialConsole::printHelp() {
     serial_.println(F("Channels: 1..8, temperatures: deci-Celsius, e.g. 455 = 45.5 C"));
-    serial_.println(F("PING | STATUS | HELP | LEDS"));
+    serial_.println(F("PING | STATUS | HEALTH [ch] | HELP | LEDS"));
     serial_.println(F("TEMP <ch> <0..1250> | AUTO <ch> | ALLAUTO"));
     serial_.println(F("FAN <ch> <0..100> | ALLFAN <0..100> (manual override)"));
     serial_.println(F("CURVE? <ch> | CURVE <ch> <T1> <PWM1> ... <T5> <PWM5>"));
@@ -445,6 +464,28 @@ void SerialConsole::printHelp() {
     serial_.println(F("WIFI SET <ssid> <pass> | WIFI STATUS | WIFI OFF (no spaces in SSID/pass)"));
     serial_.println(F("STRIP <ch> 1..170 | REVERSE <ch> 0|1 | RGBBUDGET <100..20000> | ARGBSTATUS"));
     serial_.println(F("Binary ARGB: A5 5A ch countLE16 RGB... crc16LE (CCITT-FALSE)"));
+}
+
+void SerialConsole::printHealth(uint8_t ch) {
+    const uint32_t now = millis();
+    const auto mode = cooling_.mode(ch);
+    const char* modeLabel = mode == CoolingController::Mode::Manual ? "manual" :
+                            mode == CoolingController::Mode::Calibration ? "cal" :
+                            mode == CoolingController::Mode::FixedRpm ? "rpm" : "auto";
+    const char* tachLabel = !fans_.hasRpmFeedback(ch) ? "na" :
+                            fans_.tachObserved(ch) ? "seen" : "unseen";
+    const bool sensorFresh = cooling_.temperatureFresh(ch, now) &&
+        (!cooling_.dualSensor(ch) || cooling_.temperatureFresh(ch, now, true));
+    serial_.print(F("HEALTH ")); serial_.print(ch + 1);
+    serial_.print(F(" TYPE=")); serial_.print(static_cast<unsigned>(cooling_.fanType(ch)));
+    serial_.print(F(" DETECTED=255")); // no pin-4 sense; no physical autodetection
+    serial_.print(F(" PWM=")); serial_.print(fans_.getPercent(ch));
+    serial_.print(F(" RPM=")); serial_.print(fans_.getRpm(ch));
+    serial_.print(F(" TACH=")); serial_.print(tachLabel);
+    serial_.print(F(" SENSOR=")); serial_.print(sensorFresh ? F("ok") : F("stale"));
+    serial_.print(F(" FAULT=")); serial_.print(cooling_.faulted(ch) ? 1 : 0);
+    serial_.print(F(" DC_READY=")); serial_.print(fans_.dcHardwareAvailable() ? 1 : 0);
+    serial_.print(F(" MODE=")); serial_.println(modeLabel);
 }
 
 void SerialConsole::printStatus() {

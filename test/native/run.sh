@@ -12,3 +12,10 @@ g++ -std=c++17 -Wall -Wextra -Werror -DFAN_DC_PWM_VALIDATED=1 -Itest/native/mock
 g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
   test/native/mock/Arduino.cpp src/FanController.cpp test/native/test_dc_guard.cpp -o "$out"
 "$out"
+
+# Operational safety in the as-shipped default with an unvalidated DC key.
+g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
+  test/native/mock/Arduino.cpp src/FanController.cpp src/ArgbController.cpp \
+  src/CoolingController.cpp src/NetworkRgbBridge.cpp src/SerialConsole.cpp \
+  test/native/test_operational_safety.cpp -o "$out"
+"$out"

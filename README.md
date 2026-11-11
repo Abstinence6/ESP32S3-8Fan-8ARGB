@@ -128,3 +128,7 @@ All eight fan outputs share one **PWM GPIO + one TACH GPIO per fan**, with eight
 - Provisional 2/3/4-pin fan modes with manual jumper selection; no GPIO expander or auto-detection. The 3-pin DC stage remains hardware-unverified and is safety-locked to full power by default.
 
 Docs: [Fan modes](docs/FAN_MODES.md), [future PCB](docs/PCB_NEXT.md), [Windows app](pc_app/README.md).
+
+### v4.1: no-key safety diagnostics
+
+The no-key build retains `FAN_DC_PWM_VALIDATED=0` and the 3-pin default. Commands `HEALTH` / `HEALTH 1` expose read-only fan state, `TACH=seen|unseen|na`, thermal freshness, and whether DC power PWM is validated. `ALLFAN` is now all-or-nothing: invalid fan duties return an error without changing any channel. Stall monitoring remains active after PC sensor loss if the TACH was previously confirmed. The desktop GUI includes **Діагностика 8 вентиляторів** and **Журнал аварій** buttons. No power-key chip is selected and **no new hardware is required to build or run these software diagnostics**.

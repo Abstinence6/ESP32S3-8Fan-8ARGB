@@ -19,6 +19,7 @@ private:
     void resetBinary();
     static uint16_t crcByte(uint16_t crc, uint8_t value);
     void printStatus();
+    void printHealth(uint8_t channel);
     void printHelp();
     static bool parseByte(const char* token, uint8_t maximum, uint8_t& out);
     static bool parseU16(const char* token, uint16_t maximum, uint16_t& out);

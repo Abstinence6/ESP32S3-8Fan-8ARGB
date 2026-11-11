@@ -21,6 +21,9 @@ public:
     // Without a sense pin, the physical connector type cannot be detected.
     Type detectedType(uint8_t channel) const;
     bool hasRpmFeedback(uint8_t channel) const;
+    // True only after real TACH edges were observed since boot/type change.
+    // Capability alone (3-pin/4-pin) does not prove a fan is connected.
+    bool tachObserved(uint8_t channel) const;
     // True only after user explicitly validates the DC power switch in firmware.
     bool dcHardwareAvailable() const;
     void update(uint32_t nowMs);
@@ -33,6 +36,7 @@ private:
     uint8_t ppr_[board::kChannelCount] = {2,2,2,2,2,2,2,2};
     uint32_t previousPulses_[board::kChannelCount] = {};
     uint32_t rpm_[board::kChannelCount] = {};
+    bool tachObserved_[board::kChannelCount] = {};
     uint8_t percent_[board::kChannelCount] = {};
     uint32_t previousSampleMs_ = 0;
 };
