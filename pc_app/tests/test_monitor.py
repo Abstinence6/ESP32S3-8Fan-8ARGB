@@ -1,8 +1,23 @@
 import unittest
-from pc_app.monitor import MAX_ALL, parse_temperatures, resolve_temperature
+from pc_app.monitor import (GROUP_AVG, GROUP_MAX, MAX_ALL, TemperatureSensor,
+                            parse_temperatures, resolve_temperature)
 
 
 class SensorParsingTests(unittest.TestCase):
+    def test_selected_sensor_group_average_and_maximum(self):
+        sensors = [TemperatureSensor("cpu", "CPU", 68.0),
+                   TemperatureSensor("gpu", "GPU", 76.0),
+                   TemperatureSensor("ssd", "SSD", 39.0)]
+        group = ["cpu", "gpu"]
+        self.assertEqual(resolve_temperature(GROUP_AVG, sensors, group), 72.0)
+        self.assertEqual(resolve_temperature(GROUP_MAX, sensors, group), 76.0)
+        self.assertEqual(resolve_temperature(GROUP_AVG, sensors, ["ssd"]), 39.0)
+        self.assertEqual(resolve_temperature(GROUP_AVG, sensors, ["ssd", "ssd"]), 39.0)
+        self.assertIsNone(resolve_temperature(GROUP_AVG, sensors, []))
+        self.assertIsNone(resolve_temperature(GROUP_AVG, sensors, ["cpu", "missing"]))
+        self.assertIsNone(resolve_temperature(GROUP_MAX, [], group))
+        self.assertEqual(resolve_temperature(MAX_ALL, sensors, group), 76.0)
+
     def test_walks_all_valid_temperatures_and_ignores_other_types(self):
         tree = {
             "Text": "PC", "Children": [

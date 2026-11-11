@@ -6,12 +6,15 @@
 
 class ArgbController {
 public:
-    enum class Mode : uint8_t { Off, Solid, Rainbow };
+    enum class Mode : uint8_t { Off, Solid, Rainbow, External };
 
     bool begin();
     bool setSolid(uint8_t channel, uint8_t red, uint8_t green, uint8_t blue);
     bool setOff(uint8_t channel);
     bool setRainbow(uint8_t channel);
+    // RGB8 pixels streamed from OpenRGB E1.31 via PC USB bridge (one universe per strip).
+    bool setPixels(uint8_t channel, const uint8_t* rgb, uint16_t count);
+    uint16_t pixelCount(uint8_t channel) const;
     bool setBrightness(uint8_t channel, uint8_t brightness);
     Mode getMode(uint8_t channel) const;
     uint8_t getBrightness(uint8_t channel) const;

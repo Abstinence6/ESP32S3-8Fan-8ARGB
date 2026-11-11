@@ -8,9 +8,9 @@ Starter firmware for **8 independent 4-wire PWM PC fans** and **8 independent 5 
 
 - 8 independent **25 kHz / 8-bit PWM** channels via LEDC, 0..100%.
 - 8 TACH inputs, **RPM** measured using falling-edge interrupts (default 2 pulses/revolution).
-- 8 independent WS2812B / SK6812-RGB (3-channel) LED data outputs.
+- 8 independent WS2812B / SK6812-RGB (3-channel) LED data outputs with OpenRGB E1.31 pixel streaming (via Windows companion).
 - Independent static colors / brightness / rainbow animation, plus off.
-- Non-blocking command parsing over Serial at **115200 baud**.
+- Non-blocking ASCII command + binary ARGB parsing over Serial at **921600 baud**.
 - Modular C++ code, host-side smoke tests and a GitHub Actions PlatformIO build.
 
 ## Quick start
@@ -21,7 +21,7 @@ Starter firmware for **8 independent 4-wire PWM PC fans** and **8 independent 5 
 4. Build: `pio run -e esp32s3`.
 5. Optional host smoke test: `./test/native/run.sh` (Linux/macOS or WSL with g++).
 6. Upload: `pio run -e esp32s3 -t upload`.
-7. Open serial monitor: `pio device monitor -b 115200`.
+7. Open serial monitor: `pio device monitor -b 921600`.
 
 The default `Serial` uses the USB-to-UART interface. If using the ESP32-S3 native USB port, see the commented USB CDC flags in `platformio.ini`.
 
@@ -79,7 +79,7 @@ See `docs/WIRING.md` for details.
 - ESP32-S3 has only 4 RMT TX channels, but **Adafruit NeoPixel show() calls execute one by one and release the RMT channel** on Arduino-ESP32 2.x, so 8 independent strips are possible (not simultaneously updated).
 - Rainbow effects update at most every 40 ms; actual FPS depends on the sum of all strip lengths and RMT transfer times.
 - RPM is averaged over 1 s; tach signals need a suitable pull-up and clean edges.
-- Firmware currently has no persistent settings, Wi-Fi, UI, fan curve, thermal sensors, or hardware power control. These are straightforward next modules.
+- The firmware stores fan calibration and PWM-temperature curves in NVS. The companion UI supplies PC temperatures; ESP-S3 does not independently measure CPU/GPU temperature. Wi-Fi and hardware fan-power switching are not implemented.
 
 ## Structure
 
@@ -103,3 +103,12 @@ The ESP32-S3 firmware now has **21-point independent PWM/RPM calibration per fan
 **Important:** the computer must be running LibreHardwareMonitor and the GUI to feed CPU/GPU temperatures; the ESP32 does *not* measure CPU/GPU temperature by itself. Without temperature updates, the fans run at 100% for safety. Manual overrides bypass the thermal watchdog deliberately. This is a reference firmware requiring real hardware tests before permanent unattended use.
 
 For full details, see [`docs/PROTOCOL.md`](docs/PROTOCOL.md) and [`pc_app/README.md`](pc_app/README.md).
+
+
+## v3: AVG of sensor groups and OpenRGB E1.31
+
+**Temperature groups:** each fan can use a single sensor, MAX of all sensors, **AVG of an explicitly chosen sensor group**, or MAX of that group. Sensor membership is configured in the Windows desktop GUI and persisted with QSettings; the PWM-temperature curve itself remains on ESP32 NVS. Missing group members prevent new temperature updates, activating the ESP fan fail-safe after 10 seconds.
+
+**External ARGB:** OpenRGB (or xLights/other E1.31 transmitters) streams **per-LED RGB** data through 8 manual E1.31 devices (universe 1..8), received by the Windows program at **127.0.0.1:5568** and forwarded over the **same USB COM connection** as the fan commands at 921600 baud. ESP verifies binary packets using CRC-16 and renders each strip independently. This is *not* OpenRGB automatic USB detection, and the PC app must run for RGB streaming. Native built-in effects (solid, rainbow) remain available for offline/manual use.
+
+[OpenRGB configuration, limits and troubleshooting](docs/OPENRGB.md). The protocol is documented in [docs/PROTOCOL.md](docs/PROTOCOL.md); GUI setup is in [pc_app/README.md](pc_app/README.md). **Update both PC app and firmware** when upgrading to v3 due to changed baud rate.

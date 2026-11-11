@@ -13,26 +13,104 @@ void SerialConsole::begin() {
 }
 
 void SerialConsole::poll() {
+    // Corrupt/partial packets cannot lock out normal fan and temperature commands.
+    if (rx_ != RxState::Text && millis() - rgbLastByteMs_ > 300U) resetBinary();
     while (serial_.available() > 0) {
-        const char c = static_cast<char>(serial_.read());
-        if (c == '\r') continue;
-        if (c == '\n') {
-            if (!discardingLongLine_ && size_ > 0) {
-                line_[size_] = '\0';
-                handleLine(line_);
-            }
-            size_ = 0;
-            discardingLongLine_ = false;
-            continue;
-        }
-        if (discardingLongLine_) continue;
-        if (size_ >= sizeof(line_) - 1) {
-            discardingLongLine_ = true;
-            serial_.println(F("ERR line too long"));
-            continue;
-        }
-        line_[size_++] = c;
+        handleByte(static_cast<uint8_t>(serial_.read()));
     }
+}
+
+uint16_t SerialConsole::crcByte(uint16_t crc, uint8_t value) {
+    crc ^= static_cast<uint16_t>(value) << 8U;
+    for (uint8_t i = 0; i < 8; ++i) {
+        crc = (crc & 0x8000U) ? static_cast<uint16_t>((crc << 1U) ^ 0x1021U)
+                               : static_cast<uint16_t>(crc << 1U);
+    }
+    return crc;
+}
+
+void SerialConsole::resetBinary() {
+    rx_ = RxState::Text;
+    rgbCount_ = rgbOffset_ = rgbReceivedCrc_ = 0;
+    rgbCrc_ = 0xFFFFU;
+}
+
+void SerialConsole::handleByte(uint8_t byte) {
+    if (rx_ != RxState::Text) {
+        rgbLastByteMs_ = millis();
+        switch (rx_) {
+        case RxState::Sync:
+            if (byte == 0x5AU) rx_ = RxState::Channel;
+            else if (byte != 0xA5U) resetBinary();
+            break;
+        case RxState::Channel:
+            if (byte < 1 || byte > board::kChannelCount) { rx_ = RxState::Discard; break; }
+            rgbChannel_ = byte;
+            rgbCrc_ = crcByte(rgbCrc_, byte);
+            rx_ = RxState::CountLo;
+            break;
+        case RxState::CountLo:
+            rgbCount_ = byte;
+            rgbCrc_ = crcByte(rgbCrc_, byte);
+            rx_ = RxState::CountHi;
+            break;
+        case RxState::CountHi:
+            rgbCount_ |= static_cast<uint16_t>(byte) << 8U;
+            rgbCrc_ = crcByte(rgbCrc_, byte);
+            if (rgbCount_ == 0 || rgbCount_ > board::kMaxArgbPixelsPerFrame ||
+                rgbCount_ > leds_.pixelCount(rgbChannel_ - 1)) { rx_ = RxState::Discard; break; }
+            rgbOffset_ = 0;
+            rx_ = RxState::Pixels;
+            break;
+        case RxState::Pixels:
+            rgbBuffer_[rgbOffset_++] = byte;
+            rgbCrc_ = crcByte(rgbCrc_, byte);
+            if (rgbOffset_ == rgbCount_ * 3U) rx_ = RxState::CrcLo;
+            break;
+        case RxState::CrcLo:
+            rgbReceivedCrc_ = byte;
+            rx_ = RxState::CrcHi;
+            break;
+        case RxState::CrcHi:
+            rgbReceivedCrc_ |= static_cast<uint16_t>(byte) << 8U;
+            if (rgbReceivedCrc_ == rgbCrc_)
+                leds_.setPixels(rgbChannel_ - 1, rgbBuffer_, rgbCount_);
+            // CRC mismatch: reject frame completely; never display partial data.
+            resetBinary();
+            break;
+        case RxState::Discard:
+            // Reject invalid binary headers without accidentally interpreting
+            // arbitrary RGB payload as fan control text. Wait for idle gap.
+            break;
+        case RxState::Text: break;
+        }
+        return;
+    }
+
+    // Binary frames only begin between complete text commands.
+    if (byte == 0xA5U && size_ == 0 && !discardingLongLine_) {
+        rx_ = RxState::Sync;
+        rgbCrc_ = 0xFFFFU;
+        rgbLastByteMs_ = millis();
+        return;
+    }
+    if (byte == '\r') return;
+    if (byte == '\n') {
+        if (!discardingLongLine_ && size_ > 0) {
+            line_[size_] = '\0';
+            handleLine(line_);
+        }
+        size_ = 0;
+        discardingLongLine_ = false;
+        return;
+    }
+    if (discardingLongLine_) return;
+    if (size_ >= sizeof(line_) - 1) {
+        discardingLongLine_ = true;
+        serial_.println(F("ERR line too long"));
+        return;
+    }
+    line_[size_++] = static_cast<char>(byte);
 }
 
 bool SerialConsole::parseU16(const char* token, uint16_t maximum, uint16_t& out) {
@@ -70,6 +148,16 @@ void SerialConsole::handleLine(char* line) {
     if (strcmp(command, "HELP") == 0) {
         if (!noMore()) return error();
         printHelp();
+        return;
+    }
+    if (strcmp(command, "LEDS") == 0) {
+        if (!noMore()) return error();
+        serial_.print(F("LEDCOUNTS"));
+        for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
+            serial_.print(F(" "));
+            serial_.print(leds_.pixelCount(ch));
+        }
+        serial_.println("");
         return;
     }
     if (strcmp(command, "STATUS") == 0) {
@@ -207,13 +295,14 @@ void SerialConsole::handleLine(char* line) {
 
 void SerialConsole::printHelp() {
     serial_.println(F("Channels: 1..8, temperatures: deci-Celsius, e.g. 455 = 45.5 C"));
-    serial_.println(F("PING | STATUS | HELP"));
+    serial_.println(F("PING | STATUS | HELP | LEDS"));
     serial_.println(F("TEMP <ch> <0..1250> | AUTO <ch> | ALLAUTO"));
     serial_.println(F("FAN <ch> <0..100> | ALLFAN <0..100> (manual override)"));
     serial_.println(F("CURVE? <ch> | CURVE <ch> <T1> <PWM1> ... <T5> <PWM5>"));
     serial_.println(F("CAL START <ch> | CAL GET <ch> | CAL CANCEL"));
     serial_.println(F("LED <ch> <R> <G> <B> | ALLLED <R> <G> <B>"));
     serial_.println(F("OFF <ch> | ALLOFF | RAINBOW <ch> | BRIGHT <ch> <0..255>"));
+    serial_.println(F("Binary ARGB: A5 5A ch countLE16 RGB... crc16LE (CCITT-FALSE)"));
 }
 
 void SerialConsole::printStatus() {

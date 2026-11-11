@@ -1,12 +1,13 @@
-# Serial protocol v2 (115200, ASCII, LF-terminated)
+# Serial protocol v3 (921600 baud, ASCII control + binary ARGB)
 
-All commands and responses are single-line ASCII, except for multiple-line status/calibration result streams. Fan channel numbers are **1..8**. Send only one command per line, terminating with `\n`. Other MCU replies may arrive asynchronously while a calibration is running.
+All regular commands and responses are single-line ASCII, except for multiple-line status/calibration result streams. ARGB pixel frames use binary packets on the **same** serial connection. Fan channel numbers are **1..8**. Send only one command per line, terminating with `\n`. Other MCU replies may arrive asynchronously while a calibration is running.
 
 ## Commands
 
 | Command | Example | Effect |
 |---|---|---|
 | `PING` | `PING` | Response `PONG 2` |
+| `LEDS` | `LEDS` | Response `LEDCOUNTS <n1> ... <n8>` for physical ARGB pixel counts |
 | `STATUS` | `STATUS` | Returns 8 `CH ...` lines |
 | `TEMP <fan> <deciC>` | `TEMP 1 487` | Update fan 1's measured temperature to 48.7 °C, refreshing 10 s heartbeat |
 | `CURVE? <fan>` | `CURVE? 1` | Read 5 curve points from flash |
@@ -45,3 +46,25 @@ The computer collects temperatures using LibreHardwareMonitor (or another user-s
 5. Other fan channels continue in their previous operating modes. The calibrated channel returns to its previous Manual or Automatic mode.
 
 The calibration is an empirical duty-to-RPM table, not a closed-loop RPM controller yet. A fitted acoustic curve and stall threshold can be added later. RPM accuracy depends on the correct pulses-per-revolution setting, the TACH wiring, and settling time.
+
+## E1.31 bridge and USB binary RGB frames (v3)
+
+See [OpenRGB setup](OPENRGB.md). OpenRGB transmits eight E1.31 universes (UDP 5568) to the desktop GUI, one universe per output. The GUI reads RGB data from sACN DMX channels 1–510 (DMX start code 0) and sends it to the ESP with a compact binary frame. **Thermal ASCII control remains active on the same serial port.**
+
+Wire bytes (little-endian counts/CRC):
+
+```
+A5 5A | output 1..8 | count_lo count_hi | R0 G0 B0 R1 G1 B1 ... | crc_lo crc_hi
+```
+
+`count` is **1–170 RGB pixels**, no more than the `kArgbLedCounts` for the output. The CRC is **CRC-16/CCITT-FALSE** (poly 0x1021, init 0xFFFF), calculated over the output byte, 2 count bytes, and RGB bytes only (excluding sync marker and CRC bytes). The ESP drops an invalid CRC packet. It also safely discards oversized/incomplete frames; unfinished binary frames expire after 300 ms idle. The USB baud rate is **921600** for RGB streaming. On `LEDS` the ESP returns eight lengths, allowing the GUI to crop frames to the exact physical strip lengths; it refuses to stream until counts are known.
+
+Example: output 3, two RGB pixels `(255,0,0)` and `(0,255,0)`:
+
+```
+A5 5A 03 02 00 FF 00 00 00 FF 00 D0 ED
+```
+
+The ESP displays incoming RGB values in **External** mode and automatically uses brightness 255 on first external frame. External packets affect only lighting, never fans. Legacy `LED`, `RAINBOW`, `OFF` commands remain available.
+
+**Important compatibility:** v3 desktop and firmware must be updated together; older serial applications running at 115200 baud will not communicate correctly.
