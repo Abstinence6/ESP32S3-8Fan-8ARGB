@@ -18,6 +18,9 @@ void SerialConsole::poll() {
     while (serial_.available() > 0) {
         handleByte(static_cast<uint8_t>(serial_.read()));
     }
+    // Read-only 5-second tachometer check. No change to fan duty or modes.
+    if (selfTestActive_ && static_cast<uint32_t>(millis() - selfTestStartMs_) >= 5000U)
+        finishSelfTest();
 }
 
 uint16_t SerialConsole::crcByte(uint16_t crc, uint8_t value) {
@@ -163,6 +166,24 @@ void SerialConsole::handleLine(char* line) {
     if (strcmp(command, "STATUS") == 0) {
         if (!noMore()) return error();
         printStatus();
+        return;
+    }
+    if (strcmp(command, "SELFTEST") == 0) {
+        char* action = next();
+        if (action) {
+            for (char* c = action; *c; ++c)
+                *c = static_cast<char>(toupper(static_cast<unsigned char>(*c)));
+            if (strcmp(action, "CANCEL") != 0 || !noMore()) return error();
+            if (!selfTestActive_) { serial_.println(F("ERR selftest not running")); return; }
+            selfTestActive_ = false;
+            serial_.println(F("SELFTEST_CANCELLED"));
+            return;
+        }
+        if (selfTestActive_ || cooling_.calibrationActive()) {
+            serial_.println(F("ERR selftest busy")); return;
+        }
+        startSelfTest(millis());
+        serial_.println(F("SELFTEST_STARTED 5000"));
         return;
     }
     if (strcmp(command, "HEALTH") == 0) {
@@ -449,7 +470,7 @@ void SerialConsole::handleLine(char* line) {
 
 void SerialConsole::printHelp() {
     serial_.println(F("Channels: 1..8, temperatures: deci-Celsius, e.g. 455 = 45.5 C"));
-    serial_.println(F("PING | STATUS | HEALTH [ch] | HELP | LEDS"));
+    serial_.println(F("PING | STATUS | HEALTH [ch] | SELFTEST [CANCEL] | HELP | LEDS"));
     serial_.println(F("TEMP <ch> <0..1250> | AUTO <ch> | ALLAUTO"));
     serial_.println(F("FAN <ch> <0..100> | ALLFAN <0..100> (manual override)"));
     serial_.println(F("CURVE? <ch> | CURVE <ch> <T1> <PWM1> ... <T5> <PWM5>"));
@@ -464,6 +485,35 @@ void SerialConsole::printHelp() {
     serial_.println(F("WIFI SET <ssid> <pass> | WIFI STATUS | WIFI OFF (no spaces in SSID/pass)"));
     serial_.println(F("STRIP <ch> 1..170 | REVERSE <ch> 0|1 | RGBBUDGET <100..20000> | ARGBSTATUS"));
     serial_.println(F("Binary ARGB: A5 5A ch countLE16 RGB... crc16LE (CCITT-FALSE)"));
+}
+
+void SerialConsole::startSelfTest(uint32_t nowMs) {
+    selfTestStartMs_ = nowMs;
+    for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
+        selfTestBasePulses_[ch] = fans_.tachPulseCount(ch);
+        selfTestBasePwm_[ch] = fans_.getPercent(ch);
+        selfTestBaseType_[ch] = fans_.configuredType(ch);
+    }
+    selfTestActive_ = true;
+}
+
+void SerialConsole::finishSelfTest() {
+    selfTestActive_ = false;
+    for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
+        const uint32_t count = fans_.tachPulseCount(ch) - selfTestBasePulses_[ch];
+        const uint8_t pwm = fans_.getPercent(ch);
+        const auto type = fans_.configuredType(ch);
+        const char* result = "NO_TACH";
+        if (!fans_.hasRpmFeedback(ch)) result = "NA";
+        else if (type != selfTestBaseType_[ch] || pwm != selfTestBasePwm_[ch])
+            result = "INCONCLUSIVE";
+        else if (count >= 3U) result = "OK";
+        serial_.print(F("SELFTEST ")); serial_.print(ch + 1);
+        serial_.print(F(" RESULT=")); serial_.print(result);
+        serial_.print(F(" PULSES=")); serial_.print(count);
+        serial_.print(F(" PWM=")); serial_.println(pwm);
+    }
+    serial_.println(F("SELFTEST_END"));
 }
 
 void SerialConsole::printHealth(uint8_t ch) {

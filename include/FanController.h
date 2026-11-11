@@ -24,6 +24,8 @@ public:
     // True only after real TACH edges were observed since boot/type change.
     // Capability alone (3-pin/4-pin) does not prove a fan is connected.
     bool tachObserved(uint8_t channel) const;
+    // Total observed falling TACH edges since boot (wraps naturally).
+    uint32_t tachPulseCount(uint8_t channel) const;
     // True only after user explicitly validates the DC power switch in firmware.
     bool dcHardwareAvailable() const;
     void update(uint32_t nowMs);
