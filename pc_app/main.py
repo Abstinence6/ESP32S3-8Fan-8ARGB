@@ -6,6 +6,8 @@ Requires a running LibreHardwareMonitor Remote Web Server on localhost:8085.
 from __future__ import annotations
 
 import json
+import csv
+from collections import deque
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, Future
@@ -21,15 +23,17 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton,
     QSplitter, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
     QColorDialog, QCheckBox, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem,
+    QFileDialog,
     QHeaderView, QAbstractItemView,
 )
 
 from monitor import (
-    DEFAULT_LHM_URL, GROUP_AVG, GROUP_MAX, MAX_ALL,
+    DEFAULT_LHM_URL, GROUP_AVG, GROUP_MAX, GROUP_WEIGHTED, MAX_ALL,
     TemperatureSensor, fetch_temperatures, resolve_temperature,
 )
 from sacn_bridge import E131Listener, SACN_PORT, SERIAL_BAUD, encode_rgb_frame
-from protocol import DEFAULT_CURVE, make_curve_command, make_temperature_command, parse_curve, parse_status
+from protocol import validate_curve, DEFAULT_CURVE, make_curve_command, make_temperature_command, parse_curve, parse_status
+from profiles import PRESETS
 
 
 class FanArgbWindow(QMainWindow):
@@ -42,6 +46,11 @@ class FanArgbWindow(QMainWindow):
         self.read_buffer = ""
         self.temperatures: list[TemperatureSensor] = []
         self.curves = {ch: list(DEFAULT_CURVE) for ch in range(1, 9)}
+        self.secondary_curves = {ch: list(DEFAULT_CURVE) for ch in range(1, 9)}
+        self.config_types: dict[int, int] = {}
+        self.fan_pid_enabled = {ch: False for ch in range(1, 9)}
+        self.fan_dual_enabled = {ch: False for ch in range(1, 9)}
+        self.history: dict[int, deque] = {ch: deque(maxlen=3600) for ch in range(1, 9)}
         self.cal_points: dict[int, dict[int, int]] = {ch: {} for ch in range(1, 9)}
         self.current_fan = 1
         self.target_items: list[pg.TargetItem] = []
@@ -49,7 +58,13 @@ class FanArgbWindow(QMainWindow):
         self.fan_status: dict[int, object] = {}
         self.source_boxes: list[QComboBox] = []
         self.sensor_groups: dict[int, list[str]] = {}
+        self.sensor_weights: dict[int, dict[str, float]] = {}
         for ch in range(1, 9):
+            try:
+                raw_weights = json.loads(str(self.settings.value(f"groupWeights{ch}", "{}")))
+                self.sensor_weights[ch] = {str(k): float(v) for k,v in raw_weights.items()} if isinstance(raw_weights, dict) else {}
+            except (ValueError, TypeError):
+                self.sensor_weights[ch] = {}
             try:
                 value = json.loads(str(self.settings.value(f"groupSensors{ch}", "[]")))
                 self.sensor_groups[ch] = list(dict.fromkeys(
@@ -134,8 +149,9 @@ class FanArgbWindow(QMainWindow):
             box.addItem("MAX усіх температур", MAX_ALL)
             box.addItem("AVG вибраної групи", GROUP_AVG)
             box.addItem("MAX вибраної групи", GROUP_MAX)
+            box.addItem("Зважене AVG групи", GROUP_WEIGHTED)
             desired = str(self.settings.value(f"source{ch}", MAX_ALL))
-            known = [MAX_ALL, GROUP_AVG, GROUP_MAX]
+            known = [MAX_ALL, GROUP_AVG, GROUP_MAX, GROUP_WEIGHTED]
             if desired in known:
                 box.setCurrentIndex(known.index(desired))
             else:
@@ -146,6 +162,18 @@ class FanArgbWindow(QMainWindow):
             self.source_boxes.append(box)
         self.fan_table.itemSelectionChanged.connect(self.fan_row_selected)
         table_layout.addWidget(self.fan_table)
+        profile_row = QHBoxLayout()
+        profile_row.addWidget(QLabel("Профіль:"))
+        self.profile_box = QComboBox()
+        self.profile_box.addItems(["Silent", "Balanced", "Performance", "Custom"])
+        profile_row.addWidget(self.profile_box)
+        apply_profile = QPushButton("Застосувати до 8 вентиляторів")
+        apply_profile.clicked.connect(self.apply_profile)
+        profile_row.addWidget(apply_profile)
+        save_custom = QPushButton("Зберегти Custom")
+        save_custom.clicked.connect(self.save_custom_profile)
+        profile_row.addWidget(save_custom)
+        table_layout.addLayout(profile_row)
         controls = QHBoxLayout()
         override_button = QPushButton("PWM вручну…")
         override_button.clicked.connect(self.manual_override)
@@ -187,6 +215,15 @@ class FanArgbWindow(QMainWindow):
             self.fan_box.addItem(f"Вентилятор {ch}", ch)
         self.fan_box.currentIndexChanged.connect(self.fan_combo_selected)
         choose_row.addWidget(self.fan_box)
+        choose_row.addWidget(QLabel("Тип:"))
+        self.type_box = QComboBox()
+        for name, wire in (("2-pin / ключ", 2), ("3-pin / ключ+TACH", 3), ("4-pin / PWM", 4)):
+            self.type_box.addItem(name, wire)
+        self.type_box.setCurrentIndex(1)
+        choose_row.addWidget(self.type_box)
+        type_button = QPushButton("Встановити тип")
+        type_button.clicked.connect(self.apply_fan_type)
+        choose_row.addWidget(type_button)
         choose_row.addStretch(1)
         right_layout.addLayout(choose_row)
 
@@ -207,15 +244,34 @@ class FanArgbWindow(QMainWindow):
         self.save_button.clicked.connect(self.save_curve)
         curve_actions.addWidget(self.save_button)
         reread_button = QPushButton("Прочитати з ESP")
-        reread_button.clicked.connect(lambda: self.send(f"CURVE? {self.current_fan}"))
+        reread_button.clicked.connect(lambda: self.send(
+            f"{'CURVE2?' if self.secondary_checkbox.isChecked() else 'CURVE?'} {self.current_fan}"))
         curve_actions.addWidget(reread_button)
+        self.secondary_checkbox = QCheckBox("Крива 2")
+        self.secondary_checkbox.toggled.connect(lambda _: self._update_targets())
+        curve_actions.addWidget(self.secondary_checkbox)
         curve_layout.addLayout(curve_actions)
+        regulation_actions = QHBoxLayout()
+        self.pid_checkbox = QCheckBox("PID / підтримувати RPM")
+        self.pid_checkbox.toggled.connect(self.toggle_pid)
+        regulation_actions.addWidget(self.pid_checkbox)
+        self.dual_checkbox = QCheckBox("Дві температурні криві")
+        self.dual_checkbox.toggled.connect(self.toggle_dual)
+        regulation_actions.addWidget(self.dual_checkbox)
+        self.secondary_source_box = QComboBox()
+        self.secondary_source_box.setMinimumWidth(160)
+        self.secondary_source_box.currentIndexChanged.connect(self.secondary_source_changed)
+        regulation_actions.addWidget(self.secondary_source_box)
+        rpm_target_button = QPushButton("Цільові RPM…")
+        rpm_target_button.clicked.connect(self.set_rpm_target)
+        regulation_actions.addWidget(rpm_target_button)
+        curve_layout.addLayout(regulation_actions)
         right_layout.addWidget(curve_box, 2)
 
         calibration_box = QGroupBox("Калібрування PWM → RPM (21 крок: 0–100%, по 5%)")
         calibration_layout = QVBoxLayout(calibration_box)
         cal_actions = QHBoxLayout()
-        self.start_button = QPushButton("▶ Калібрувати вибраний")
+        self.start_button = QPushButton("▶ Розумне калібрування")
         self.start_button.clicked.connect(self.start_calibration)
         cal_actions.addWidget(self.start_button)
         stop_button = QPushButton("■ Перервати")
@@ -238,6 +294,22 @@ class FanArgbWindow(QMainWindow):
         calibration_layout.addWidget(self.rpm_plot, 1)
         right_layout.addWidget(calibration_box, 1)
 
+        history_box = QGroupBox("Історія — PWM / RPM")
+        history_layout = QVBoxLayout(history_box)
+        self.history_plot = pg.PlotWidget()
+        self.history_plot.setMaximumHeight(130)
+        self.history_plot.setLabel("bottom", "Час", units="с")
+        self.history_plot.showGrid(x=True, y=True, alpha=0.2)
+        self.history_pwm_curve = self.history_plot.plot(pen=pg.mkPen("#6cbce5", width=2), name="PWM")
+        history_layout.addWidget(self.history_plot)
+        hist_row = QHBoxLayout()
+        export_button = QPushButton("Зберегти історію CSV…")
+        export_button.clicked.connect(self.export_history)
+        hist_row.addWidget(export_button)
+        hist_row.addStretch(1)
+        history_layout.addLayout(hist_row)
+        right_layout.addWidget(history_box)
+
         rgb_box = QGroupBox("ARGB · вибраний канал + OpenRGB / E1.31")
         rgb_layout = QVBoxLayout(rgb_box)
         rgb_actions = QHBoxLayout()
@@ -254,6 +326,20 @@ class FanArgbWindow(QMainWindow):
         off_button.clicked.connect(lambda: self.send(f"OFF {self.current_fan}"))
         rgb_actions.addWidget(off_button)
         rgb_layout.addLayout(rgb_actions)
+        hardware_rgb = QHBoxLayout()
+        strip_count_button = QPushButton("LED у каналі…")
+        strip_count_button.clicked.connect(self.configure_led_count)
+        hardware_rgb.addWidget(strip_count_button)
+        reverse_button = QPushButton("Реверс стрічки…")
+        reverse_button.clicked.connect(self.reverse_led_strip)
+        hardware_rgb.addWidget(reverse_button)
+        budget_button = QPushButton("Ліміт струму ARGB…")
+        budget_button.clicked.connect(self.set_argb_budget)
+        hardware_rgb.addWidget(budget_button)
+        wifi_button = QPushButton("Wi-Fi / E1.31 / DDP…")
+        wifi_button.clicked.connect(self.configure_wifi)
+        hardware_rgb.addWidget(wifi_button)
+        rgb_layout.addLayout(hardware_rgb)
         e131_row = QHBoxLayout()
         self.bridge_checkbox = QCheckBox("E1.31 → USB, 8 окремих зон")
         self.bridge_checkbox.toggled.connect(self.toggle_sacn)
@@ -323,6 +409,9 @@ class FanArgbWindow(QMainWindow):
         self.send("STATUS")
         for ch in range(1, 9):
             self.send(f"CURVE? {ch}")
+            self.send(f"CURVE2? {ch}")
+            self.send(f"TYPE? {ch}")
+            self.send(f"CONFIG {ch}")
 
     def disconnect(self) -> None:
         if self.port:
@@ -380,11 +469,42 @@ class FanArgbWindow(QMainWindow):
             self.fan_status[status.channel] = status
             row = status.channel - 1
             self.fan_table.item(row, 1).setText(f"{status.pwm}%")
-            self.fan_table.item(row, 2).setText(str(status.rpm))
+            self.fan_table.item(row, 2).setText(str(status.rpm) if status.rpm_feedback else "—")
+            self.history[status.channel].append((time.time(), status.pwm, status.rpm,
+                                                  status.deci_c / 10 if status.fresh else float("nan")))
+            if status.channel == self.current_fan:
+                self._refresh_history()
             self.fan_table.item(row, 3).setText(f"{status.deci_c / 10:.1f}" if status.fresh else "—")
             self.fan_table.item(row, 4).setText(
                 f"{status.mode} · {'OK' if status.fresh else 'fail-safe'}"
+                + (" · FAULT" if status.fault else "")
+                + (f" · {status.detected_type}-pin" if status.detected_type in (2, 3, 4) else "")
             )
+            return
+        if line.startswith("TYPE ") or line.startswith("CONFIG "):
+            parts = line.split()
+            if len(parts) >= 3:
+                try:
+                    channel = int(parts[1]); cfg = dict(part.split("=",1) for part in parts[2:] if "=" in part)
+                    if "SET" in cfg:
+                        self.config_types[channel] = int(cfg["SET"])
+                    if "TYPE" in cfg:
+                        self.config_types[channel] = int(cfg["TYPE"])
+                    if "PID" in cfg: self.fan_pid_enabled[channel] = bool(int(cfg["PID"]))
+                    if "DUAL" in cfg:
+                        self.fan_dual_enabled[channel] = bool(int(cfg["DUAL"]))
+                        self.settings.setValue(f"dualEnabled{channel}", self.fan_dual_enabled[channel])
+                    if channel == self.current_fan: self._sync_mode_controls()
+                except (KeyError, ValueError):
+                    pass
+            return
+        if line.startswith("CURVE2 "):
+            parsed = parse_curve(line.replace("CURVE2 ", "CURVE ", 1))
+            if parsed:
+                ch, pts = parsed
+                self.secondary_curves[ch] = pts
+                if ch == self.current_fan and self.secondary_checkbox.isChecked():
+                    self._update_targets()
             return
         curve = parse_curve(line)
         if curve:
@@ -465,18 +585,28 @@ class FanArgbWindow(QMainWindow):
             self.lhm_status.setStyleSheet("color: #d05555")
         self._update_sensor_table()
         self._update_source_boxes()
+        self._update_secondary_box()
 
         # All group sensors must be present; otherwise ESP's 10s stale watchdog
         # falls back to 100% PWM. Temperature traffic shares USB with RGB frames.
         for ch, box in enumerate(self.source_boxes, start=1):
             celsius = resolve_temperature(
-                str(box.currentData()), self.temperatures, self.sensor_groups[ch]
+                str(box.currentData()), self.temperatures, self.sensor_groups[ch], self.sensor_weights[ch]
             )
             if celsius is not None:
                 try:
                     self.send(make_temperature_command(ch, celsius))
                 except ValueError:
                     pass
+            if self.fan_dual_enabled[ch]:
+                second = str(self.settings.value(f"source2{ch}", MAX_ALL))
+                celsius2 = resolve_temperature(second, self.temperatures, self.sensor_groups[ch], self.sensor_weights[ch])
+                if celsius2 is not None:
+                    try:
+                        cmd = make_temperature_command(ch, celsius2).replace("TEMP ", "TEMP2 ", 1)
+                        self.send(cmd)
+                    except ValueError:
+                        pass
         self.send("STATUS")
 
     def _update_sensor_table(self) -> None:
@@ -493,6 +623,7 @@ class FanArgbWindow(QMainWindow):
             box.addItem("MAX усіх температур", MAX_ALL)
             box.addItem(f"AVG групи ({len(self.sensor_groups[ch])})", GROUP_AVG)
             box.addItem(f"MAX групи ({len(self.sensor_groups[ch])})", GROUP_MAX)
+            box.addItem(f"Зважене AVG групи ({len(self.sensor_groups[ch])})", GROUP_WEIGHTED)
             for sensor in self.temperatures:
                 box.addItem(f"{sensor.name} ({sensor.celsius:.1f}°C)", sensor.sensor_id)
             ids = [box.itemData(i) for i in range(box.count())]
@@ -504,6 +635,32 @@ class FanArgbWindow(QMainWindow):
     def source_changed(self, ch: int) -> None:
         box = self.source_boxes[ch - 1]
         self.settings.setValue(f"source{ch}", box.currentData())
+
+    def _update_secondary_box(self) -> None:
+        if not hasattr(self, "secondary_source_box"):
+            return
+        ch = self.current_fan
+        box = self.secondary_source_box
+        desired = str(self.settings.value(f"source2{ch}", MAX_ALL))
+        box.blockSignals(True)
+        box.clear()
+        box.addItem("MAX усіх", MAX_ALL)
+        box.addItem("AVG групи", GROUP_AVG)
+        box.addItem("MAX групи", GROUP_MAX)
+        box.addItem("Зважене AVG", GROUP_WEIGHTED)
+        for sensor in self.temperatures:
+            box.addItem(sensor.name, sensor.sensor_id)
+        idx = box.findData(desired)
+        if idx == -1:
+            box.addItem("Немає: " + desired, desired)
+            idx = box.count() - 1
+        box.setCurrentIndex(idx)
+        box.blockSignals(False)
+
+    def secondary_source_changed(self) -> None:
+        if not hasattr(self, "secondary_source_box"):
+            return
+        self.settings.setValue(f"source2{self.current_fan}", self.secondary_source_box.currentData())
 
     def edit_sensor_group(self) -> None:
         ch = self.current_fan
@@ -530,6 +687,23 @@ class FanArgbWindow(QMainWindow):
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked)
         layout.addWidget(lst)
+        weight_row = QHBoxLayout()
+        set_weight = QPushButton("Вага вибраного датчика…")
+        def choose_weight():
+            selected_item = lst.currentItem()
+            if not selected_item:
+                return
+            identifier = str(selected_item.data(Qt.ItemDataRole.UserRole))
+            old_weight = self.sensor_weights[ch].get(identifier, 1.0)
+            value, ok = QInputDialog.getDouble(dialog, "Вага датчика", identifier,
+                                               old_weight, 0.1, 100.0, 1)
+            if ok:
+                self.sensor_weights[ch][identifier] = value
+                selected_item.setToolTip(f"Вага {value:g}")
+        set_weight.clicked.connect(choose_weight)
+        weight_row.addWidget(set_weight)
+        weight_row.addWidget(QLabel("Лише для режиму Зважене AVG"))
+        layout.addLayout(weight_row)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel, dialog
         )
@@ -542,7 +716,8 @@ class FanArgbWindow(QMainWindow):
                      if lst.item(i).checkState() == Qt.CheckState.Checked]
             self.sensor_groups[ch] = group
             self.settings.setValue(f"groupSensors{ch}", json.dumps(group))
-            if self.source_boxes[ch - 1].currentData() not in (GROUP_AVG, GROUP_MAX):
+            self.settings.setValue(f"groupWeights{ch}", json.dumps(self.sensor_weights[ch]))
+            if self.source_boxes[ch - 1].currentData() not in (GROUP_AVG, GROUP_MAX, GROUP_WEIGHTED):
                 self.source_boxes[ch - 1].setCurrentIndex(1)  # AVG group by default
             self._update_source_boxes()
 
@@ -559,13 +734,76 @@ class FanArgbWindow(QMainWindow):
         self._update_targets()
         self._update_rpm_plot()
         self.cal_progress.setValue(len(self.cal_points[self.current_fan]))
+        self._sync_mode_controls()
+        self._refresh_history()
+        self._update_secondary_box()
+
+    def _active_curve(self) -> list[tuple[int, int]]:
+        return self.secondary_curves[self.current_fan] if self.secondary_checkbox.isChecked() else self.curves[self.current_fan]
+
+    def _sync_mode_controls(self) -> None:
+        code = self.config_types.get(self.current_fan, 3)
+        index = self.type_box.findData(code)
+        if index >= 0:
+            self.type_box.setCurrentIndex(index)
+        for widget, state in ((self.pid_checkbox, self.fan_pid_enabled[self.current_fan]),
+                              (self.dual_checkbox, self.fan_dual_enabled[self.current_fan])):
+            widget.blockSignals(True)
+            widget.setChecked(state)
+            widget.blockSignals(False)
+
+    def apply_fan_type(self) -> None:
+        wire = int(self.type_box.currentData())
+        confirm = QMessageBox.warning(
+            self, "Перевір фізичну перемичку",
+            "TYPE зберігає вибір у ESP, але НЕ перемикає проводку.\n"
+            "2/3-pin: перемичка DC, ключ живлення має підтримувати PWM.\n"
+            "4-pin: перемичка PWM, ключ постійно ON, +12 В без переривань.\n"
+            "Підтверджуєш, що перемичка та підключений вентилятор відповідають типу?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if confirm != QMessageBox.StandardButton.Yes: return
+        self.send(f"TYPE {self.current_fan} {wire}")
+        self.send(f"TYPE? {self.current_fan}")
+        self.send(f"CONFIG {self.current_fan}")
+
+    def toggle_pid(self, enabled: bool) -> None:
+        self.send(f"PID {self.current_fan} {1 if enabled else 0}")
+        self.send(f"CONFIG {self.current_fan}")
+
+    def toggle_dual(self, enabled: bool) -> None:
+        self.send(f"DUAL {self.current_fan} {1 if enabled else 0}")
+        self.send(f"CONFIG {self.current_fan}")
+
+    def set_rpm_target(self) -> None:
+        if self.config_types.get(self.current_fan, 3) == 2:
+            QMessageBox.warning(self, "RPM", "2-pin не має TACH, тому RPM-регулювання неможливе")
+            return
+        rpm, ok = QInputDialog.getInt(self, "Підтримка RPM", "Цільові оберти:",
+                                      1200, 0, 20000, 50)
+        if ok: self.send(f"RPM {self.current_fan} {rpm}")
+
+    def _refresh_history(self) -> None:
+        hist = list(self.history[self.current_fan])
+        if not hist: return
+        origin = hist[0][0]
+        self.history_pwm_curve.setData([ts-origin for ts, *_ in hist], [pwm for _,pwm,_,_ in hist])
+
+    def export_history(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Експорт журналу", "fan_history.csv", "CSV (*.csv)")
+        if not path: return
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+            writer=csv.writer(f)
+            writer.writerow(["channel", "timestamp", "pwm_percent", "rpm", "temperature_c"])
+            for ch, entries in self.history.items():
+                for row in entries: writer.writerow((ch, *row))
+        self.log(f"Історія збережена: {path}")
 
     def _update_targets(self) -> None:
         self.updating_targets = True
         for target in self.target_items:
             self.curve_plot.removeItem(target)
         self.target_items = []
-        for index, (temp, pwm) in enumerate(self.curves[self.current_fan]):
+        for index, (temp, pwm) in enumerate(self._active_curve()):
             target = pg.TargetItem(pos=(temp, pwm), size=16, symbol="o", movable=True,
                                    pen=pg.mkPen("#f2f6fa", width=2), brush=pg.mkBrush("#3abac8"))
             self.curve_plot.addItem(target)
@@ -575,14 +813,14 @@ class FanArgbWindow(QMainWindow):
         self._update_curve_line()
 
     def _update_curve_line(self) -> None:
-        points = self.curves[self.current_fan]
+        points = self._active_curve()
         self.curve_line.setData([t for t, _ in points], [p for _, p in points])
 
     def target_moved(self, index: int) -> None:
         if self.updating_targets or not self.target_items:
             return
         self.updating_targets = True
-        points = list(self.curves[self.current_fan])
+        points = list(self._active_curve())
         item = self.target_items[index]
         temp = int(round(item.pos().x()))
         pwm = int(round(item.pos().y()))
@@ -594,20 +832,56 @@ class FanArgbWindow(QMainWindow):
         pwm = max(left_p, min(right_p, pwm))
         item.setPos(temp, pwm)
         points[index] = (temp, pwm)
-        self.curves[self.current_fan] = points
+        if self.secondary_checkbox.isChecked():
+            self.secondary_curves[self.current_fan] = points
+        else:
+            self.curves[self.current_fan] = points
         self._update_curve_line()
         self.updating_targets = False
 
     def save_curve(self) -> None:
         try:
-            message = make_curve_command(self.current_fan, self.curves[self.current_fan])
+            message = make_curve_command(self.current_fan, self._active_curve())
+            if self.secondary_checkbox.isChecked(): message = message.replace("CURVE ", "CURVE2 ", 1)
         except ValueError as exc:
             QMessageBox.warning(self, "Крива PWM", str(exc))
             return
         if self.send(message):
-            self.log(f"> CURVE {self.current_fan} — запис у NVS запитано")
+            self.log(f"> {message.split()[0]} {self.current_fan} — запис у NVS запитано")
         else:
             QMessageBox.warning(self, "ESP", "Підключи ESP32 до збереження кривої")
+
+    def save_custom_profile(self) -> None:
+        data = [self.curves[ch] for ch in range(1,9)]
+        self.settings.setValue("customCurves", json.dumps(data))
+        self.log("Custom-профіль збережено на ПК")
+
+    def apply_profile(self) -> None:
+        name = self.profile_box.currentText()
+        if name == "Custom":
+            try:
+                stored = json.loads(str(self.settings.value("customCurves", "[]")))
+                curves = [[tuple(p) for p in fan] for fan in stored]
+                if len(curves) != 8 or not all(validate_curve(c) for c in curves):
+                    raise ValueError("Custom profile invalid")
+            except (TypeError, ValueError) as exc:
+                QMessageBox.warning(self, "Custom", str(exc)); return
+        else:
+            curves = [list(PRESETS[name]) for _ in range(8)]
+        if not self.port:
+            QMessageBox.warning(self, "Профіль", "Підключи ESP32 перед застосуванням")
+            return
+        confirm = QMessageBox.question(self, "Профіль охолодження",
+            f"Змінити всі 8 температурних кривих на {name} та записати в ESP32 NVS?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if confirm != QMessageBox.StandardButton.Yes: return
+        for ch, points in enumerate(curves, start=1):
+            if not self.send(make_curve_command(ch, points)):
+                QMessageBox.warning(self, "Профіль", f"Не вдалося відправити Fan {ch}")
+                return
+            self.curves[ch] = points
+        self._update_targets()
+        self.log(f"Профіль {name}: відправлено 8 кривих на збереження в ESP")
 
     def manual_override(self) -> None:
         value, accepted = QInputDialog.getInt(self, "Ручний PWM", "Швидкість у %:",
@@ -638,11 +912,39 @@ class FanArgbWindow(QMainWindow):
             self.cal_points[self.current_fan] = {}
             self.cal_progress.setValue(0)
             self._update_rpm_plot()
-            self.send(f"CAL START {self.current_fan}")
+            self.send(f"CAL SMART {self.current_fan}")
 
     def _update_rpm_plot(self) -> None:
         samples = sorted(self.cal_points[self.current_fan].items())
         self.rpm_curve.setData([p for p, _ in samples], [rpm for _, rpm in samples])
+
+    def configure_led_count(self) -> None:
+        current = self.led_counts[self.current_fan - 1] if self.led_counts else 30
+        count, ok = QInputDialog.getInt(self, "ARGB LED", "Кількість LED (1..170):", current, 1, 170)
+        if ok and self.send(f"STRIP {self.current_fan} {count}"):
+            QTimer.singleShot(400, lambda: self.send("LEDS"))
+
+    def reverse_led_strip(self) -> None:
+        direction, ok = QInputDialog.getItem(self, "ARGB напрямок", "Нумерація LED:",
+                                            ["Прямий", "Зворотний"], 0, False)
+        if ok: self.send(f"REVERSE {self.current_fan} {1 if direction == 'Зворотний' else 0}")
+
+    def set_argb_budget(self) -> None:
+        ma, ok = QInputDialog.getInt(self, "Максимальний струм", "Загальний ліміт 5В ARGB, мА:",
+                                     2000, 100, 20000, 100)
+        if ok: self.send(f"RGBBUDGET {ma}")
+
+    def configure_wifi(self) -> None:
+        ssid, ok = QInputDialog.getText(self, "Wi-Fi на ESP32", "SSID (без пробілів):")
+        if not ok or not ssid: return
+        password, ok = QInputDialog.getText(self, "Wi-Fi на ESP32", "Пароль (без пробілів):",
+                                              QLineEdit.EchoMode.Password)
+        if not ok: return
+        if " " in ssid or " " in password:
+            QMessageBox.warning(self, "Wi-Fi", "Цей протокол не підтримує пробіли у SSID/паролі")
+            return
+        # Do not log the password, and do not include it in GUI history.
+        self.send(f"WIFI SET {ssid} {password}")
 
     def toggle_sacn(self, enabled: bool) -> None:
         if not enabled:
@@ -704,6 +1006,9 @@ class FanArgbWindow(QMainWindow):
 
 
 def main() -> None:
+    if "--headless" in sys.argv:
+        from agent import run_agent
+        sys.exit(run_agent())
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     window = FanArgbWindow()

@@ -119,8 +119,9 @@ int main() {
 
     // Automatic control follows temperature, but falls back to 100% on link loss.
     assert(cooling.setAuto(0));
+    assert(cooling.setStallThreshold(0, 0)); // no simulated tach for channel 1
     cooling.setTemperature(0, 450, mock::currentMs);
-    for (int i = 0; i < 35; ++i) { mock::currentMs += 250; cooling.update(mock::currentMs); }
+    for (int i = 0; i < 65; ++i) { mock::currentMs += 250; if (i % 8 == 0) cooling.setTemperature(0, 450, mock::currentMs); cooling.update(mock::currentMs); }
     assert(fans.getPercent(0) == 60);
     mock::currentMs += CoolingController::kSensorTimeoutMs + 500;
     cooling.update(mock::currentMs);
@@ -132,10 +133,11 @@ int main() {
     console.poll();
     assert(Serial.out.find("OK CURVE_SAVED") != std::string::npos);
     assert(Serial.out.find("CURVE 1 20 30 30 40 45 60 60 80 75 100") != std::string::npos);
-    assert(Serial.out.find("PONG 2") != std::string::npos);
+    assert(Serial.out.find("PONG 4") != std::string::npos);
 
     // A calibration sweep logs 21 PWM/RPM samples, then saves them to NVS.
     Serial.out.clear();
+    cooling.setTemperature(2, 450, mock::currentMs);
     assert(cooling.startCalibration(2, mock::currentMs));
     assert(!cooling.startCalibration(1, mock::currentMs));
     for (int step = 0; step < 21; ++step) {
@@ -145,6 +147,7 @@ int main() {
         for (int quarter = 0; quarter < 8; ++quarter) {
             mock::pulse(board::kFanTachPins[2], static_cast<unsigned>(step + 3));
             mock::currentMs += 500;
+            cooling.setTemperature(2, 450, mock::currentMs);
             fans.update(mock::currentMs);
             cooling.update(mock::currentMs);
         }
@@ -161,9 +164,38 @@ int main() {
     assert(afterReboot.hasCalibration(2));
     assert(afterReboot.rpmAt(2, 20) == cooling.rpmAt(2, 20));
     assert(afterReboot.curve(0)[0].pwm == 30);
+    afterReboot.setTemperature(3, 450, mock::currentMs);
     assert(afterReboot.startCalibration(3, mock::currentMs));
     assert(afterReboot.cancelCalibration());
     assert(!afterReboot.hasCalibration(3));
 
-    std::cout << "PASS: PWM, RPM, ARGB, serial, curves, NVS, calibration, fail-safe\n";
+    // 3-pin is the first-boot default: two native GPIO per channel.
+    FanController multi;
+    assert(multi.begin());
+    assert(multi.configuredType(0) == FanController::Type::ThreePin);
+    assert(multi.dcHardwareAvailable()); // host simulation was compiled with PWM validated
+    assert(multi.setPercent(0, 35));
+    assert(multi.getPercent(0) == 35);
+    assert(multi.setType(1, FanController::Type::TwoPin));
+    assert(multi.setPercent(1, 40));
+    assert(!multi.hasRpmFeedback(1));
+    assert(multi.getRpm(1) == 0);
+    assert(multi.setType(1, FanController::Type::ThreePin));
+    assert(multi.hasRpmFeedback(1));
+    assert(multi.setType(2, FanController::Type::FourPin));
+    assert(multi.setPercent(2, 20));
+    assert(multi.hasRpmFeedback(2));
+    // No presence-sense line, so neither 3 nor 4 contact count is detected.
+    assert(multi.detectedType(0) == FanController::Type::Unknown);
+    assert(multi.detectedType(2) == FanController::Type::Unknown);
+    assert(!multi.setType(0, FanController::Type::Auto));
+    Serial.out.clear();
+    Serial.send("TYPE? 1\nTYPE 1 AUTO\nTYPE 1 3\nSTATUS\n");
+    console.poll();
+    assert(Serial.out.find("TYPE 1 SET=3 DETECTED=255 RPM_OK=1 DC_HW=1") != std::string::npos);
+    assert(Serial.out.find("ERR AUTO unavailable") != std::string::npos);
+    assert(Serial.out.find("OK TYPE_SAVED") != std::string::npos);
+    assert(Serial.out.find("TYPE=3 RPM_OK=1") != std::string::npos);
+
+    std::cout << "PASS: PWM, RPM, ARGB, serial, curves, NVS, calibration, fan types\n";
 }

@@ -1,5 +1,5 @@
 import unittest
-from pc_app.monitor import (GROUP_AVG, GROUP_MAX, MAX_ALL, TemperatureSensor,
+from pc_app.monitor import (GROUP_AVG, GROUP_MAX, GROUP_WEIGHTED, MAX_ALL, TemperatureSensor,
                             parse_temperatures, resolve_temperature)
 
 
@@ -17,6 +17,8 @@ class SensorParsingTests(unittest.TestCase):
         self.assertIsNone(resolve_temperature(GROUP_AVG, sensors, ["cpu", "missing"]))
         self.assertIsNone(resolve_temperature(GROUP_MAX, [], group))
         self.assertEqual(resolve_temperature(MAX_ALL, sensors, group), 76.0)
+        self.assertAlmostEqual(resolve_temperature(GROUP_WEIGHTED, sensors, group, {"cpu":2.0,"gpu":1.0}), 70.66666667)
+        self.assertIsNone(resolve_temperature(GROUP_WEIGHTED, sensors, group, {"cpu":0.0,"gpu":1.0}))
 
     def test_walks_all_valid_temperatures_and_ignores_other_types(self):
         tree = {

@@ -68,3 +68,12 @@ A5 5A 03 02 00 FF 00 00 00 FF 00 D0 ED
 The ESP displays incoming RGB values in **External** mode and automatically uses brightness 255 on first external frame. External packets affect only lighting, never fans. Legacy `LED`, `RAINBOW`, `OFF` commands remain available.
 
 **Important compatibility:** v3 desktop and firmware must be updated together; older serial applications running at 115200 baud will not communicate correctly.
+
+## Universal 2/3/4-pin fan protocol (v4)
+
+- `TYPE? <ch>` returns `TYPE <ch> SET=<2|3|4> DETECTED=255 RPM_OK=<0|1> DC_HW=<0|1>` (no connector sensing; DC_HW is compile-time validation, not measured presence).
+- `TYPE <ch> 2|3|4` saves a user-confirmed connector mode; 3-pin is default on fresh NVS. `TYPE <ch> AUTO` is rejected (no hardware detector). 2/3-pin power PWM is held at 100% until the smart key is verified and `FAN_DC_PWM_VALIDATED=1` is built into firmware.
+- `CONFIG <ch>` now contains `TYPE` and `DETECTED`; `STATUS` adds `TYPE` and `RPM_OK`.
+- Type changes invalidate RPM calibration for that channel. A 2-pin fan has no TACH: RPM, PID and tach-based stall detection are unavailable.
+
+See [FAN_MODES.md](FAN_MODES.md) for physical jumper wiring, frequency validation and limitations.

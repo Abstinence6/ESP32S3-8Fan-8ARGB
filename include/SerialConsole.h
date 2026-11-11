@@ -4,10 +4,11 @@
 #include "FanController.h"
 #include "ArgbController.h"
 #include "CoolingController.h"
+#include "NetworkRgbBridge.h"
 
 class SerialConsole {
 public:
-    SerialConsole(Stream& serial, FanController& fans, ArgbController& leds, CoolingController& cooling);
+    SerialConsole(Stream& serial, FanController& fans, ArgbController& leds, CoolingController& cooling, NetworkRgbBridge* wifi = nullptr);
     void begin();
     void poll();
 
@@ -26,6 +27,7 @@ private:
     FanController& fans_;
     ArgbController& leds_;
     CoolingController& cooling_;
+    NetworkRgbBridge* wifi_;
     char line_[96] = {};
     uint8_t size_ = 0;
     bool discardingLongLine_ = false;

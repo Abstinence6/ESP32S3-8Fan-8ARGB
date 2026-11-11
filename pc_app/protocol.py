@@ -16,10 +16,15 @@ class FanStatus:
     deci_c: int
     mode: str
     fresh: bool
+    target_rpm: int | None = None
+    fault: bool = False
+    detected_type: int | None = None
+    rpm_feedback: bool = True
 
 
 STATUS_RE = re.compile(
-    r"^CH ([1-8]) FAN=(\d+)% RPM=(\d+) TEMP=(\d+) MODE=(auto|manual|cal) SENSOR=(ok|stale)$"
+    r"^CH ([1-8]) FAN=(\d+)% RPM=(\d+) TEMP=(\d+) "
+    r"MODE=(auto|manual|cal|rpm) SENSOR=(ok|stale)(?:\s+(.*))?$"
 )
 
 
@@ -27,8 +32,21 @@ def parse_status(line: str) -> FanStatus | None:
     match = STATUS_RE.fullmatch(line.strip())
     if not match:
         return None
-    ch, pwm, rpm, temp, mode, sensor = match.groups()
-    return FanStatus(int(ch), int(pwm), int(rpm), int(temp), mode, sensor == "ok")
+    ch, pwm, rpm, temp, mode, sensor, extra = match.groups()
+    metadata: dict[str, str] = {}
+    for token in (extra or "").split():
+        if "=" in token:
+            key, value = token.split("=", 1)
+            metadata[key] = value
+    try:
+        target = int(metadata["TARGET"]) if "TARGET" in metadata else None
+        wiring = int(metadata["TYPE"]) if "TYPE" in metadata else None
+        fault = bool(int(metadata.get("FAULT", "0")))
+        feedback = bool(int(metadata.get("RPM_OK", "1")))
+    except ValueError:
+        return None
+    return FanStatus(int(ch), int(pwm), int(rpm), int(temp), mode,
+                     sensor == "ok", target, fault, wiring, feedback)
 
 
 def validate_curve(points: list[tuple[int, int]]) -> bool:
