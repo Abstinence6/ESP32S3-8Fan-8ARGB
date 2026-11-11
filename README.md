@@ -132,3 +132,7 @@ Docs: [Fan modes](docs/FAN_MODES.md), [future PCB](docs/PCB_NEXT.md), [Windows a
 ### v4.1: no-key safety diagnostics
 
 The no-key build retains `FAN_DC_PWM_VALIDATED=0` and the 3-pin default. Commands `HEALTH` / `HEALTH 1` expose read-only fan state, `TACH=seen|unseen|na`, thermal freshness, and whether DC power PWM is validated. `ALLFAN` is now all-or-nothing: invalid fan duties return an error without changing any channel. Stall monitoring remains active after PC sensor loss if the TACH was previously confirmed. The desktop GUI includes **Діагностика 8 вентиляторів** and **Журнал аварій** buttons. No power-key chip is selected and **no new hardware is required to build or run these software diagnostics**.
+
+### v4.2: Fan TACH observation without a power key
+
+`SELFTEST` collects falling TACH edges for 5 seconds on all eight fans and reports `OK`, `NO_TACH`, `NA` (2-pin) or `INCONCLUSIVE` if the operating point changed. The command **does not change PWM duty or fan operating modes**. A **Тест TACH (5 с)** button is available in the Windows GUI. This is useful for validating wiring, while power PWM on 2/3-pin fans remains locked at 100% until the actual smart key is selected and bench-qualified. See [`docs/PROTOCOL.md`](docs/PROTOCOL.md).

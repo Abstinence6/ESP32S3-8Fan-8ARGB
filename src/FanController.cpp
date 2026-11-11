@@ -76,6 +76,14 @@ bool FanController::tachObserved(uint8_t channel) const {
     return channel < board::kChannelCount && hasRpmFeedback(channel) && tachObserved_[channel];
 }
 
+uint32_t FanController::tachPulseCount(uint8_t channel) const {
+    if (channel >= board::kChannelCount) return 0;
+    portENTER_CRITICAL(&tachMux_);
+    const uint32_t pulses = tachPulses_[channel];
+    portEXIT_CRITICAL(&tachMux_);
+    return pulses;
+}
+
 bool FanController::setPercent(uint8_t channel, uint8_t percent) {
     if (channel >= board::kChannelCount || percent > 100) return false;
     const bool permitted = canControl(channel, percent);

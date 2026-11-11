@@ -20,6 +20,8 @@ private:
     static uint16_t crcByte(uint16_t crc, uint8_t value);
     void printStatus();
     void printHealth(uint8_t channel);
+    void startSelfTest(uint32_t nowMs);
+    void finishSelfTest();
     void printHelp();
     static bool parseByte(const char* token, uint8_t maximum, uint8_t& out);
     static bool parseU16(const char* token, uint16_t maximum, uint16_t& out);
@@ -29,6 +31,11 @@ private:
     ArgbController& leds_;
     CoolingController& cooling_;
     NetworkRgbBridge* wifi_;
+    bool selfTestActive_ = false;
+    uint32_t selfTestStartMs_ = 0;
+    uint32_t selfTestBasePulses_[board::kChannelCount] = {};
+    uint8_t selfTestBasePwm_[board::kChannelCount] = {};
+    FanController::Type selfTestBaseType_[board::kChannelCount] = {};
     char line_[96] = {};
     uint8_t size_ = 0;
     bool discardingLongLine_ = false;

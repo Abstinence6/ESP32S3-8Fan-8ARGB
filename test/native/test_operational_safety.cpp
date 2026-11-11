@@ -93,5 +93,35 @@ int main() {
     Serial.send("HEALTH 0\nHEALTH 9\nHEALTH 1 extra\n");
     console.poll();
     assert(Serial.out.find("ERR arguments") != std::string::npos);
-    std::cout << "PASS: atomic ALLFAN, offline stall, non-invasive health\n";
+    // Non-invasive five-second harness verification: no PWM or fan mode change.
+    const uint8_t oldPwm = fans.getPercent(0);
+    const auto oldMode = cooling.mode(0);
+    Serial.out.clear();
+    Serial.send("SELFTEST\nSELFTEST\n");
+    console.poll();
+    assert(Serial.out.find("SELFTEST_STARTED 5000") != std::string::npos);
+    assert(Serial.out.find("ERR selftest busy") != std::string::npos);
+    assert(fans.getPercent(0) == oldPwm);
+    mock::pulse(board::kFanTachPins[0], 20);
+    mock::currentMs += 4999U;
+    fans.update(mock::currentMs);
+    console.poll();
+    assert(Serial.out.find("SELFTEST_END") == std::string::npos);
+    mock::currentMs += 1U;
+    fans.update(mock::currentMs);
+    console.poll();
+    assert(Serial.out.find("SELFTEST 1 RESULT=OK PULSES=20") != std::string::npos);
+    assert(Serial.out.find("SELFTEST 2 RESULT=NO_TACH") != std::string::npos);
+    assert(Serial.out.find("SELFTEST_END") != std::string::npos);
+    assert(fans.getPercent(0) == oldPwm && cooling.mode(0) == oldMode);
+
+    Serial.out.clear();
+    Serial.send("TYPE 2 2\nSELFTEST\nSELFTEST CANCEL\n");
+    console.poll();
+    assert(Serial.out.find("SELFTEST_STARTED 5000") != std::string::npos);
+    assert(Serial.out.find("SELFTEST_CANCELLED") != std::string::npos);
+    mock::currentMs += 6000U;
+    console.poll();
+    assert(Serial.out.find("SELFTEST_END") == std::string::npos);
+    std::cout << "PASS: atomic ALLFAN, offline stall, non-invasive health and TACH self-test\n";
 }
