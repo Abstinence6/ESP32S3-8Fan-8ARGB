@@ -1,0 +1,51 @@
+name: Publish validated v3 source bundle
+on:
+  push:
+    branches: [feat/openrgb-e131-sensor-groups]
+    paths: ['.bootstrap/v3.b64']
+permissions:
+  contents: write
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Expand changed source files
+        run: |
+          python3 - <<'PY'
+          import base64
+          import json
+          import zlib
+          from pathlib import Path
+          p = Path('.bootstrap/v3.b64')
+          files = json.loads(zlib.decompress(base64.urlsafe_b64decode(p.read_text())))
+          for filename, content in files.items():
+              path = Path(filename)
+              if path.is_absolute() or '..' in path.parts or '.github' in path.parts:
+                  raise RuntimeError('Path not allowed: ' + filename)
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_text(content, encoding='utf-8')
+          p.unlink()
+          print('Expanded', len(files), 'files')
+          PY
+      - name: Native C++ firmware tests
+        run: bash test/native/run.sh
+      - name: Python protocol and sensor group tests
+        run: python3 -m unittest discover -s pc_app/tests -v
+      - name: Python syntax check
+        run: python3 -m compileall -q pc_app
+      - name: PlatformIO ESP32-S3 compile
+        run: |
+          python3 -m pip install platformio
+          pio run -e esp32s3
+      - name: Commit and push verified sources
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'feat: OpenRGB E1.31 pixel streaming and grouped temperature averaging'
+          git push origin HEAD:feat/openrgb-e131-sensor-groups
