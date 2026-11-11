@@ -10,6 +10,10 @@ CoolingController cooling(fans, Serial);
 SerialConsole console(Serial, fans, leds, cooling);
 
 void setup() {
+#if !ARDUINO_USB_CDC_ON_BOOT
+    // 921600 baud plus blocking NeoPixel::show() needs a large UART RX ring.
+    Serial.setRxBufferSize(4096);
+#endif
     Serial.begin(board::kSerialBaud);
     // No 'while (!Serial)' here: fan control must start without a PC attached.
     if (!fans.begin()) {
