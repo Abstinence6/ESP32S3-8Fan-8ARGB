@@ -66,3 +66,5 @@ This is **manual E1.31 integration**, not automatic HID/USB discovery in OpenRGB
 The packaged `FanARGBControl.exe --headless` runs a **headless companion** after Windows logon. It streams CPU/GPU/SSD temperatures and bridges OpenRGB E1.31 to USB. To register the built EXE in Task Scheduler: `powershell -ExecutionPolicy Bypass -File pc_app/register_agent.ps1`; remove with `pc_app/unregister_agent.ps1`. User must also run LibreHardwareMonitor web server in their session.
 
 This is **not** a Windows Service that operates before user logon. It owns the COM port, so close the agent before opening the GUI. Logging is written to `%LOCALAPPDATA%\FanARGBControl\agent.log`. Missing LHM readings cause the ESP to fall back to 100% fan PWM.
+
+**Important for Windows UI:** `TYPE?` deliberately reports `DETECTED=255` in this no-expander build: there is no physical pin-4 sensor, so the displayed 2/3/4-pin type is the user-confirmed setting, not an automatically detected connector. The GUI cannot switch the hardware jumper. DC outputs remain full-speed-only until `FAN_DC_PWM_VALIDATED=1` is explicitly configured after validating the intelligent key.
