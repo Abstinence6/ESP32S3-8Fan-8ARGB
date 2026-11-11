@@ -77,3 +77,13 @@ The ESP displays incoming RGB values in **External** mode and automatically uses
 - Type changes invalidate RPM calibration for that channel. A 2-pin fan has no TACH: RPM, PID and tach-based stall detection are unavailable.
 
 See [FAN_MODES.md](FAN_MODES.md) for physical jumper wiring, frequency validation and limitations.
+
+## v4.1: Operational safety and read-only diagnostics
+
+- `ALLFAN <pwm>` is now **all-or-nothing**. It checks that every one of the eight channels can apply the requested duty before changing any channel; with the default `FAN_DC_PWM_VALIDATED=0`, `ALLFAN 35` returns `ERR fan control blocked` and changes nothing. `ALLFAN 100` remains permitted. A single disallowed `FAN n p` is rejected with the same error and does not enter Manual mode.
+- `ALLAUTO` is also rejected while a calibration is running, preventing a partial mode change.
+- `HEALTH` reports the state of all eight channels, terminated by `HEALTH_END`. `HEALTH <ch>` reports one channel (also terminated by `HEALTH_END`) without changing PWM, modes, GPIO, fan type or temperature settings.
+- Health lines have the form `HEALTH 1 TYPE=3 DETECTED=255 PWM=100 RPM=0 TACH=unseen SENSOR=stale FAULT=0 DC_READY=0 MODE=auto`.
+- `TACH=seen` means *some real tach pulses have been observed since this boot or type change*, **not** that the fan is currently rotating. `TACH=unseen` can mean a missing/broken tach connection, a stopped fan, or a not-yet-spinning fan. `TACH=na` is expected for 2-pin. `TYPE` is the user-selected logical mode; `DETECTED=255` remains unknown because no identification hardware exists. `DC_READY=0` means the DC-power PWM safety interlock is active.
+- After TACH has actually been seen, a later tach failure can trigger stall recovery even if the PC stops providing temperatures. At that point the controller already commands 100% duty, but it still records a stall event and attempts a safe fan restart. To avoid false alarms on unconnected channels, stall detection is not armed before the first genuine TACH sample. For 2-pin, use smart-key fault telemetry in future hardware; no TACH means no RPM/stall feedback.
+- In every mode, no recent temperature update means a fail-safe request of 100% duty. **Without a validated key and physical fail-safe circuitry, software cannot guarantee actual fan power when the MCU is resetting/unpowered.**

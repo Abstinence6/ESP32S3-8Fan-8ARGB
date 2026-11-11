@@ -15,6 +15,7 @@ void IRAM_ATTR FanController::tachInterrupt(void* arg) {
 bool FanController::begin() {
     for (uint8_t i = 0; i < board::kChannelCount; ++i) {
         configured_[i] = static_cast<Type>(board::kDefaultFanType);
+        tachObserved_[i] = false;
         if (ledcSetup(i, board::kFanPwmFrequencyHz, board::kFanPwmResolutionBits) <= 0.0)
             return false;
         ledcAttachPin(board::kFanPwmPins[i], i);
@@ -53,6 +54,7 @@ bool FanController::setType(uint8_t channel, Type requested) {
     if (old != requested) {
         setPercent(channel, 100); // safe before accepting a different type
         configured_[channel] = requested;
+        tachObserved_[channel] = false;
     }
     return setPercent(channel, 100);
 }
@@ -68,6 +70,10 @@ FanController::Type FanController::detectedType(uint8_t) const {
 bool FanController::hasRpmFeedback(uint8_t channel) const {
     return channel < board::kChannelCount &&
         (configured_[channel] == Type::ThreePin || configured_[channel] == Type::FourPin);
+}
+
+bool FanController::tachObserved(uint8_t channel) const {
+    return channel < board::kChannelCount && hasRpmFeedback(channel) && tachObserved_[channel];
 }
 
 bool FanController::setPercent(uint8_t channel, uint8_t percent) {
@@ -108,6 +114,7 @@ void FanController::update(uint32_t nowMs) {
     for (uint8_t i = 0; i < board::kChannelCount; ++i) {
         const uint32_t delta = currentPulses[i] - previousPulses_[i];
         previousPulses_[i] = currentPulses[i];
+        if (delta > 0 && hasRpmFeedback(i)) tachObserved_[i] = true;
         rpm_[i] = static_cast<uint32_t>(
             (static_cast<uint64_t>(delta) * 60000ULL) /
             (static_cast<uint64_t>(elapsedMs) * ppr_[i]));
