@@ -217,9 +217,9 @@ class FanArgbWindow(QMainWindow):
         choose_row.addWidget(self.fan_box)
         choose_row.addWidget(QLabel("Тип:"))
         self.type_box = QComboBox()
-        for name, wire in (("Авто", 0), ("2-pin / ключ", 2), ("3-pin / ключ+TACH", 3), ("4-pin / PWM", 4)):
+        for name, wire in (("2-pin / ключ", 2), ("3-pin / ключ+TACH", 3), ("4-pin / PWM", 4)):
             self.type_box.addItem(name, wire)
-        self.type_box.setCurrentIndex(3)
+        self.type_box.setCurrentIndex(1)
         choose_row.addWidget(self.type_box)
         type_button = QPushButton("Встановити тип")
         type_button.clicked.connect(self.apply_fan_type)
@@ -742,7 +742,7 @@ class FanArgbWindow(QMainWindow):
         return self.secondary_curves[self.current_fan] if self.secondary_checkbox.isChecked() else self.curves[self.current_fan]
 
     def _sync_mode_controls(self) -> None:
-        code = self.config_types.get(self.current_fan, 4)
+        code = self.config_types.get(self.current_fan, 3)
         index = self.type_box.findData(code)
         if index >= 0:
             self.type_box.setCurrentIndex(index)
@@ -754,14 +754,15 @@ class FanArgbWindow(QMainWindow):
 
     def apply_fan_type(self) -> None:
         wire = int(self.type_box.currentData())
-        if wire in (2, 3):
-            confirm = QMessageBox.warning(
-                self, "Електроживлення вентилятора",
-                "Для 2/3-pin потрібен силовий ключ з перевіреною частотою PWM та MCP23017. "
-                "4-pin має працювати з незмінними 12 В. Підтверджуєш зміну режиму?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            if confirm != QMessageBox.StandardButton.Yes: return
-        self.send(f"TYPE {self.current_fan} {'AUTO' if wire == 0 else wire}")
+        confirm = QMessageBox.warning(
+            self, "Перевір фізичну перемичку",
+            "TYPE зберігає вибір у ESP, але НЕ перемикає проводку.\n"
+            "2/3-pin: перемичка DC, ключ живлення має підтримувати PWM.\n"
+            "4-pin: перемичка PWM, ключ постійно ON, +12 В без переривань.\n"
+            "Підтверджуєш, що перемичка та підключений вентилятор відповідають типу?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if confirm != QMessageBox.StandardButton.Yes: return
+        self.send(f"TYPE {self.current_fan} {wire}")
         self.send(f"TYPE? {self.current_fan}")
         self.send(f"CONFIG {self.current_fan}")
 
@@ -774,7 +775,7 @@ class FanArgbWindow(QMainWindow):
         self.send(f"CONFIG {self.current_fan}")
 
     def set_rpm_target(self) -> None:
-        if self.config_types.get(self.current_fan, 4) == 2:
+        if self.config_types.get(self.current_fan, 3) == 2:
             QMessageBox.warning(self, "RPM", "2-pin не має TACH, тому RPM-регулювання неможливе")
             return
         rpm, ok = QInputDialog.getInt(self, "Підтримка RPM", "Цільові оберти:",

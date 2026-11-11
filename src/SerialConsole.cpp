@@ -314,7 +314,7 @@ void SerialConsole::handleLine(char* line) {
         if (!strcmp(value, "3")) type = FanController::Type::ThreePin;
         if (!strcmp(value, "4")) type = FanController::Type::FourPin;
         if (!cooling_.setFanType(ch-1, type)) {
-            serial_.println(F("ERR type unsupported or DC hardware absent")); return;
+            serial_.println(F("ERR AUTO unavailable without pin4 detection or invalid TYPE")); return;
         }
         serial_.println(F("OK TYPE_SAVED")); return;
     }
@@ -438,7 +438,7 @@ void SerialConsole::printHelp() {
     serial_.println(F("TEMP2 / CURVE2 / CURVE2? for second thermal source; DUAL <ch> 0|1"));
     serial_.println(F("PID <ch> 0|1 | RPM <ch> <rpm> (requires calibration)"));
     serial_.println(F("PPR <ch> 1..12 | CRIT <ch> 40..120 | STALL <ch> 0..3000"));
-    serial_.println(F("TYPE? <ch> | TYPE <ch> 2|3|4|AUTO (DC requires MCP23017/validated key)"));
+    serial_.println(F("TYPE? <ch> | TYPE <ch> 2|3|4 (matches physical jumper; no auto)"));
     serial_.println(F("CONFIG <ch> | FAULTS | CLEARFAULT <ch> | CLEARHISTORY"));
     serial_.println(F("LED <ch> <R> <G> <B> | ALLLED <R> <G> <B>"));
     serial_.println(F("OFF <ch> | ALLOFF | RAINBOW <ch> | BRIGHT <ch> <0..255>"));
@@ -463,7 +463,7 @@ void SerialConsole::printStatus() {
         serial_.print(F(" SENSOR=")); serial_.print(sensor);
         serial_.print(F(" TARGET=")); serial_.print(cooling_.rpmTarget(i));
         serial_.print(F(" FAULT=")); serial_.print(cooling_.faulted(i) ? 1 : 0);
-        serial_.print(F(" TYPE=")); serial_.print(static_cast<unsigned>(cooling_.detectedFanType(i)));
+        serial_.print(F(" TYPE=")); serial_.print(static_cast<unsigned>(cooling_.fanType(i)));
         serial_.print(F(" RPM_OK=")); serial_.print(fans_.hasRpmFeedback(i) ? 1 : 0);
         serial_.println("");
     }

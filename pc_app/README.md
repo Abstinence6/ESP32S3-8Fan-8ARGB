@@ -52,11 +52,9 @@ OpenRGB **E1.31 Devices** send RGB pixels to the local companion over UDP 5568, 
 
 This is **manual E1.31 integration**, not automatic HID/USB discovery in OpenRGB and not a native SignalRGB plugin. For a step-by-step OpenRGB configuration and limitations, see [docs/OPENRGB.md](../docs/OPENRGB.md).
 
-**GPIO budget (universal 8-fan PCB):** each fan channel uses 2 direct ESP32-S3 GPIOs (PWM + TACH), 1 MCP23017 output (12 V bypass/mode) and 1 MCP23017 input (pin-4 detect). One shared MCP23017 uses 2 additional ESP32 GPIOs for SDA/SCL. The eight ARGB data outputs require another 8 ESP32 GPIOs. This is an interface plan, not a validated production schematic.
-
 ## v4: enhanced cooling and optional fan connector types
 
-- Choose a fan in the GUI and set **Type: Auto, 2-pin, 3-pin, 4-pin**. Only 4-pin mode works on the original board; DC 2/3-pin modes require the smart high-side keys and MCP23017 adapter described in [`docs/FAN_MODES.md`](../docs/FAN_MODES.md). Auto never guesses a 2-wire fan from a missing TACH signal.
+- Choose a fan in the GUI and set **Type: 2-pin, 3-pin (default), or 4-pin**. One PWM and one TACH ESP32-S3 GPIO per fan. There is no GPIO expander or automatic type detector. The choice must match the physical DC/PWM jumper on the PCB; the type button asks for confirmation. 2/3-pin duty under 100% remains disabled until the intelligent high-side key is verified for 25 kHz motor PWM and `FAN_DC_PWM_VALIDATED=1` is explicitly enabled in firmware. See [`docs/FAN_MODES.md`](../docs/FAN_MODES.md).
 - **Smart calibration** (requires valid temperatures and RPM feedback), optional PID and target RPM (not available on 2-pin), RPM/PWM live status, second temperature-based curve, and per-fan calibration migration across firmware versions.
 - Sensor sources: MAX all, one sensor, AVG/MAX of a group and weighted average with per-sensor weights (set via **Вибрати датчики групи**).
 - Named curve presets **Silent**, **Balanced**, **Performance**, and local **Custom**. Apply to all eight channels with confirmation. Curves are then stored in ESP NVS.

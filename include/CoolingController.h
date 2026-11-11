@@ -101,7 +101,7 @@ private:
         uint16_t stallRpm;
         uint8_t pidEnabled;
         uint8_t dualEnabled;
-        uint8_t fanType; // 0=autodetect, 2=DC/no tach, 3=DC/tach, 4=PWM/tach
+        uint8_t fanType; // 2=DC/no tach, 3=DC/tach, 4=PWM/tach; 0 is rejected
         uint32_t checksum;
     };
     struct FaultStore {

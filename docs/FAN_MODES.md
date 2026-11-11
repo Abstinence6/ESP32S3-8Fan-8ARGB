@@ -1,66 +1,58 @@
-# Universal 2-, 3- and 4-pin PC fan headers (PCB revision, provisional)
+# 2/3/4-pin fans: 3-pin-first PCB, no GPIO expander
 
-**Status:** the firmware supports the types and a hardware mode-selection interface; the new power-switch PCB is **not built or validated**. `kEnableFanModeExpander` defaults to `false`, so the existing PCB remains 4-pin PWM only. Do not enable DC modes until the actual intelligent high-side switch's datasheet has been checked.
+**Status:** firmware compiles for 8 channels; the power circuit is a *proposed design*, not a tested schematic. The user will install intelligent high-side power switches. There is **no MCP23017, I2C mode switch or automatic 4th-contact detector**.
 
-## One PWM channel, two conditioned electrical destinations
+## GPIO budget
 
-Each fan uses **one independent ESP32-S3 LEDC channel** on `kFanPwmPins[ch]` at 25 kHz. The same *logical duty cycle* controls either the 4th signal contact or the switched power. It must **not** be connected to both electrical destinations unconditioned.
+| Per channel | GPIO on ESP32-S3 | Operation |
+| --- | --- | --- |
+| `PWM[ch]` | 1 | One logical 25 kHz duty stream; used by either selected power-key path or pin4 PWM path |
+| `TACH[ch]` | 1 | RPM pulse input with an external pull-up to **3.3 V** (2-pin has no feedback) |
+| ARGB | 1 | Independent data line, with correct 5 V logic/interface hardware |
+
+8 fans + 8 ARGB = **24 ESP32-S3 GPIO total**, no GPIO expander. Reserve USB, flash/PSRAM and strapping pins according to the exact ESP32-S3 module.
+
+## Physical selection is a jumper, not firmware
 
 ```text
- ESP32-S3 PWM[ch] ──┬── NPN/OD transistor ──────────────> fan pin4 PWM (4-pin only)
-                    │   (transistor INVERTS GPIO)
-                    └── inverter/buffer -> OR gate ──────> smart HIGH-SIDE key IN
-                                         ^
-                    MCP23017 GPA[ch] ────┘ FORCE_100% / BYPASS
-
-                         +12V ──> smart high-side key ────> fan pin2 (+12V)
-                         GND ────────────────────────────> fan pin1 (GND)
-                         fan pin3 (TACH) ── pull-up 3.3V ─> ESP32 GPIO_TACH[ch]
-                         fan pin4 (PWM) ── protected sense ─> MCP23017 GPB[ch]
+   ESP32 PWM[ch] ---> NPN open-collector ---> 4-pin connector contact 4
+          |
+          +---> conditioned/inverted PWM ---> [ DC  o--o  KEY_IN ]
+                                               [ PWM o--o  ON_LEVEL ]
+ +12 V ---> intelligent high-side switch ---> fan contact 2 (+12V)
+ GND ---------------------------------------> fan contact 1 (GND)
+ TACH contact 3 -- 10k pull-up to 3.3V ----> ESP32 TACH[ch]
 ```
 
-**For 4-pin:** `FORCE_100%=1` holds the *power switch* continuously ON; only fan pin4 is PWM controlled, with fan supply steady at 12 V. **For 2/3-pin:** `FORCE_100%=0`; the fan has no pin4 and the power switch follows the correctly polarized PWM. At 100% the power switch is continuously ON. An open-collector signal output is required at pin4; do not apply 12 V there.
+**3-pin (default):** set the jumper to **DC**. The intelligent high-side key receives the properly conditioned PWM signal and controls fan +12 V. TACH comes from contact 3; its signal may be unreliable during power chopping, so test with an oscilloscope and compare RPM readings.
 
-The intelligent key has to be explicitly rated for its current/inductive motor loads, startup/inrush, diagnostics, heat sinking, and **PWM operation at 25 kHz**. Many automotive/industrial intelligent high-side switches are NOT rated for such fast modulation; if its datasheet gives a lower frequency, use a separate lower-frequency supply PWM generator (or DC voltage converter) rather than tying the two PWM streams. Do not infer suitable PWM frequency from its current rating alone.
+**2-pin:** same **DC** jumper, with no TACH. RPM feedback, stall detection by RPM, calibration and PI/PID are unavailable. Any fault diagnosis must come from a separate diagnostic interface of the chosen key (not yet connected).
 
-**Fail-safe hardware design is mandatory:** an MCU reset, unpowered MCP23017, loose I2C cable or floating digital input must leave the +12 V smart switch in fully ON mode for cooling. Provide a pull-up, suitable logic gating, proper 3.3 V supply sequencing and a fault-tolerant default state in the discrete hardware. Software alone cannot guarantee this. Use current-limit/fault outputs of the specific smart switch once chosen. A schematic review is required before connecting fans.
+**4-pin:** set jumper to **PWM**. The smart key receives a stable **ON level**, ensuring constant +12 V, while the open-collector PWM output drives contact 4 at 25 kHz. The MCU cannot change the jumper via a software command. Contact 4 must **not** see 12 V and must not be driven push-pull into the fan's internal pull-up.
 
-## Optional MCP23017 (`kEnableFanModeExpander = true` after wiring)
+The drawing is logical, **not a checked transistor schematic**. The key's IN polarity, threshold, current, PWM response and default-at-reset require a verified circuit. PWM must be conditioned so that `FAN 100` means a continuously ON key, **even at ESP reset or when firmware hangs**. A simple GPIO pull resistor alone may not guarantee that. Review the actual smart switch datasheet first.
 
-| Pins | Purpose | Reset-safe requirement |
-| --- | --- | --- |
-| `GPA0..7` | `FORCE_100%` / power bypass for fan 1–8 | External pull-UP to force steady fan power |
-| `GPB0..7` | Detect an internal PWM pull-up on fan contact 4 | A **protected 3.3 V logic sense circuit**; do not feed 5 V directly |
-| ESP GPIO33/34 | I2C SDA/SCL (provisional) | Verify accessibility on your specific S3 module/PCB |
+## PWM frequency and safety interlock
 
-MCP23017 address `0x20`, BANK=0 register layout. Adjust as needed in `BoardConfig.h` and verify 3.3 V I2C pull-ups. The firmware does not read a raw 5 V PWM pin directly. Port B inputs must have a defined low state when pin4 is unconnected, while presenting suitably high impedance to the fan's PWM input pull-up.
+The firmware currently uses a single 25 kHz LEDC stream per fan. **That is the intended 4-pin PWM frequency, not a guarantee that a DC high-side key supports 25 kHz**. Confirm the key allows PWM at this frequency at the motor's expected inrush/current/thermal load. If not, redesign the driving stage or configure separate compatible PWM frequencies/timers before enabling DC control; switching all fans' supply at 25 kHz without validation is unsafe.
 
-## Automatic type detection — conservative
+By default, `include/BoardConfig.h` has `kDcSupplyPwmValidated = false`. 2/3-pin channels are deliberately locked at 100% duty until your hardware has passed validation. When it has, set `FAN_DC_PWM_VALIDATED=1` in the PlatformIO environment (or in the header) and **reflash** the ESP32; it then permits 0–100% on DC-mode channels. This is a compile-time acknowledgment of bench-tested hardware, not automatic detection.
 
-1. All outputs start at **100%**, high-side power switches bypassed.
-2. After three consecutive 1-second samples with 4th contact's internal pull-up present: classify **4-pin**, keep power ON and use 25 kHz pin4 PWM.
-3. With pin4 absent and credible TACH over three samples: classify **3-pin**, enable supply PWM.
-4. No pin4 and no TACH is **unresolved**: could be 2-pin, failed 3-pin, disconnected fan or a nonstandard fan. Remain at full supply voltage. The user must confirm `TYPE n 2` after testing.
+Also test fans that stall at low duty. The firmware's thermal safety action can request 100%, but **independent hardware fail-safe must keep the key fully ON whenever ESP is reset/offline**. A 4-pin cable with a 3-pin jumper or a 3-pin cable with the PWM jumper is a mismatched wiring state; do not change jumpers while powered.
 
-`TYPE 1 AUTO` enables auto detection **only if the expander and sense circuits are working**. `TYPE 1 2`, `TYPE 1 3`, `TYPE 1 4` set explicit wiring type and persist it to ESP NVS. Switching type clears an old calibration curve **PWM→RPM**, because power PWM and 4-wire PWM are not interchangeable.
+## Firmware commands and persistence
 
-- 4-pin: RPM feedback, open-loop PWM and calibrated closed-loop RPM/PID.
-- 3-pin: RPM feedback can work at stable full power; pulsing the supply may interrupt/corrupt TACH transitions. Closed-loop RPM/calibration require validation with the specific fan/key/power electronics.
-- 2-pin: no TACH. PWM-percent regulation only; **no measured RPM, no PID, no stall detection based on TACH**, and no PWM→RPM calibration. Key's current/fault diagnostics can later add blocked-rotor protection, but cannot measure RPM directly.
+- Fresh NVS starts with `TYPE n 3` for all eight fans; existing 4-pin NVS settings remain unchanged when upgrading.
+- `TYPE n 2`, `TYPE n 3`, `TYPE n 4` persist the **manual configuration**. Apply only after selecting the matching jumper with power off.
+- `TYPE? n` prints `SET=<2|3|4> DETECTED=255 RPM_OK=<0|1> DC_HW=<0|1>`: `DETECTED=255` means **not sensed**; `DC_HW=0` means DC switching remains safety-locked.
+- `TYPE n AUTO` is explicitly rejected. TACH is not a way to distinguish 3-pin from 4-pin, and its absence is not proof that a 2-pin fan is connected.
+- Changing type invalidates the fan's PWM-RPM calibration and PI settings. Type 2 can still be temperature-controlled by PWM when the DC key is validated, but cannot measure RPM.
 
-If the I2C expander is disabled/absent, firmware rejects `TYPE n 2`, `TYPE n 3`, and `TYPE n AUTO`. Existing 4-pin fans remain supported as before. Every 2/3-pin type requires a valid external high-side power-control stage; no ESP GPIO is allowed to source fan motor current.
+## Hardware validation checklist
 
-## Commands
-
-- `TYPE? 1` — reports persisted type, detected type, RPM capability and DC hardware availability.
-- `TYPE 1 AUTO` — conservative automatic detection (requires expander + sense inputs).
-- `TYPE 1 2` / `TYPE 1 3` / `TYPE 1 4` — manually choose fan wiring.
-- `CONFIG 1` and `STATUS` — append `TYPE`, `DETECTED`, `RPM_OK` fields.
-
-Numerical type codes: `0=AUTO`, `2=2-pin`, `3=3-pin`, `4=4-pin`, `255=UNKNOWN/unresolved`.
-
-### References
-
-- Intel four-wire PWM fan specification: pin4 25 kHz (21–28 kHz), open-drain/open-collector.
-- Analog Devices, *Why and How to Control Fan Speed for Cooling Electronic Equipment* — 2/3-wire supply control vs 4-wire PWM and tachometric feedback.
-- Microchip MCP23017 datasheet, BANK=0 IODIRA=0x00, GPIOB=0x13, OLATA=0x14.
+1. Confirm exact ESP32-S3 board/module and all 24 free GPIOs.
+2. Confirm smart key's rated PWM frequency, load/inrush limits, self-heating, and control polarity.
+3. Scope the key IN and +12 V output at 0%, 50% and 100%, then test 3-pin TACH stability.
+4. Scope the 4-pin PWM contact and ensure +12 V remains constant when jumper is set to PWM.
+5. Disconnect the MCU / reset it / cut USB power: fans should default to maximum airflow by **hardware design**.
+6. Test lost-PC-temperature watchdog, blocked fan, disconnected tach, reverse/misplugged fan and short-circuited load.

@@ -1,6 +1,6 @@
 # ESP32-S3 8-Fan / 8-ARGB Controller
 
-Starter firmware for **8 independent 4-wire PWM PC fans** and **8 independent 5 V addressable RGB strips** on an **ESP32-S3**. Built with **PlatformIO, Arduino-ESP32 2.0.17, and Adafruit NeoPixel**.
+Starter firmware for **8 independent 2/3/4-pin PC fans (3-pin default)** and **8 independent 5 V addressable RGB strips** on an **ESP32-S3**. Built with **PlatformIO, Arduino-ESP32 2.0.17, and Adafruit NeoPixel**.
 
 **Status:** starter/reference code, not yet tested on physical hardware. The sample pin assignment targets ESP32-S3-DevKitC-1 and MUST be checked against your actual ESP32-S3 module and PCB before powering peripherals.
 
@@ -79,7 +79,7 @@ See `docs/WIRING.md` for details.
 - ESP32-S3 has only 4 RMT TX channels, but **Adafruit NeoPixel show() calls execute one by one and release the RMT channel** on Arduino-ESP32 2.x, so 8 independent strips are possible (not simultaneously updated).
 - Rainbow effects update at most every 40 ms; actual FPS depends on the sum of all strip lengths and RMT transfer times.
 - RPM is averaged over 1 s; tach signals need a suitable pull-up and clean edges.
-- The firmware stores fan calibration and PWM-temperature curves in NVS. The companion UI supplies PC temperatures; ESP-S3 does not independently measure CPU/GPU temperature. Wi-Fi and hardware fan-power switching are not implemented.
+- The firmware stores fan calibration and PWM-temperature curves in NVS. The companion UI supplies PC temperatures; ESP-S3 does not independently measure CPU/GPU temperature. Wi-Fi RGB integration is optional. Power switching for 2/3-pin fans requires the user-supplied smart key and physical DC/PWM jumper.
 
 ## Structure
 
@@ -100,7 +100,7 @@ The desktop app is in [`pc_app`](pc_app/README.md) with a five-point **interacti
 
 The ESP32-S3 firmware now has **21-point independent PWM/RPM calibration per fan** (0%, 5%, ..., 100%) and five-point temperature PWM curves stored in **Preferences/NVS flash**. Startup defaults to 100% fan PWM, and any AUTO-mode channel without a temperature update for **10 seconds** returns to 100% duty. Pressing CAL in the desktop app starts a sweep *on the ESP32*; it keeps running even when the GUI temporarily stops responding. The ESP32 only saves data on successful calibration or explicit curve save, not continuously.
 
-**Important:** the computer must be running LibreHardwareMonitor and the GUI to feed CPU/GPU temperatures; the ESP32 does *not* measure CPU/GPU temperature by itself. Without temperature updates, the fans run at 100% for safety. Manual overrides bypass the thermal watchdog deliberately. This is a reference firmware requiring real hardware tests before permanent unattended use.
+**Important:** the computer must be running LibreHardwareMonitor and the GUI to feed CPU/GPU temperatures; the ESP32 does *not* measure CPU/GPU temperature by itself. Without temperature updates, the fans run at 100% for safety. Manual overrides are also subject to the thermal watchdog in v4. This is a reference firmware requiring real hardware tests before permanent unattended use.
 
 For full details, see [`docs/PROTOCOL.md`](docs/PROTOCOL.md) and [`pc_app/README.md`](pc_app/README.md).
 
@@ -113,11 +113,11 @@ For full details, see [`docs/PROTOCOL.md`](docs/PROTOCOL.md) and [`pc_app/README
 
 [OpenRGB configuration, limits and troubleshooting](docs/OPENRGB.md). The protocol is documented in [docs/PROTOCOL.md](docs/PROTOCOL.md); GUI setup is in [pc_app/README.md](pc_app/README.md). **Update both PC app and firmware** when upgrading to v3 due to changed baud rate.
 
-## v4: Universal fan header (provisional hardware interface)
+## v4: 3-pin main fan mode, universal fan connector
 
-Firmware has `TYPE <ch> AUTO|2|3|4`, conservative automatic 4th-contact/tach detection, persistent fan type and a hardware mode-selection adapter. Physical 2/3-pin regulation requires an **intelligent high-side supply key and optional MCP23017 hardware**; it is not enabled by default on the original 4-pin PCB. See [docs/FAN_MODES.md](docs/FAN_MODES.md) before wiring.
+All eight fan outputs share one **PWM GPIO + one TACH GPIO per fan**, with eight ARGB data GPIOs (24 total); no MCP23017 or additional I/O expanders. Fresh NVS profiles use **3-pin mode**. The jumper on each fan channel selects **DC power switching** (2/3-pin via the intelligent smart key) or **steady 12 V + PWM on contact 4** (4-pin). The software `TYPE n 2|3|4` must match the jumper; it cannot operate the jumper. **Automatic type detection is unavailable and TYPE AUTO is rejected**, since TACH alone cannot prove 2/3/4 contacts.
 
-**IMPORTANT**: do not attach a smart key to the same raw GPIO signal as the 4-pin fan PWM contact. The DC-mode input must be inverted/conditioned, and the power switch must be forced full-on in 4-pin mode. Verify the selected key's maximum PWM switching frequency and thermal ratings.
+**Safety interlock:** `FAN_DC_PWM_VALIDATED=0` by default; until the selected smart switch is proven suitable for 25 kHz power PWM and a hardware fail-safe ON state, 2/3-pin channels stay at **100%**. Enabling PWM control requires an explicit firmware rebuild after bench testing. See [docs/FAN_MODES.md](docs/FAN_MODES.md) and [docs/PCB_NEXT.md](docs/PCB_NEXT.md).
 
 ## v4 modules added
 
@@ -125,6 +125,6 @@ Firmware has `TYPE <ch> AUTO|2|3|4`, conservative automatic 4th-contact/tach det
 - Secondary temperature curve, weighted selected-sensor averages, CSV trends and named PC cooling profiles.
 - Optional Wi-Fi E1.31/DDP, ARGB brightness/current-budget limiter, editable LED count/reversal and 3-second external frame timeout.
 - A Windows `--headless` user-logon agent (not a boot-time service) that owns the USB COM port.
-- Provisional 2/3/4-pin fan modes with a generic smart-key bypass and type-detection interface; the physical DC-stage remains untested and disabled by default.
+- Provisional 2/3/4-pin fan modes with manual jumper selection; no GPIO expander or auto-detection. The 3-pin DC stage remains hardware-unverified and is safety-locked to full power by default.
 
 Docs: [Fan modes](docs/FAN_MODES.md), [future PCB](docs/PCB_NEXT.md), [Windows app](pc_app/README.md).

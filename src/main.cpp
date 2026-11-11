@@ -1,12 +1,10 @@
 #include <Arduino.h>
 #include "FanController.h"
-#include "FanPowerHardware.h"
 #include "ArgbController.h"
 #include "SerialConsole.h"
 #include "CoolingController.h"
 #include "NetworkRgbBridge.h"
 
-Mcp23017FanPowerHardware powerHardware;
 FanController fans;
 ArgbController leds;
 CoolingController cooling(fans, Serial);
@@ -20,7 +18,6 @@ void setup() {
 #endif
     Serial.begin(board::kSerialBaud);
     // No 'while (!Serial)' here: fan control must start without a PC attached.
-    fans.attachPowerHardware(powerHardware);
     if (!fans.begin()) {
         Serial.println(F("FATAL: unable to configure 8 PWM channels"));
         // Leave the fan PWM outputs in their last state; do NOT start RGB.

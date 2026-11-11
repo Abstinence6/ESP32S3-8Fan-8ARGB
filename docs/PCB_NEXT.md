@@ -1,22 +1,23 @@
-# PCB v2 / hardware hooks still requiring a schematic and component choice
+# PCB checklist: universal 3-pin-first controller without I/O expanders
 
-Firmware features that need **physical circuits**, not just extra code:
+## Proposed fan channel
 
-- Eight independent **intelligent high-side fan supply switches**, properly sized for each motor and rated for the selected PWM frequency/current/inrush. Current firmware shares 25 kHz PWM with a conditioned signal path. **Confirm the chosen part's PWM frequency / dissipated heat from its datasheet before fabrication.** If unsuitable, add a separate lower-frequency PWM / DC buck stage.
-- A hardware **FORCE_100 / bypass** selector that keeps 12 V fan power steadily ON in 4-pin PWM mode, **including during ESP32 reset** (external pull-ups / guaranteed default state). One optional MCP23017 provides eight bypass outputs and eight pin4 sense inputs.
-- Protected 3.3 V-compatible sensing of the pin4 internal pull-up for automatic 4-pin detection. Do not apply 5 V directly to the MCP23017/ESP GPIO inputs. A 2-wire fan and a failed tachometer remain indistinguishable without additional identification hardware.
-- An output or open-drain **diagnostic fault pin** from each smart key, preferably measurable current telemetry for 2-pin obstruction detection, and overload/short-circuit protection. Fan type detection does not substitute for overcurrent hardware.
-- Fused 12 V fan power and fused 5 V ARGB rails. Use power and ground wiring rated for expected current; provide transients/ESD suppression and 74AHCT-series level shift for LED signals.
-- Optional local 2- or 4-channel NTC thermistor ADC modules (with dividers), DS18B20 temperature sensors, coolant thermistor and flow sensor. Firmware thermal fail-safe currently relies on temperatures streamed from the PC; autonomous control would require these sensors and a software module.
-- 12 V and 5 V power monitoring via correctly scaled/protected voltage dividers and ADC or I2C monitors; ESP ADC pins are **not 12 V tolerant**.
+- **2 ESP32-S3 GPIO per fan**: PWM output and TACH input. Eight fans consume 16 GPIO; eight ARGB data lines consume another 8 = **24 total**.
+- A 4-pin connector accepts 2-pin/3-pin/4-pin fans with correct keying/orientation. Use separate 12 V and 5 V fused PSU rails, suitable return paths and decoupling.
+- The **user-supplied intelligent high-side switch** controls +12 V. A physical **DC/PWM jumper** selects whether its input follows PWM or is held permanently ON. Open-collector fan PWM contact 4 is a separate conditioned path; no extra GPIO selects it.
+- **3-pin is the main mode** (DC jumper, PWM through key), 2-pin shares the same mode with no TACH, 4-pin needs jumper PWM (+12 V always on).
+- Do not connect fan contact 4, GPIO or key input to uncontrolled 12 V. Never put 5/12 V directly on an ESP32 input. TACH uses a pull-up to 3.3 V.
+- No MCP23017, GPIO expander, automatic type detector or in-circuit software bypass; no new I2C pins allocated.
 
-**Do not blindly tie the 4-pin PWM contact to the smart-switch logic input.** There are two different electrical interfaces and a bypass rule; see [FAN_MODES.md](FAN_MODES.md).
+## Before enabling DC PWM
 
-## Remaining hardware-verification tasks
+The firmware's 2/3-pin duty is **100% only** by default (`FAN_DC_PWM_VALIDATED=0`). The selected smart switch must be checked for **25 kHz PWM motor switching**, supply-voltage transients, inductive energy, rated peak motor startup current, thermal derating and safety ON default when MCU is reset/unpowered. Many high-side switches cannot run 25 kHz power PWM. In that case, revise the circuit/software rather than merely setting the validation flag.
 
-1. Confirm ESP32-S3 module and board revision and the availability of GPIO33/34.
-2. Select the exact smart switch, inspect maximum PWM frequency, drive polarity, short-circuit behavior, thermal behavior, diagnostic type, and off-state on reset.
-3. Draw and review one fan channel schematic, then replicate it x8.
-4. Verify on an oscilloscope that pin4 receives 25 kHz PWM with 3.3/5 V open-collector behavior, while the smart switch remains permanently ON.
-5. With 2/3-wire load and no pin4, verify smart switch's output duty, motor starting behavior, TACH stability, EMI and switching losses; adapt frequency if needed.
-6. Test power loss, unplugged fan, shorted PWM pin, shorted +12V fan supply, I2C expander disconnect, PC app crash and Wi-Fi outage. Fans should revert to safe behavior.
+## Optional next PCB revision (not implemented)
+
+- On-board NTC/DS18B20/coolant/flow inputs; they need protection, wiring and sometimes more pins, so current 24-GPIO budget must be rechecked.
+- Sense 5/12 V through adequately scaled ADC dividers or a dedicated monitor (not connected to bare GPIO).
+- Measure actual key fault/current status if available, especially important for 2-pin fans without TACH.
+- ARGB overcurrent protection, power injection and 3.3-to-5 V logic interface suitable for chosen strip type.
+
+See [FAN_MODES.md](FAN_MODES.md). No physical PCB has been validated by these firmware tests.

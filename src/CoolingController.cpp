@@ -52,7 +52,7 @@ void CoolingController::makeDefault(StoredFan& fan) {
     fan.ppr = board::kTachPulsesPerRevolution;
     fan.criticalC = 85;
     fan.stallRpm = 120;
-    fan.fanType = 4; // existing PC PWM fan hardware
+    fan.fanType = board::kDefaultFanType; // new profiles default to 3-pin
 
     fan.checksum = calculateChecksum(fan);
 }
@@ -79,6 +79,7 @@ bool CoolingController::readFan(uint8_t ch, StoredFan& fan) {
             !validCurve(old.curve) || !validCurve(old.secondCurve) ||
             old.calibrated > 1 || old.ppr < 1 || old.ppr > 12) return false;
         makeDefault(fan);
+        fan.fanType = 4; // Existing v2 devices were 4-pin; preserve calibration.
         memcpy(fan.curve, old.curve, sizeof(fan.curve));
         memcpy(fan.secondCurve, old.secondCurve, sizeof(fan.secondCurve));
         memcpy(fan.rpm, old.rpm, sizeof(fan.rpm));
@@ -100,6 +101,7 @@ bool CoolingController::readFan(uint8_t ch, StoredFan& fan) {
             old.checksum != checksum(&old, offsetof(LegacyFan, checksum)) ||
             !validCurve(old.curve)) return false;
         makeDefault(fan);
+        fan.fanType = 4; // Existing v1 devices were 4-pin; preserve calibration.
         memcpy(fan.curve, old.curve, sizeof(old.curve));
         memcpy(fan.rpm, old.rpm, sizeof(old.rpm));
         fan.calibrated = old.calibrated;
@@ -127,10 +129,10 @@ bool CoolingController::begin() {
     for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
         if (!readFan(ch, saved_[ch])) makeDefault(saved_[ch]);
         fans_.setPulsesPerRevolution(ch, saved_[ch].ppr);
-        // A legacy PCB without the smart-key mode-selector cannot use DC mode.
-        if (!fans_.setType(ch, static_cast<FanController::Type>(saved_[ch].fanType))) {
-            fans_.setType(ch, FanController::Type::FourPin);
-        }
+        // Physical jumper selection cannot be changed by software. Persisted
+        // type represents the user's confirmed PCB wiring only.
+        if (!fans_.setType(ch, static_cast<FanController::Type>(saved_[ch].fanType)))
+            fans_.setType(ch, FanController::Type::ThreePin);
         fanMode_[ch] = Mode::Auto;
         fans_.setPercent(ch, 100); // Safe until real PC temperature telemetry arrives.
         spinupUntilMs_[ch] = millis() + 4000U;
@@ -216,7 +218,8 @@ FanController::Type CoolingController::detectedFanType(uint8_t ch) const {
 }
 
 bool CoolingController::setManual(uint8_t ch, uint8_t pwm) {
-    if (ch >= board::kChannelCount || pwm > 100 || activeCalibration_ == ch) return false;
+    if (ch >= board::kChannelCount || pwm > 100 || activeCalibration_ == ch ||
+        !fans_.canControl(ch, pwm)) return false;
     fanMode_[ch] = Mode::Manual;
     manualPwm_[ch] = pwm;
     integral_[ch] = 0;
@@ -225,7 +228,8 @@ bool CoolingController::setManual(uint8_t ch, uint8_t pwm) {
 }
 bool CoolingController::setFixedRpm(uint8_t ch, uint16_t rpm) {
     if (ch >= board::kChannelCount || activeCalibration_ == ch ||
-        !saved_[ch].calibrated || !fans_.hasRpmFeedback(ch) || rpm > 20000) return false;
+        !saved_[ch].calibrated || !fans_.hasRpmFeedback(ch) ||
+        !fans_.canControl(ch, 50) || rpm > 20000) return false;
     fanMode_[ch] = Mode::FixedRpm;
     fixedRpm_[ch] = rpm;
     integral_[ch] = 0;
@@ -269,7 +273,7 @@ bool CoolingController::overTemperature(uint8_t ch) const {
 
 bool CoolingController::startCalibration(uint8_t ch, uint32_t nowMs, bool smart) {
     if (ch >= board::kChannelCount || calibrationActive() || faultLatched_[ch] ||
-        !fans_.hasRpmFeedback(ch) ||
+        !fans_.hasRpmFeedback(ch) || !fans_.canControl(ch, 50) ||
         !freshPair(ch, nowMs) || overTemperature(ch)) return false;
     previousCalibrationMode_ = fanMode_[ch];
     activeCalibration_ = static_cast<int8_t>(ch);
@@ -543,7 +547,8 @@ CoolingController::Mode CoolingController::mode(uint8_t ch) const {
 }
 bool CoolingController::closedLoop(uint8_t ch) const { return ch < board::kChannelCount && saved_[ch].pidEnabled; }
 bool CoolingController::setClosedLoop(uint8_t ch, bool enabled) {
-    if (ch >= board::kChannelCount || (enabled && (!saved_[ch].calibrated || !fans_.hasRpmFeedback(ch)))) return false;
+    if (ch >= board::kChannelCount || (enabled && (!saved_[ch].calibrated ||
+        !fans_.hasRpmFeedback(ch) || !fans_.canControl(ch, 50)))) return false;
     StoredFan value = saved_[ch]; value.pidEnabled = enabled; integral_[ch] = 0;
     return writeFan(ch, value);
 }

@@ -8,20 +8,6 @@
 #include "SerialConsole.h"
 #include "CoolingController.h"
 
-class TestPowerHardware final : public FanPowerHardware {
-public:
-    bool begin() override { return true; }
-    bool canModulateSupply() const override { return true; }
-    bool setSupplyBypass(uint8_t channel, bool value) override {
-        if (channel >= 8) return false;
-        bypass[channel] = value;
-        return true;
-    }
-    int8_t pwmInputPresent(uint8_t channel) override { return sense[channel]; }
-    bool bypass[8] = {false,false,false,false,false,false,false,false};
-    int8_t sense[8] = {-1,-1,-1,-1,-1,-1,-1,-1};
-};
-
 int main() {
     FanController fans;
     ArgbController leds;
@@ -183,46 +169,33 @@ int main() {
     assert(afterReboot.cancelCalibration());
     assert(!afterReboot.hasCalibration(3));
 
-    // Universal fan header: one PWM drives the fan control and the power key,
-    // but the key is held full-on while running a four-wire fan.
-    TestPowerHardware hw;
+    // 3-pin is the first-boot default: two native GPIO per channel.
     FanController multi;
-    multi.attachPowerHardware(hw);
     assert(multi.begin());
-    assert(hw.bypass[0] && hw.bypass[7]);
-    hw.sense[0] = 1; // pin-4 pull-up detected
-    assert(multi.setType(0, FanController::Type::Auto));
-    assert(multi.detectedType(0) == FanController::Type::Unknown);
-    assert(multi.setPercent(0, 15));
-    assert(multi.getPercent(0) == 100); // unknown = fail-safe full-power
-    hw.sense[1] = 0; // no pin 4, valid TACH = 3pin
-    assert(multi.setType(1, FanController::Type::Auto));
-    for (unsigned i = 0; i < 3; ++i) {
-        mock::pulse(board::kFanTachPins[1], 20);
-        mock::currentMs += 1000;
-        multi.update(mock::currentMs);
-    }
-    assert(multi.detectedType(0) == FanController::Type::FourPin);
-    assert(multi.detectedType(1) == FanController::Type::ThreePin);
-    assert(hw.bypass[0] && !hw.bypass[1]);
-    assert(multi.setPercent(1, 35));
-    assert(multi.getPercent(1) == 35);
-    assert(multi.setType(2, FanController::Type::TwoPin));
-    assert(!hw.bypass[2]);
-    assert(!multi.hasRpmFeedback(2));
-    assert(multi.getRpm(2) == 0);
+    assert(multi.configuredType(0) == FanController::Type::ThreePin);
+    assert(multi.dcHardwareAvailable()); // host simulation was compiled with PWM validated
+    assert(multi.setPercent(0, 35));
+    assert(multi.getPercent(0) == 35);
+    assert(multi.setType(1, FanController::Type::TwoPin));
+    assert(multi.setPercent(1, 40));
+    assert(!multi.hasRpmFeedback(1));
+    assert(multi.getRpm(1) == 0);
+    assert(multi.setType(1, FanController::Type::ThreePin));
+    assert(multi.hasRpmFeedback(1));
     assert(multi.setType(2, FanController::Type::FourPin));
-    assert(hw.bypass[2] && multi.hasRpmFeedback(2));
+    assert(multi.setPercent(2, 20));
+    assert(multi.hasRpmFeedback(2));
+    // No presence-sense line, so neither 3 nor 4 contact count is detected.
+    assert(multi.detectedType(0) == FanController::Type::Unknown);
+    assert(multi.detectedType(2) == FanController::Type::Unknown);
+    assert(!multi.setType(0, FanController::Type::Auto));
     Serial.out.clear();
-    Serial.send("TYPE? 1\nTYPE 1 3\nSTATUS\n");
+    Serial.send("TYPE? 1\nTYPE 1 AUTO\nTYPE 1 3\nSTATUS\n");
     console.poll();
-    assert(Serial.out.find("TYPE 1 SET=4 DETECTED=4 RPM_OK=1 DC_HW=0") != std::string::npos);
-    assert(Serial.out.find("ERR type unsupported or DC hardware absent") != std::string::npos);
-    assert(Serial.out.find("RPM_OK=1") != std::string::npos);
-    FanController legacy;
-    assert(legacy.begin());
-    assert(!legacy.setType(0, FanController::Type::ThreePin));
-    assert(legacy.setType(0, FanController::Type::FourPin));
+    assert(Serial.out.find("TYPE 1 SET=3 DETECTED=255 RPM_OK=1 DC_HW=1") != std::string::npos);
+    assert(Serial.out.find("ERR AUTO unavailable") != std::string::npos);
+    assert(Serial.out.find("OK TYPE_SAVED") != std::string::npos);
+    assert(Serial.out.find("TYPE=3 RPM_OK=1") != std::string::npos);
 
     std::cout << "PASS: PWM, RPM, ARGB, serial, curves, NVS, calibration, fan types\n";
 }

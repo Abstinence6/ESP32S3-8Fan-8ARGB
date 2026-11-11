@@ -9,14 +9,18 @@
 namespace board {
 
 static constexpr uint8_t kChannelCount = 8;
-// On the universal fan PCB, MCP23017 GPA0..7 controls 12V-power bypass and
-// GPB0..7 senses pin-4 presence via a 3.3V protected sense circuit.
-// NEVER enable this until the expander and its fail-safe external pull-ups
-// are mounted. 4-pin-only legacy boards keep the adapter disabled.
-static constexpr bool kEnableFanModeExpander = false;
-static constexpr uint8_t kFanI2cSda = 33;
-static constexpr uint8_t kFanI2cScl = 34;
-static constexpr uint8_t kFanExpanderI2cAddress = 0x20;
+// Two native ESP32-S3 GPIO per fan: one PWM and one tachometer input.
+// For 2/3-pin, a selected smart high-side key modulates +12V; for 4-pin,
+// a physical jumper holds +12V ON and routes PWM to fan pin 4.
+// No GPIO expander, I2C, automatic connector detection or software bypass.
+static constexpr uint8_t kDefaultFanType = 3;
+// SAFETY INTERLOCK: set true only after verifying the selected smart switch
+// supports 25 kHz PWM of a motor load, inrush, heat and an ON-at-reset circuit.
+// While false, 2/3-pin channels are held at 100% and reject lower duty.
+#ifndef FAN_DC_PWM_VALIDATED
+#define FAN_DC_PWM_VALIDATED 0
+#endif
+static constexpr bool kDcSupplyPwmValidated = (FAN_DC_PWM_VALIDATED != 0);
 static constexpr uint8_t kFanPwmPins[kChannelCount] = {4, 5, 6, 7, 15, 16, 17, 18};
 static constexpr uint8_t kFanTachPins[kChannelCount] = {8, 9, 10, 11, 12, 13, 14, 21};
 static constexpr uint8_t kArgbDataPins[kChannelCount] = {1, 2, 38, 39, 40, 41, 42, 47};
