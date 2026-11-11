@@ -112,3 +112,19 @@ For full details, see [`docs/PROTOCOL.md`](docs/PROTOCOL.md) and [`pc_app/README
 **External ARGB:** OpenRGB (or xLights/other E1.31 transmitters) streams **per-LED RGB** data through 8 manual E1.31 devices (universe 1..8), received by the Windows program at **127.0.0.1:5568** and forwarded over the **same USB COM connection** as the fan commands at 921600 baud. ESP verifies binary packets using CRC-16 and renders each strip independently. This is *not* OpenRGB automatic USB detection, and the PC app must run for RGB streaming. Native built-in effects (solid, rainbow) remain available for offline/manual use.
 
 [OpenRGB configuration, limits and troubleshooting](docs/OPENRGB.md). The protocol is documented in [docs/PROTOCOL.md](docs/PROTOCOL.md); GUI setup is in [pc_app/README.md](pc_app/README.md). **Update both PC app and firmware** when upgrading to v3 due to changed baud rate.
+
+## v4: Universal fan header (provisional hardware interface)
+
+Firmware has `TYPE <ch> AUTO|2|3|4`, conservative automatic 4th-contact/tach detection, persistent fan type and a hardware mode-selection adapter. Physical 2/3-pin regulation requires an **intelligent high-side supply key and optional MCP23017 hardware**; it is not enabled by default on the original 4-pin PCB. See [docs/FAN_MODES.md](docs/FAN_MODES.md) before wiring.
+
+**IMPORTANT**: do not attach a smart key to the same raw GPIO signal as the 4-pin fan PWM contact. The DC-mode input must be inverted/conditioned, and the power switch must be forced full-on in 4-pin mode. Verify the selected key's maximum PWM switching frequency and thermal ratings.
+
+## v4 modules added
+
+- Smarter calibration with reverse sweep and safe temperature/watchdog abort, PID RPM option and automatic stall-retry logging.
+- Secondary temperature curve, weighted selected-sensor averages, CSV trends and named PC cooling profiles.
+- Optional Wi-Fi E1.31/DDP, ARGB brightness/current-budget limiter, editable LED count/reversal and 3-second external frame timeout.
+- A Windows `--headless` user-logon agent (not a boot-time service) that owns the USB COM port.
+- Provisional 2/3/4-pin fan modes with a generic smart-key bypass and type-detection interface; the physical DC-stage remains untested and disabled by default.
+
+Docs: [Fan modes](docs/FAN_MODES.md), [future PCB](docs/PCB_NEXT.md), [Windows app](pc_app/README.md).

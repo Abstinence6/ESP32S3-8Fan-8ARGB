@@ -8,6 +8,20 @@
 #include "SerialConsole.h"
 #include "CoolingController.h"
 
+class TestPowerHardware final : public FanPowerHardware {
+public:
+    bool begin() override { return true; }
+    bool canModulateSupply() const override { return true; }
+    bool setSupplyBypass(uint8_t channel, bool value) override {
+        if (channel >= 8) return false;
+        bypass[channel] = value;
+        return true;
+    }
+    int8_t pwmInputPresent(uint8_t channel) override { return sense[channel]; }
+    bool bypass[8] = {false,false,false,false,false,false,false,false};
+    int8_t sense[8] = {-1,-1,-1,-1,-1,-1,-1,-1};
+};
+
 int main() {
     FanController fans;
     ArgbController leds;
@@ -119,8 +133,9 @@ int main() {
 
     // Automatic control follows temperature, but falls back to 100% on link loss.
     assert(cooling.setAuto(0));
+    assert(cooling.setStallThreshold(0, 0)); // no simulated tach for channel 1
     cooling.setTemperature(0, 450, mock::currentMs);
-    for (int i = 0; i < 35; ++i) { mock::currentMs += 250; cooling.update(mock::currentMs); }
+    for (int i = 0; i < 65; ++i) { mock::currentMs += 250; if (i % 8 == 0) cooling.setTemperature(0, 450, mock::currentMs); cooling.update(mock::currentMs); }
     assert(fans.getPercent(0) == 60);
     mock::currentMs += CoolingController::kSensorTimeoutMs + 500;
     cooling.update(mock::currentMs);
@@ -132,10 +147,11 @@ int main() {
     console.poll();
     assert(Serial.out.find("OK CURVE_SAVED") != std::string::npos);
     assert(Serial.out.find("CURVE 1 20 30 30 40 45 60 60 80 75 100") != std::string::npos);
-    assert(Serial.out.find("PONG 2") != std::string::npos);
+    assert(Serial.out.find("PONG 4") != std::string::npos);
 
     // A calibration sweep logs 21 PWM/RPM samples, then saves them to NVS.
     Serial.out.clear();
+    cooling.setTemperature(2, 450, mock::currentMs);
     assert(cooling.startCalibration(2, mock::currentMs));
     assert(!cooling.startCalibration(1, mock::currentMs));
     for (int step = 0; step < 21; ++step) {
@@ -145,6 +161,7 @@ int main() {
         for (int quarter = 0; quarter < 8; ++quarter) {
             mock::pulse(board::kFanTachPins[2], static_cast<unsigned>(step + 3));
             mock::currentMs += 500;
+            cooling.setTemperature(2, 450, mock::currentMs);
             fans.update(mock::currentMs);
             cooling.update(mock::currentMs);
         }
@@ -161,9 +178,51 @@ int main() {
     assert(afterReboot.hasCalibration(2));
     assert(afterReboot.rpmAt(2, 20) == cooling.rpmAt(2, 20));
     assert(afterReboot.curve(0)[0].pwm == 30);
+    afterReboot.setTemperature(3, 450, mock::currentMs);
     assert(afterReboot.startCalibration(3, mock::currentMs));
     assert(afterReboot.cancelCalibration());
     assert(!afterReboot.hasCalibration(3));
 
-    std::cout << "PASS: PWM, RPM, ARGB, serial, curves, NVS, calibration, fail-safe\n";
+    // Universal fan header: one PWM drives the fan control and the power key,
+    // but the key is held full-on while running a four-wire fan.
+    TestPowerHardware hw;
+    FanController multi;
+    multi.attachPowerHardware(hw);
+    assert(multi.begin());
+    assert(hw.bypass[0] && hw.bypass[7]);
+    hw.sense[0] = 1; // pin-4 pull-up detected
+    assert(multi.setType(0, FanController::Type::Auto));
+    assert(multi.detectedType(0) == FanController::Type::Unknown);
+    assert(multi.setPercent(0, 15));
+    assert(multi.getPercent(0) == 100); // unknown = fail-safe full-power
+    hw.sense[1] = 0; // no pin 4, valid TACH = 3pin
+    assert(multi.setType(1, FanController::Type::Auto));
+    for (unsigned i = 0; i < 3; ++i) {
+        mock::pulse(board::kFanTachPins[1], 20);
+        mock::currentMs += 1000;
+        multi.update(mock::currentMs);
+    }
+    assert(multi.detectedType(0) == FanController::Type::FourPin);
+    assert(multi.detectedType(1) == FanController::Type::ThreePin);
+    assert(hw.bypass[0] && !hw.bypass[1]);
+    assert(multi.setPercent(1, 35));
+    assert(multi.getPercent(1) == 35);
+    assert(multi.setType(2, FanController::Type::TwoPin));
+    assert(!hw.bypass[2]);
+    assert(!multi.hasRpmFeedback(2));
+    assert(multi.getRpm(2) == 0);
+    assert(multi.setType(2, FanController::Type::FourPin));
+    assert(hw.bypass[2] && multi.hasRpmFeedback(2));
+    Serial.out.clear();
+    Serial.send("TYPE? 1\nTYPE 1 3\nSTATUS\n");
+    console.poll();
+    assert(Serial.out.find("TYPE 1 SET=4 DETECTED=4 RPM_OK=1 DC_HW=0") != std::string::npos);
+    assert(Serial.out.find("ERR type unsupported or DC hardware absent") != std::string::npos);
+    assert(Serial.out.find("RPM_OK=1") != std::string::npos);
+    FanController legacy;
+    assert(legacy.begin());
+    assert(!legacy.setType(0, FanController::Type::ThreePin));
+    assert(legacy.setType(0, FanController::Type::FourPin));
+
+    std::cout << "PASS: PWM, RPM, ARGB, serial, curves, NVS, calibration, fan types\n";
 }

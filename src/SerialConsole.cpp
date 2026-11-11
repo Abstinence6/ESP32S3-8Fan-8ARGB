@@ -5,11 +5,11 @@
 #include <string.h>
 
 SerialConsole::SerialConsole(Stream& serial, FanController& fans, ArgbController& leds,
-                             CoolingController& cooling)
-    : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling) {}
+                             CoolingController& cooling, NetworkRgbBridge* wifi)
+    : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling), wifi_(wifi) {}
 
 void SerialConsole::begin() {
-    serial_.println(F("8Fan/8ARGB ready | protocol v2 | type HELP"));
+    serial_.println(F("8Fan/8ARGB ready | protocol v4 | type HELP"));
 }
 
 void SerialConsole::poll() {
@@ -142,7 +142,7 @@ void SerialConsole::handleLine(char* line) {
 
     if (strcmp(command, "PING") == 0) {
         if (!noMore()) return error();
-        serial_.println(F("PONG 2"));
+        serial_.println(F("PONG 4"));
         return;
     }
     if (strcmp(command, "HELP") == 0) {
@@ -165,22 +165,26 @@ void SerialConsole::handleLine(char* line) {
         printStatus();
         return;
     }
-    if (strcmp(command, "TEMP") == 0) {
+    if (strcmp(command, "TEMP") == 0 || strcmp(command, "TEMP2") == 0) {
+        const bool secondary = strcmp(command, "TEMP2") == 0;
         uint8_t ch = 0;
         uint16_t deciC = 0;
         if (!parseByte(next(), board::kChannelCount, ch) || ch == 0 ||
             !parseU16(next(), 1250, deciC) || !noMore()) return error();
-        cooling_.setTemperature(ch-1, deciC, millis());
+        cooling_.setTemperature(ch-1, deciC, millis(), secondary);
         serial_.println(F("OK"));
         return;
     }
-    if (strcmp(command, "CURVE") == 0 || strcmp(command, "CURVE?") == 0) {
+    if (strcmp(command, "CURVE") == 0 || strcmp(command, "CURVE?") == 0 ||
+        strcmp(command, "CURVE2") == 0 || strcmp(command, "CURVE2?") == 0) {
+        const bool secondary = strncmp(command, "CURVE2", 6) == 0;
+        const bool query = strchr(command, '?') != nullptr;
         uint8_t ch = 0;
         if (!parseByte(next(), board::kChannelCount, ch) || ch == 0) return error();
-        if (strcmp(command, "CURVE?") == 0) {
+        if (query) {
             if (!noMore()) return error();
-            const auto* curve = cooling_.curve(ch-1);
-            serial_.print(F("CURVE ")); serial_.print(ch);
+            const auto* curve = cooling_.curve(ch-1, secondary);
+            serial_.print(secondary ? F("CURVE2 ") : F("CURVE ")); serial_.print(ch);
             for (uint8_t i = 0; i < CoolingController::kCurvePoints; ++i) {
                 serial_.print(F(" ")); serial_.print(curve[i].tempC);
                 serial_.print(F(" ")); serial_.print(curve[i].pwm);
@@ -194,7 +198,7 @@ void SerialConsole::handleLine(char* line) {
                 !parseByte(next(), 100, points[i].pwm)) return error();
         }
         if (!noMore() || !CoolingController::validCurve(points)) return error();
-        if (!cooling_.setCurve(ch-1, points)) {
+        if (!cooling_.setCurve(ch-1, points, secondary)) {
             serial_.println(F("ERR NVS write")); return;
         }
         serial_.println(F("OK CURVE_SAVED"));
@@ -211,8 +215,8 @@ void SerialConsole::handleLine(char* line) {
         }
         uint8_t ch = 0;
         if (!parseByte(next(), board::kChannelCount, ch) || ch == 0 || !noMore()) return error();
-        if (strcmp(op, "START") == 0) {
-            if (!cooling_.startCalibration(ch-1, millis())) {
+        if (strcmp(op, "START") == 0 || strcmp(op, "SMART") == 0) {
+            if (!cooling_.startCalibration(ch-1, millis(), strcmp(op, "SMART") == 0)) {
                 serial_.println(F("ERR calibration busy")); return;
             }
             serial_.println(F("OK"));
@@ -241,6 +245,137 @@ void SerialConsole::handleLine(char* line) {
         uint8_t ch = 0;
         if (!parseByte(next(), board::kChannelCount, ch) || ch == 0 || !noMore()) return error();
         if (!cooling_.setAuto(ch-1)) { serial_.println(F("ERR calibration busy")); return; }
+        serial_.println(F("OK")); return;
+    }
+    if (strcmp(command, "WIFI") == 0) {
+        if (!wifi_) { serial_.println(F("ERR wifi not available")); return; }
+        char* op = next();
+        if (!op) return error();
+        for (char* c=op; *c; ++c) *c=static_cast<char>(toupper(static_cast<unsigned char>(*c)));
+        if (!strcmp(op,"STATUS")) {
+            if (!noMore()) return error();
+            wifi_->printStatus(serial_); return;
+        }
+        if (!strcmp(op,"OFF")) {
+            if (!noMore() || !wifi_->disable()) { serial_.println(F("ERR WIFI storage")); return; }
+            serial_.println(F("OK WIFI_OFF")); return;
+        }
+        if (!strcmp(op,"SET")) {
+            char* ssid = next(); char* password = next();
+            if (!ssid || !password || !noMore() || !wifi_->configure(ssid, password)) {
+                serial_.println(F("ERR WIFI config")); return;
+            }
+            serial_.println(F("OK WIFI_SET")); return;
+        }
+        return error();
+    }
+    if (!strcmp(command, "STRIP") || !strcmp(command,"REVERSE")) {
+        uint8_t ch = 0; uint16_t val = 0;
+        if (!parseByte(next(),board::kChannelCount,ch) || !ch ||
+            !parseU16(next(),board::kMaxArgbPixelsPerFrame,val) || !noMore()) return error();
+        bool ok = false;
+        if (!strcmp(command,"STRIP") && val > 0)
+            ok = leds_.configureStrip(ch-1,val,leds_.isReversed(ch-1));
+        else if (!strcmp(command,"REVERSE") && val <= 1)
+            ok = leds_.configureStrip(ch-1,leds_.pixelCount(ch-1),val != 0);
+        if (!ok) { serial_.println(F("ERR STRIP config")); return; }
+        serial_.println(F("OK STRIP_SAVED")); return;
+    }
+    if (!strcmp(command, "RGBBUDGET")) {
+        uint16_t milliamps = 0;
+        if (!parseU16(next(),20000,milliamps) || !noMore() ||
+            !leds_.setPowerBudget(milliamps)) return error();
+        serial_.println(F("OK BUDGET_SAVED")); return;
+    }
+    if (!strcmp(command,"ARGBSTATUS")) {
+        if (!noMore()) return error();
+        serial_.print(F("ARGBSTATUS LIMIT_MA=")); serial_.print(leds_.powerBudget());
+        serial_.print(F(" REQUESTED_MA=")); serial_.println(leds_.estimatedFullCurrent());
+        return;
+    }
+    if (strcmp(command, "TYPE") == 0 || strcmp(command, "TYPE?") == 0) {
+        uint8_t ch = 0;
+        if (!parseByte(next(), board::kChannelCount, ch) || ch == 0) return error();
+        if (strcmp(command, "TYPE?") == 0) {
+            if (!noMore()) return error();
+            serial_.print(F("TYPE ")); serial_.print(ch);
+            serial_.print(F(" SET=")); serial_.print(static_cast<unsigned>(cooling_.fanType(ch-1)));
+            serial_.print(F(" DETECTED=")); serial_.print(static_cast<unsigned>(cooling_.detectedFanType(ch-1)));
+            serial_.print(F(" RPM_OK=")); serial_.print(fans_.hasRpmFeedback(ch-1) ? 1 : 0);
+            serial_.print(F(" DC_HW=")); serial_.println(fans_.dcHardwareAvailable() ? 1 : 0);
+            return;
+        }
+        char* value = next();
+        if (!value || !noMore()) return error();
+        for (char* c = value; *c; ++c) *c = static_cast<char>(toupper(static_cast<unsigned char>(*c)));
+        FanController::Type type = FanController::Type::Unknown;
+        if (!strcmp(value, "AUTO") || !strcmp(value, "0")) type = FanController::Type::Auto;
+        if (!strcmp(value, "2")) type = FanController::Type::TwoPin;
+        if (!strcmp(value, "3")) type = FanController::Type::ThreePin;
+        if (!strcmp(value, "4")) type = FanController::Type::FourPin;
+        if (!cooling_.setFanType(ch-1, type)) {
+            serial_.println(F("ERR type unsupported or DC hardware absent")); return;
+        }
+        serial_.println(F("OK TYPE_SAVED")); return;
+    }
+    if (strcmp(command, "RPM") == 0) {
+        uint8_t ch = 0; uint16_t rpm = 0;
+        if (!parseByte(next(), board::kChannelCount, ch) || ch == 0 ||
+            !parseU16(next(), 20000, rpm) || !noMore()) return error();
+        if (!cooling_.setFixedRpm(ch-1, rpm)) {
+            serial_.println(F("ERR RPM needs calibration")); return;
+        }
+        serial_.println(F("OK RPM")); return;
+    }
+    if (strcmp(command, "PID") == 0 || strcmp(command, "DUAL") == 0 ||
+        strcmp(command, "PPR") == 0 || strcmp(command, "CRIT") == 0 ||
+        strcmp(command, "STALL") == 0) {
+        uint8_t ch = 0; uint16_t value = 0;
+        if (!parseByte(next(), board::kChannelCount, ch) || ch == 0 ||
+            !parseU16(next(), 3000, value) || !noMore()) return error();
+        bool ok = false;
+        if (strcmp(command, "PID") == 0 && value <= 1) ok = cooling_.setClosedLoop(ch-1, value != 0);
+        else if (strcmp(command, "DUAL") == 0 && value <= 1) ok = cooling_.setDualSensor(ch-1, value != 0);
+        else if (strcmp(command, "PPR") == 0 && value <= 12) ok = cooling_.setPulsesPerRevolution(ch-1, value);
+        else if (strcmp(command, "CRIT") == 0 && value <= 120) ok = cooling_.setCriticalTemperature(ch-1, value);
+        else if (strcmp(command, "STALL") == 0) ok = cooling_.setStallThreshold(ch-1, value);
+        if (!ok) { serial_.println(F("ERR config unavailable or invalid")); return; }
+        serial_.println(F("OK CONFIG")); return;
+    }
+    if (strcmp(command, "CONFIG") == 0) {
+        uint8_t ch = 0;
+        if (!parseByte(next(), board::kChannelCount, ch) || ch == 0 || !noMore()) return error();
+        --ch;
+        serial_.print(F("CONFIG ")); serial_.print(ch+1);
+        serial_.print(F(" PPR=")); serial_.print(cooling_.pulsesPerRevolution(ch));
+        serial_.print(F(" CRIT=")); serial_.print(cooling_.criticalTemperature(ch));
+        serial_.print(F(" STALL=")); serial_.print(cooling_.stallThreshold(ch));
+        serial_.print(F(" PID=")); serial_.print(cooling_.closedLoop(ch) ? 1 : 0);
+        serial_.print(F(" DUAL=")); serial_.print(cooling_.dualSensor(ch) ? 1 : 0);
+        serial_.print(F(" START=")); serial_.print(cooling_.minStartPwm(ch));
+        serial_.print(F(" RUN=")); serial_.print(cooling_.minRunPwm(ch));
+        serial_.print(F(" TYPE=")); serial_.print(static_cast<unsigned>(cooling_.fanType(ch)));
+        serial_.print(F(" DETECTED=")); serial_.println(static_cast<unsigned>(cooling_.detectedFanType(ch)));
+        return;
+    }
+    if (strcmp(command, "FAULTS") == 0) {
+        if (!noMore()) return error();
+        for (uint8_t i=0; i<cooling_.faultCount(); ++i) {
+            const auto f = cooling_.faultAt(i);
+            serial_.print(F("EVENT ")); serial_.print(f.channel);
+            serial_.print(F(" ")); serial_.print(f.code);
+            serial_.print(F(" ")); serial_.println(f.uptimeSeconds);
+        }
+        serial_.println(F("EVENT_END")); return;
+    }
+    if (strcmp(command, "CLEARFAULT") == 0) {
+        uint8_t ch = 0;
+        if (!parseByte(next(), board::kChannelCount, ch) || ch == 0 || !noMore()) return error();
+        if (!cooling_.clearFault(ch-1)) return error();
+        serial_.println(F("OK")); return;
+    }
+    if (strcmp(command, "CLEARHISTORY") == 0) {
+        if (!noMore() || !cooling_.clearHistory()) return error();
         serial_.println(F("OK")); return;
     }
     if (strcmp(command, "FAN") == 0 || strcmp(command, "ALLFAN") == 0) {
@@ -299,9 +434,16 @@ void SerialConsole::printHelp() {
     serial_.println(F("TEMP <ch> <0..1250> | AUTO <ch> | ALLAUTO"));
     serial_.println(F("FAN <ch> <0..100> | ALLFAN <0..100> (manual override)"));
     serial_.println(F("CURVE? <ch> | CURVE <ch> <T1> <PWM1> ... <T5> <PWM5>"));
-    serial_.println(F("CAL START <ch> | CAL GET <ch> | CAL CANCEL"));
+    serial_.println(F("CAL START <ch> | CAL SMART <ch> | CAL GET <ch> | CAL CANCEL"));
+    serial_.println(F("TEMP2 / CURVE2 / CURVE2? for second thermal source; DUAL <ch> 0|1"));
+    serial_.println(F("PID <ch> 0|1 | RPM <ch> <rpm> (requires calibration)"));
+    serial_.println(F("PPR <ch> 1..12 | CRIT <ch> 40..120 | STALL <ch> 0..3000"));
+    serial_.println(F("TYPE? <ch> | TYPE <ch> 2|3|4|AUTO (DC requires MCP23017/validated key)"));
+    serial_.println(F("CONFIG <ch> | FAULTS | CLEARFAULT <ch> | CLEARHISTORY"));
     serial_.println(F("LED <ch> <R> <G> <B> | ALLLED <R> <G> <B>"));
     serial_.println(F("OFF <ch> | ALLOFF | RAINBOW <ch> | BRIGHT <ch> <0..255>"));
+    serial_.println(F("WIFI SET <ssid> <pass> | WIFI STATUS | WIFI OFF (no spaces in SSID/pass)"));
+    serial_.println(F("STRIP <ch> 1..170 | REVERSE <ch> 0|1 | RGBBUDGET <100..20000> | ARGBSTATUS"));
     serial_.println(F("Binary ARGB: A5 5A ch countLE16 RGB... crc16LE (CCITT-FALSE)"));
 }
 
@@ -311,12 +453,18 @@ void SerialConsole::printStatus() {
         const char* mode = "auto";
         if (cooling_.mode(i) == CoolingController::Mode::Manual) mode = "manual";
         if (cooling_.mode(i) == CoolingController::Mode::Calibration) mode = "cal";
+        if (cooling_.mode(i) == CoolingController::Mode::FixedRpm) mode = "rpm";
         const char* sensor = !cooling_.temperatureFresh(i, now) ? "stale" : "ok";
         serial_.print(F("CH ")); serial_.print(i + 1);
         serial_.print(F(" FAN=")); serial_.print(fans_.getPercent(i));
         serial_.print(F("% RPM=")); serial_.print(fans_.getRpm(i));
         serial_.print(F(" TEMP=")); serial_.print(cooling_.temperature(i));
         serial_.print(F(" MODE=")); serial_.print(mode);
-        serial_.print(F(" SENSOR=")); serial_.println(sensor);
+        serial_.print(F(" SENSOR=")); serial_.print(sensor);
+        serial_.print(F(" TARGET=")); serial_.print(cooling_.rpmTarget(i));
+        serial_.print(F(" FAULT=")); serial_.print(cooling_.faulted(i) ? 1 : 0);
+        serial_.print(F(" TYPE=")); serial_.print(static_cast<unsigned>(cooling_.detectedFanType(i)));
+        serial_.print(F(" RPM_OK=")); serial_.print(fans_.hasRpmFeedback(i) ? 1 : 0);
+        serial_.println("");
     }
 }

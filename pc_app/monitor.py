@@ -19,6 +19,7 @@ DEFAULT_LHM_URL = "http://127.0.0.1:8085/data.json"
 MAX_ALL = "__MAX_ALL__"
 GROUP_AVG = "__GROUP_AVG__"
 GROUP_MAX = "__GROUP_MAX__"
+GROUP_WEIGHTED = "__GROUP_WEIGHTED__"
 
 
 def parse_temperatures(tree: Any) -> list[TemperatureSensor]:
@@ -60,6 +61,7 @@ def resolve_temperature(
     assignment: str,
     sensors: list[TemperatureSensor],
     group_ids: list[str] | tuple[str, ...] = (),
+    weights: dict[str, float] | None = None,
 ) -> float | None:
     """Return one sensor, MAX(all), AVG(group) or MAX(group).
 
@@ -68,7 +70,7 @@ def resolve_temperature(
     """
     if assignment == MAX_ALL:
         return max((sensor.celsius for sensor in sensors), default=None)
-    if assignment in (GROUP_AVG, GROUP_MAX):
+    if assignment in (GROUP_AVG, GROUP_MAX, GROUP_WEIGHTED):
         chosen = set(group_ids)
         if not chosen:
             return None
@@ -76,7 +78,14 @@ def resolve_temperature(
         if not chosen.issubset(by_id):
             return None
         values = [by_id[ident] for ident in chosen]
-        return sum(values) / len(values) if assignment == GROUP_AVG else max(values)
+        if assignment == GROUP_AVG:
+            return sum(values) / len(values)
+        if assignment == GROUP_MAX:
+            return max(values)
+        factors = [float((weights or {}).get(ident, 1.0)) for ident in chosen]
+        if any(not math.isfinite(weight) or weight <= 0 for weight in factors):
+            return None
+        return sum(value * weight for value, weight in zip(values, factors)) / sum(factors)
     for sensor in sensors:
         if sensor.sensor_id == assignment:
             return sensor.celsius

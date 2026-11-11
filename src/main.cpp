@@ -1,13 +1,17 @@
 #include <Arduino.h>
 #include "FanController.h"
+#include "FanPowerHardware.h"
 #include "ArgbController.h"
 #include "SerialConsole.h"
 #include "CoolingController.h"
+#include "NetworkRgbBridge.h"
 
+Mcp23017FanPowerHardware powerHardware;
 FanController fans;
 ArgbController leds;
 CoolingController cooling(fans, Serial);
-SerialConsole console(Serial, fans, leds, cooling);
+NetworkRgbBridge wifiRgb(leds);
+SerialConsole console(Serial, fans, leds, cooling, &wifiRgb);
 
 void setup() {
 #if !ARDUINO_USB_CDC_ON_BOOT
@@ -16,6 +20,7 @@ void setup() {
 #endif
     Serial.begin(board::kSerialBaud);
     // No 'while (!Serial)' here: fan control must start without a PC attached.
+    fans.attachPowerHardware(powerHardware);
     if (!fans.begin()) {
         Serial.println(F("FATAL: unable to configure 8 PWM channels"));
         // Leave the fan PWM outputs in their last state; do NOT start RGB.
@@ -31,6 +36,7 @@ void setup() {
         Serial.println(F("FATAL: unable to initialize ARGB strips"));
         while (true) delay(1000);
     }
+    wifiRgb.begin();
     console.begin();
 }
 
@@ -39,6 +45,7 @@ void loop() {
     const uint32_t now = millis();
     fans.update(now);
     cooling.update(now);
+    wifiRgb.update(now);
     leds.update(now);
     delay(1);
 }

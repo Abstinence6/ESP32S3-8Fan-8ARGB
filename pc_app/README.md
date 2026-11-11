@@ -51,3 +51,18 @@ Sensor HTTP polling runs in a background thread so a nonresponsive LibreHardware
 OpenRGB **E1.31 Devices** send RGB pixels to the local companion over UDP 5568, with 8 individually configured E1.31 zones; the companion forwards per-pixel RGB to the ESP over USB at **921600 baud**, alongside fan-temperature commands. Check **E1.31 → USB, 8 zones** in the ARGB area of the GUI. Each sACN universe maps to the same-numbered ARGB output, using DMX start channel **1**. The GUI must own the ESP COM port; OpenRGB should NOT attempt to open it directly. Firmware returns physical strip lengths with `LEDS` before any binary RGB is forwarded.
 
 This is **manual E1.31 integration**, not automatic HID/USB discovery in OpenRGB and not a native SignalRGB plugin. For a step-by-step OpenRGB configuration and limitations, see [docs/OPENRGB.md](../docs/OPENRGB.md).
+
+## v4: enhanced cooling and optional fan connector types
+
+- Choose a fan in the GUI and set **Type: Auto, 2-pin, 3-pin, 4-pin**. Only 4-pin mode works on the original board; DC 2/3-pin modes require the smart high-side keys and MCP23017 adapter described in [`docs/FAN_MODES.md`](../docs/FAN_MODES.md). Auto never guesses a 2-wire fan from a missing TACH signal.
+- **Smart calibration** (requires valid temperatures and RPM feedback), optional PID and target RPM (not available on 2-pin), RPM/PWM live status, second temperature-based curve, and per-fan calibration migration across firmware versions.
+- Sensor sources: MAX all, one sensor, AVG/MAX of a group and weighted average with per-sensor weights (set via **Вибрати датчики групи**).
+- Named curve presets **Silent**, **Balanced**, **Performance**, and local **Custom**. Apply to all eight channels with confirmation. Curves are then stored in ESP NVS.
+- PWM timeline and CSV export (records kept in memory for the current GUI session, maximum 3600 samples per channel).
+- ARGB: per-strip LED count/reversal and a saved approximate global current limit, plus network E1.31/DDP where Wi-Fi credentials have been configured. The current limiter is a *software estimate*, not a replacement for fuses or power supply current limiting.
+
+### Optional background user-logon agent
+
+The packaged `FanARGBControl.exe --headless` runs a **headless companion** after Windows logon. It streams CPU/GPU/SSD temperatures and bridges OpenRGB E1.31 to USB. To register the built EXE in Task Scheduler: `powershell -ExecutionPolicy Bypass -File pc_app/register_agent.ps1`; remove with `pc_app/unregister_agent.ps1`. User must also run LibreHardwareMonitor web server in their session.
+
+This is **not** a Windows Service that operates before user logon. It owns the COM port, so close the agent before opening the GUI. Logging is written to `%LOCALAPPDATA%\FanARGBControl\agent.log`. Missing LHM readings cause the ESP to fall back to 100% fan PWM.
