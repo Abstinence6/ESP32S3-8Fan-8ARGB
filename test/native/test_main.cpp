@@ -60,6 +60,50 @@ int main() {
     assert(Serial.out.find("ERR line too long") != std::string::npos);
     assert(fans.getPercent(1) == 60);
 
+    // USB binary pixel stream (sACN bridge) must coexist with text fan control.
+    // Fixed Python reference: encode_rgb_frame(3, bytes.fromhex("ff000000ff00"))
+    // == a55a030200ff000000ff00d0ed (CRC16-CCITT-FALSE).
+    leds.setOff(2);
+    const uint8_t pixelBytes[] = {0xA5, 0x5A, 0x03, 0x02, 0x00,
+                                  0xFF, 0x00, 0x00, 0x00, 0xFF, 0x00,
+                                  0xD0, 0xED};
+    std::string pixelPacket(reinterpret_cast<const char*>(pixelBytes), sizeof(pixelBytes));
+    Serial.send(pixelPacket.substr(0, 7));
+    console.poll();
+    assert(leds.getMode(2) == ArgbController::Mode::Off);
+    Serial.send(pixelPacket.substr(7) + "LEDS\nFAN 3 65\n");
+    console.poll();
+    assert(leds.getMode(2) == ArgbController::Mode::External);
+    assert(leds.getBrightness(2) == 255);
+    assert(fans.getPercent(2) == 65);
+    assert(Serial.out.find("LEDCOUNTS 30 30 30 30 30 30 30 30") != std::string::npos);
+
+    // Malformed CRC and partial frame timeout must be discarded without modifying pixels.
+    leds.setOff(3);
+    std::string badCrc = pixelPacket;
+    badCrc[2] = 4;  // channel changed but checksum stays from channel 3
+    Serial.send(badCrc);
+    console.poll();
+    assert(leds.getMode(3) == ArgbController::Mode::Off);
+    Serial.send(pixelPacket.substr(0, 5));
+    console.poll();
+    mock::currentMs += 500;
+    console.poll();  // discard truncated packet
+    Serial.send("FAN 4 77\n");
+    console.poll();
+    assert(fans.getPercent(3) == 77);
+
+    // Invalid RGB header: any following bytes must not execute fan commands.
+    const uint8_t invalidLength[] = {0xA5, 0x5A, 0x02, 0xFF, 0x7F};
+    Serial.send(std::string(reinterpret_cast<const char*>(invalidLength), 5) + "FAN 4 0\n");
+    console.poll();
+    assert(fans.getPercent(3) == 77);
+    mock::currentMs += 500;
+    console.poll();
+    Serial.send("FAN 4 45\n");
+    console.poll();
+    assert(fans.getPercent(3) == 45);
+
     leds.setRainbow(0);
     mock::currentMs = 2040;
     leds.update(mock::currentMs);

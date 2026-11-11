@@ -10,7 +10,7 @@ CoolingController cooling(fans, Serial);
 SerialConsole console(Serial, fans, leds, cooling);
 
 void setup() {
-    Serial.begin(115200);
+    Serial.begin(board::kSerialBaud);
     // No 'while (!Serial)' here: fan control must start without a PC attached.
     if (!fans.begin()) {
         Serial.println(F("FATAL: unable to configure 8 PWM channels"));

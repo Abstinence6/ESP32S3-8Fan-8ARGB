@@ -17,6 +17,8 @@ class TemperatureSensor:
 
 DEFAULT_LHM_URL = "http://127.0.0.1:8085/data.json"
 MAX_ALL = "__MAX_ALL__"
+GROUP_AVG = "__GROUP_AVG__"
+GROUP_MAX = "__GROUP_MAX__"
 
 
 def parse_temperatures(tree: Any) -> list[TemperatureSensor]:
@@ -54,9 +56,27 @@ def fetch_temperatures(url: str = DEFAULT_LHM_URL, timeout: float = 1.0) -> list
     return parse_temperatures(tree)
 
 
-def resolve_temperature(assignment: str, sensors: list[TemperatureSensor]) -> float | None:
+def resolve_temperature(
+    assignment: str,
+    sensors: list[TemperatureSensor],
+    group_ids: list[str] | tuple[str, ...] = (),
+) -> float | None:
+    """Return one sensor, MAX(all), AVG(group) or MAX(group).
+
+    An empty group or any missing group member returns None. Do not silently
+    average fewer sensors: on missing readings the ESP must time out to safe PWM.
+    """
     if assignment == MAX_ALL:
         return max((sensor.celsius for sensor in sensors), default=None)
+    if assignment in (GROUP_AVG, GROUP_MAX):
+        chosen = set(group_ids)
+        if not chosen:
+            return None
+        by_id = {sensor.sensor_id: sensor.celsius for sensor in sensors}
+        if not chosen.issubset(by_id):
+            return None
+        values = [by_id[ident] for ident in chosen]
+        return sum(values) / len(values) if assignment == GROUP_AVG else max(values)
     for sensor in sensors:
         if sensor.sensor_id == assignment:
             return sensor.celsius

@@ -13,6 +13,9 @@ static constexpr uint8_t kFanPwmPins[kChannelCount] = {4, 5, 6, 7, 15, 16, 17, 1
 static constexpr uint8_t kFanTachPins[kChannelCount] = {8, 9, 10, 11, 12, 13, 14, 21};
 static constexpr uint8_t kArgbDataPins[kChannelCount] = {1, 2, 38, 39, 40, 41, 42, 47};
 static constexpr uint16_t kArgbLedCounts[kChannelCount] = {30, 30, 30, 30, 30, 30, 30, 30};
+// sACN: one universe per channel, up to 170 RGB pixels (510 DMX slots).
+static constexpr uint16_t kMaxArgbPixelsPerFrame = 170;
+static constexpr uint32_t kSerialBaud = 921600;
 
 static constexpr uint32_t kFanPwmFrequencyHz = 25000;
 static constexpr uint8_t kFanPwmResolutionBits = 8;
