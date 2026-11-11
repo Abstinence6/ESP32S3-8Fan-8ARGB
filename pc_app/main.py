@@ -682,7 +682,9 @@ class FanArgbWindow(QMainWindow):
             if len(rgb) < 3:
                 continue
             try:
-                self.port.write(encode_rgb_frame(ch, rgb))
+                packet = encode_rgb_frame(ch, rgb)
+                if self.port.write(packet) != len(packet):
+                    raise serial.SerialTimeoutException("incomplete RGB frame")
                 self.sacn_forwarded += 1
             except (ValueError, serial.SerialException, OSError) as exc:
                 self.log(f"ARGB E1.31 → USB ERROR: {exc}")
