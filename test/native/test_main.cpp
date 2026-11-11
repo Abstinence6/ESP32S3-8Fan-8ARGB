@@ -6,6 +6,7 @@
 #include "FanController.h"
 #include "ArgbController.h"
 #include "SerialConsole.h"
+#include "CoolingController.h"
 
 int main() {
     FanController fans;
@@ -33,7 +34,9 @@ int main() {
     fans.update(mock::currentMs);
     assert(fans.getRpm(0) == 0);
 
-    SerialConsole console(Serial, fans, leds);
+    CoolingController cooling(fans, Serial);
+    assert(cooling.begin());
+    SerialConsole console(Serial, fans, leds, cooling);
     console.begin();
     Serial.send("FAN 1 45\nLED 3 255 0 0\nBRIGHT 3 80\nRAINBOW 2\nSTATUS\n");
     console.poll();
@@ -60,5 +63,63 @@ int main() {
     leds.setRainbow(0);
     mock::currentMs = 2040;
     leds.update(mock::currentMs);
-    std::cout << "PASS: 8 PWM, RPM, ARGB modes, serial commands, malformed inputs\n";
+    // Default curves start at 25% and reach full fan PWM at 80 C.
+    assert(CoolingController::interpolate(cooling.curve(0), 250) == 25);
+    assert(CoolingController::interpolate(cooling.curve(0), 800) == 100);
+    assert(CoolingController::interpolate(cooling.curve(0), 425) == 45);
+    CoolingController::CurvePoint bad[5] = {{25, 20}, {30, 40}, {20, 50}, {70, 80}, {80, 100}};
+    assert(!cooling.setCurve(0, bad));
+    CoolingController::CurvePoint custom[5] = {{20, 30}, {30, 40}, {45, 60}, {60, 80}, {75, 100}};
+    assert(cooling.setCurve(0, custom));
+    assert(cooling.curve(0)[0].pwm == 30);
+
+    // Automatic control follows temperature, but falls back to 100% on link loss.
+    assert(cooling.setAuto(0));
+    cooling.setTemperature(0, 450, mock::currentMs);
+    for (int i = 0; i < 35; ++i) { mock::currentMs += 250; cooling.update(mock::currentMs); }
+    assert(fans.getPercent(0) == 60);
+    mock::currentMs += CoolingController::kSensorTimeoutMs + 500;
+    cooling.update(mock::currentMs);
+    assert(fans.getPercent(0) == 100);
+
+    // Serial command persists a new five-point temperature curve.
+    Serial.out.clear();
+    Serial.send("CURVE 1 20 30 30 40 45 60 60 80 75 100\nCURVE? 1\nTEMP 1 425\nAUTO 1\nPING\n");
+    console.poll();
+    assert(Serial.out.find("OK CURVE_SAVED") != std::string::npos);
+    assert(Serial.out.find("CURVE 1 20 30 30 40 45 60 60 80 75 100") != std::string::npos);
+    assert(Serial.out.find("PONG 2") != std::string::npos);
+
+    // A calibration sweep logs 21 PWM/RPM samples, then saves them to NVS.
+    Serial.out.clear();
+    assert(cooling.startCalibration(2, mock::currentMs));
+    assert(!cooling.startCalibration(1, mock::currentMs));
+    for (int step = 0; step < 21; ++step) {
+        mock::currentMs += (step == 0 ? 1200 : 0);
+        cooling.update(mock::currentMs);
+        // Synthesize TACH pulses every 500 ms for a fan with RPM growing with PWM.
+        for (int quarter = 0; quarter < 8; ++quarter) {
+            mock::pulse(board::kFanTachPins[2], static_cast<unsigned>(step + 3));
+            mock::currentMs += 500;
+            fans.update(mock::currentMs);
+            cooling.update(mock::currentMs);
+        }
+    }
+    assert(!cooling.calibrationActive());
+    assert(cooling.hasCalibration(2));
+    assert(cooling.rpmAt(2, 20) > 0);
+    assert(Serial.out.find("CAL_POINT 3 100 ") != std::string::npos);
+    assert(Serial.out.find("CAL_SAVED 3") != std::string::npos);
+
+    // Simulate reboot: NVS state must survive object reconstruction.
+    CoolingController afterReboot(fans, Serial);
+    assert(afterReboot.begin());
+    assert(afterReboot.hasCalibration(2));
+    assert(afterReboot.rpmAt(2, 20) == cooling.rpmAt(2, 20));
+    assert(afterReboot.curve(0)[0].pwm == 30);
+    assert(afterReboot.startCalibration(3, mock::currentMs));
+    assert(afterReboot.cancelCalibration());
+    assert(!afterReboot.hasCalibration(3));
+
+    std::cout << "PASS: PWM, RPM, ARGB, serial, curves, NVS, calibration, fail-safe\n";
 }

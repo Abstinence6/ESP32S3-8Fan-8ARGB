@@ -12,7 +12,7 @@ public:
     void updateType(neoPixelType) {}
     void updateLength(uint16_t count) { data_.resize(count, 0); }
     void setPin(uint16_t pin) { pin_ = pin; }
-    bool begin() { return true; }
+    void begin() {}
     void setBrightness(uint8_t brightness) { brightness_ = brightness; }
     void clear() { for (auto& pixel : data_) pixel = 0; }
     void show() { ++shows_; }
