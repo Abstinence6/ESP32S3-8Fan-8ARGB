@@ -50,6 +50,7 @@ public:
 class MockSerial : public Stream {
 public:
     void begin(uint32_t) {}
+    void setRxBufferSize(size_t) {}
     std::string in, out;
     int available() override { return static_cast<int>(in.size()); }
     int read() override { int c = in[0]; in.erase(0,1); return c; }
