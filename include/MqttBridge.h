@@ -21,8 +21,8 @@ public:
     bool setBroker(const char* host, uint16_t port);
     bool setCredentials(const char* username, const char* password);
     bool setEnabled(bool enabled);
-    void printStatus(Stream& serial) const;
-    bool connected() const;
+    void printStatus(Stream& serial);
+    bool connected();
     const char* baseTopic() const { return baseTopic_; }
     // Pure (hardware-independent) MQTT command routing for native safety tests.
     bool applyCommand(const char* topic, const char* payload, uint32_t nowMs);
