@@ -23,7 +23,7 @@ g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
 # MQTT command routing and safe NVS configuration (no ESP hardware needed).
 g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
   test/native/mock/Arduino.cpp src/FanController.cpp src/ArgbController.cpp \
-  src/CoolingController.cpp src/NetworkRgbBridge.cpp src/MqttBridge.cpp \
+  src/CoolingController.cpp src/NetworkRgbBridge.cpp src/MqttBridge.cpp src/PcPowerController.cpp \
   test/native/test_mqtt.cpp -o "$out"
 "$out"
 
