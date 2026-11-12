@@ -4,12 +4,14 @@
 #include "SerialConsole.h"
 #include "CoolingController.h"
 #include "NetworkRgbBridge.h"
+#include "MqttBridge.h"
 
 FanController fans;
 ArgbController leds;
 CoolingController cooling(fans, Serial);
 NetworkRgbBridge wifiRgb(leds);
-SerialConsole console(Serial, fans, leds, cooling, &wifiRgb);
+MqttBridge mqtt(cooling, fans, leds, wifiRgb);
+SerialConsole console(Serial, fans, leds, cooling, &wifiRgb, &mqtt);
 
 void setup() {
 #if !ARDUINO_USB_CDC_ON_BOOT
@@ -34,6 +36,7 @@ void setup() {
         while (true) delay(1000);
     }
     wifiRgb.begin();
+    if (!mqtt.begin()) Serial.println(F("WARN: MQTT NVS unavailable"));
     console.begin();
 }
 
@@ -43,6 +46,7 @@ void loop() {
     fans.update(now);
     cooling.update(now);
     wifiRgb.update(now);
+    mqtt.update(now);
     leds.update(now);
     delay(1);
 }

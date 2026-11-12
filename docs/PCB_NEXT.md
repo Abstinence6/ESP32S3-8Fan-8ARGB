@@ -1,23 +1,27 @@
-# PCB checklist: universal 3-pin-first controller without I/O expanders
+# PCB checklist for ESP32-S3 8x 2/3-pin fans and 8x ARGB
 
-## Proposed fan channel
+This is a **design checklist, not a tested schematic**. The present software
+supports eight 12 V supply-controlled fan outputs and optional TACH feedback.
+Four-wire fan PWM routing, the DC/PWM jumper and I/O expander are eliminated.
 
-- **2 ESP32-S3 GPIO per fan**: PWM output and TACH input. Eight fans consume 16 GPIO; eight ARGB data lines consume another 8 = **24 total**.
-- A 4-pin connector accepts 2-pin/3-pin/4-pin fans with correct keying/orientation. Use separate 12 V and 5 V fused PSU rails, suitable return paths and decoupling.
-- The **user-supplied intelligent high-side switch** controls +12 V. A physical **DC/PWM jumper** selects whether its input follows PWM or is held permanently ON. Open-collector fan PWM contact 4 is a separate conditioned path; no extra GPIO selects it.
-- **3-pin is the main mode** (DC jumper, PWM through key), 2-pin shares the same mode with no TACH, 4-pin needs jumper PWM (+12 V always on).
-- Do not connect fan contact 4, GPIO or key input to uncontrolled 12 V. Never put 5/12 V directly on an ESP32 input. TACH uses a pull-up to 3.3 V.
-- No MCP23017, GPIO expander, automatic type detector or in-circuit software bypass; no new I2C pins allocated.
+- 8 x high-side 12 V switching paths; do not interrupt fan ground. The chosen
+  MOSFET and discrete/array gate drive must work at 3.3 V ESP IO levels.
+- 8 x 3.3 V TACH inputs, pull-ups and ESD protection, not tied to 12 V;
+  2-pin connectors leave TACH unused.
+- **Fail-ON power circuitry independent of ESP GPIO**: during reset,
+  bootloader, flashing, Wi-Fi failures, and MCU power loss the motors should
+  still receive uninterrupted 12 V. Verify the actual schematic electrically.
+- Validate with a scope: high-side rising/falling edges at candidate 250 Hz,
+  gate Vgs limits, EMI, inductive spikes, motor startup and stalled current,
+  MOSFET total thermal loss at all eight channels simultaneously.
+- Do not unlock `FAN_DC_PWM_VALIDATED` just to silence the firmware safety guard.
+- Protect both 12 V fan power and 5 V ARGB rails with appropriately rated
+  fuses, reverse-polarity protection, decoupling and physical wiring separation.
+- Use proven 3.3 V -> 5 V ARGB data level shifting, common ground and power
+  injection for long strips. Software LED current budget is not a fuse.
+- Reserve GPIO by reference (`BoardConfig.h`) and verify against exact module,
+  flash/PSRAM package and USB pin assignments.
+- Optional: channel current sensing/driver fault outputs for 2-pin stall
+  diagnostics, onboard safety temperature sensing independent of Windows/MQTT.
 
-## Before enabling DC PWM
-
-The firmware's 2/3-pin duty is **100% only** by default (`FAN_DC_PWM_VALIDATED=0`). The selected smart switch must be checked for **25 kHz PWM motor switching**, supply-voltage transients, inductive energy, rated peak motor startup current, thermal derating and safety ON default when MCU is reset/unpowered. Many high-side switches cannot run 25 kHz power PWM. In that case, revise the circuit/software rather than merely setting the validation flag.
-
-## Optional next PCB revision (not implemented)
-
-- On-board NTC/DS18B20/coolant/flow inputs; they need protection, wiring and sometimes more pins, so current 24-GPIO budget must be rechecked.
-- Sense 5/12 V through adequately scaled ADC dividers or a dedicated monitor (not connected to bare GPIO).
-- Measure actual key fault/current status if available, especially important for 2-pin fans without TACH.
-- ARGB overcurrent protection, power injection and 3.3-to-5 V logic interface suitable for chosen strip type.
-
-See [FAN_MODES.md](FAN_MODES.md). No physical PCB has been validated by these firmware tests.
+See [FAN_MODES.md](FAN_MODES.md), [MQTT.md](MQTT.md).

@@ -102,7 +102,7 @@ private:
         uint16_t stallRpm;
         uint8_t pidEnabled;
         uint8_t dualEnabled;
-        uint8_t fanType; // 2=DC/no tach, 3=DC/tach, 4=PWM/tach; 0 is rejected
+        uint8_t fanType; // 2=DC/no tach, 3=DC/tach (legacy 0/4 is migrated)
         uint32_t checksum;
     };
     struct FaultStore {
@@ -164,5 +164,7 @@ private:
     bool downward_ = false;
     uint16_t workingRpm_[kCalibrationPoints] = {};
     uint16_t downRpm_[kCalibrationPoints] = {};
+    uint8_t calRetry_ = 0;
+    uint8_t calBadSamples_ = 0;
     uint32_t lastControlMs_ = 0;
 };

@@ -53,6 +53,8 @@ private:
     uint16_t powerLimitMa_ = 2000;
     uint16_t lastScale_ = 255;
     uint32_t previousFrameMs_ = 0;
+    uint8_t renderCursor_ = 0;
+    uint32_t previousRenderMs_ = 0;
     uint32_t lastExternalFrameMs_[board::kChannelCount] = {};
     uint16_t rainbowHue_ = 0;
 };

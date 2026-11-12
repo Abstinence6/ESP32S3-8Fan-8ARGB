@@ -37,24 +37,25 @@ bool FanController::dcHardwareAvailable() const {
 bool FanController::canControl(uint8_t channel, uint8_t percent) const {
     if (channel >= board::kChannelCount || percent > 100) return false;
     const Type type = configured_[channel];
-    if (type != Type::TwoPin && type != Type::ThreePin && type != Type::FourPin)
+    if (type != Type::TwoPin && type != Type::ThreePin)
         return false;
-    // Open-collector 4-pin PWM is always supported. Modulating DC supply is
-    // blocked until the intelligent key is explicitly certified by the builder.
-    return type == Type::FourPin || percent == 100 || dcHardwareAvailable();
+    // No physical high-side key has yet been qualified. Never emit partial DC power
+    // until the hardware is bench-verified and the compile-time interlock is set.
+    return percent == 100 || dcHardwareAvailable();
 }
 
 bool FanController::setType(uint8_t channel, Type requested) {
     if (channel >= board::kChannelCount ||
-        (requested != Type::TwoPin && requested != Type::ThreePin &&
-         requested != Type::FourPin)) return false;
-    // No bypass/select GPIO exists! The user must set a matching jumper and
-    // then confirm the software type. Changing type cannot rewire the PCB.
+        (requested != Type::TwoPin && requested != Type::ThreePin)) return false;
+    // A selection only specifies whether the fan has a TACH wire. No auto-detection.
     const Type old = configured_[channel];
     if (old != requested) {
         setPercent(channel, 100); // safe before accepting a different type
         configured_[channel] = requested;
         tachObserved_[channel] = false;
+        tachReliable_[channel] = false;
+        rpm_[channel] = 0;
+        previousPulses_[channel] = tachPulseCount(channel);
     }
     return setPercent(channel, 100);
 }
@@ -63,13 +64,17 @@ FanController::Type FanController::configuredType(uint8_t channel) const {
     return channel < board::kChannelCount ? configured_[channel] : Type::Unknown;
 }
 FanController::Type FanController::detectedType(uint8_t) const {
-    // TACH presence cannot distinguish 3- vs 4-wire or missing/disconnected 2-wire.
+    // TACH cannot prove whether a motor is connected, or count physical contacts.
     return Type::Unknown;
 }
 
 bool FanController::hasRpmFeedback(uint8_t channel) const {
     return channel < board::kChannelCount &&
-        (configured_[channel] == Type::ThreePin || configured_[channel] == Type::FourPin);
+        configured_[channel] == Type::ThreePin;
+}
+
+bool FanController::tachReliable(uint8_t channel) const {
+    return channel < board::kChannelCount && hasRpmFeedback(channel) && tachReliable_[channel];
 }
 
 bool FanController::tachObserved(uint8_t channel) const {
@@ -122,10 +127,16 @@ void FanController::update(uint32_t nowMs) {
     for (uint8_t i = 0; i < board::kChannelCount; ++i) {
         const uint32_t delta = currentPulses[i] - previousPulses_[i];
         previousPulses_[i] = currentPulses[i];
-        if (delta > 0 && hasRpmFeedback(i)) tachObserved_[i] = true;
-        rpm_[i] = static_cast<uint32_t>(
+        const uint32_t candidate = static_cast<uint32_t>(
             (static_cast<uint64_t>(delta) * 60000ULL) /
             (static_cast<uint64_t>(elapsedMs) * ppr_[i]));
+        // An interrupted supply may generate spurious TACH transitions.
+        // This sanity guard catches obvious noise, but oscilloscope validation
+        // is still required before closed-loop power modulation is enabled.
+        tachReliable_[i] = hasRpmFeedback(i) && delta > 0 &&
+                           candidate >= 60 && candidate <= board::kMaxValidRpm;
+        if (tachReliable_[i]) tachObserved_[i] = true;
+        rpm_[i] = tachReliable_[i] ? candidate : 0;
     }
     previousSampleMs_ = nowMs;
 }

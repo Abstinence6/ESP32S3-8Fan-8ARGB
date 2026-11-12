@@ -33,6 +33,7 @@ from monitor import (
 )
 from sacn_bridge import E131Listener, SACN_PORT, SERIAL_BAUD, encode_rgb_frame
 from protocol import validate_curve, DEFAULT_CURVE, make_curve_command, make_temperature_command, parse_curve, parse_status
+from serial_owner import SerialProxyClient
 from profiles import PRESETS
 
 
@@ -42,7 +43,7 @@ class FanArgbWindow(QMainWindow):
         self.setWindowTitle("ESP32-S3 · Fan & ARGB Controller")
         self.resize(1480, 890)
         self.settings = QSettings("FanARGB", "FanARGBControl")
-        self.port: Optional[serial.Serial] = None
+        self.port: Optional[serial.Serial | SerialProxyClient] = None
         self.read_buffer = ""
         self.temperatures: list[TemperatureSensor] = []
         self.curves = {ch: list(DEFAULT_CURVE) for ch in range(1, 9)}
@@ -217,7 +218,7 @@ class FanArgbWindow(QMainWindow):
         choose_row.addWidget(self.fan_box)
         choose_row.addWidget(QLabel("Тип:"))
         self.type_box = QComboBox()
-        for name, wire in (("2-pin / ключ", 2), ("3-pin / ключ+TACH", 3), ("4-pin / PWM", 4)):
+        for name, wire in (("2-pin / ключ", 2), ("3-pin / ключ+TACH", 3)):
             self.type_box.addItem(name, wire)
         self.type_box.setCurrentIndex(1)
         choose_row.addWidget(self.type_box)
@@ -379,6 +380,9 @@ class FanArgbWindow(QMainWindow):
         test_button.setToolTip("Тільки спостерігає імпульси TACH, не змінює PWM чи живлення")
         test_button.clicked.connect(lambda: self.send("SELFTEST"))
         diagnostic_row.addWidget(test_button)
+        mqtt_button = QPushButton("Налаштувати MQTT…")
+        mqtt_button.clicked.connect(self.configure_mqtt)
+        diagnostic_row.addWidget(mqtt_button)
         log_layout.addLayout(diagnostic_row)
         right_layout.addWidget(log_box)
         self.statusBar().showMessage("ESP: відключено — до підключення вентилятори повинні бути в fail-safe 100%")
@@ -402,12 +406,17 @@ class FanArgbWindow(QMainWindow):
             QMessageBox.warning(self, "COM порт", "Підключи ESP32-S3 та вибери COM порт")
             return
         try:
-            self.port = serial.Serial(port_name, SERIAL_BAUD, timeout=0, write_timeout=0.3)
+            try:
+                self.port = SerialProxyClient(port_name)
+                using_agent = True
+            except (OSError, ConnectionError):
+                self.port = serial.Serial(port_name, SERIAL_BAUD, timeout=0, write_timeout=0.3)
+                using_agent = False
             self.led_counts = None
             self.settings.setValue("port", port_name)
             self.connect_button.setText("Від'єднати")
             self.statusBar().showMessage(f"ESP: {port_name} підключено")
-            self.log(f"Підключено до {port_name} ({SERIAL_BAUD} бод)")
+            self.log(f"Підключено до {port_name} ({'через фоновий агент' if using_agent else 'COM напряму'})")
             # Opening a serial port can reset an ESP board; wait for the boot message.
             QTimer.singleShot(2200, self.read_device_state)
         except (serial.SerialException, OSError) as exc:
@@ -491,7 +500,7 @@ class FanArgbWindow(QMainWindow):
             self.fan_table.item(row, 4).setText(
                 f"{status.mode} · {'OK' if status.fresh else 'fail-safe'}"
                 + (" · FAULT" if status.fault else "")
-                + (f" · {status.detected_type}-pin" if status.detected_type in (2, 3, 4) else "")
+                + (f" · {status.detected_type}-pin" if status.detected_type in (2, 3) else "")
             )
             return
         if line.startswith("TYPE ") or line.startswith("CONFIG "):
@@ -769,10 +778,9 @@ class FanArgbWindow(QMainWindow):
         wire = int(self.type_box.currentData())
         confirm = QMessageBox.warning(
             self, "Перевір фізичну перемичку",
-            "TYPE зберігає вибір у ESP, але НЕ перемикає проводку.\n"
-            "2/3-pin: перемичка DC, ключ живлення має підтримувати PWM.\n"
-            "4-pin: перемичка PWM, ключ постійно ON, +12 В без переривань.\n"
-            "Підтверджуєш, що перемичка та підключений вентилятор відповідають типу?",
+            "TYPE задає, чи доступний TACH (3-pin), або його немає (2-pin).\n"
+            "Важливо: керування живленням дозволено лише після перевірки ключа.\n"
+            "Підтверджуєш тип підключеного вентилятора?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if confirm != QMessageBox.StandardButton.Yes: return
         self.send(f"TYPE {self.current_fan} {wire}")
@@ -946,6 +954,30 @@ class FanArgbWindow(QMainWindow):
         ma, ok = QInputDialog.getInt(self, "Максимальний струм", "Загальний ліміт 5В ARGB, мА:",
                                      2000, 100, 20000, 100)
         if ok: self.send(f"RGBBUDGET {ma}")
+
+    def configure_mqtt(self) -> None:
+        if not self.port:
+            QMessageBox.warning(self, "MQTT", "Спочатку підключи ESP32-S3")
+            return
+        host, ok = QInputDialog.getText(self, "MQTT", "IP/hostname брокера:")
+        if not ok or not host.strip(): return
+        port, ok = QInputDialog.getInt(self, "MQTT", "Порт:", 1883, 1, 65535)
+        if not ok: return
+        user, ok = QInputDialog.getText(self, "MQTT", "Користувач (порожній = без авторизації):")
+        if not ok: return
+        password = ""
+        if user:
+            password, ok = QInputDialog.getText(self, "MQTT", "Пароль:", QLineEdit.EchoMode.Password)
+            if not ok: return
+        self.send(f"MQTT HOST {host.strip()} {port}")
+        if user:
+            self.send(f"MQTT AUTH {user} {password}")
+        else:
+            self.send("MQTT AUTH CLEAR")
+        self.send("MQTT ON")
+        self.send("MQTT?")
+        QMessageBox.information(self, "MQTT", "Брокер збережено. ESP32 має бути підключено до Wi-Fi.\n"
+                                 "Home Assistant Discovery активується після з'єднання з брокером.")
 
     def configure_wifi(self) -> None:
         ssid, ok = QInputDialog.getText(self, "Wi-Fi на ESP32", "SSID (без пробілів):")

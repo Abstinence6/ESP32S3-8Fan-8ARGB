@@ -88,9 +88,19 @@ See [FAN_MODES.md](FAN_MODES.md) for physical jumper wiring, frequency validatio
 - After TACH has actually been seen, a later tach failure can trigger stall recovery even if the PC stops providing temperatures. At that point the controller already commands 100% duty, but it still records a stall event and attempts a safe fan restart. To avoid false alarms on unconnected channels, stall detection is not armed before the first genuine TACH sample. For 2-pin, use smart-key fault telemetry in future hardware; no TACH means no RPM/stall feedback.
 - In every mode, no recent temperature update means a fail-safe request of 100% duty. **Without a validated key and physical fail-safe circuitry, software cannot guarantee actual fan power when the MCU is resetting/unpowered.**
 
-## v4.2: Read-only TACH self-test (no DC key required)
+## v5: 2/3-pin-only supply drive and MQTT
 
-- `SELFTEST` starts a **nonblocking 5-second** observation window for every fan, without changing PWM duty, power switching, modes, curves, or saved configuration. A second start while active returns `ERR selftest busy`; `SELFTEST CANCEL` stops without reporting results.
-- The response begins with `SELFTEST_STARTED 5000` and ends with `SELFTEST_END`. Each fan produces `SELFTEST <1..8> RESULT=<OK|NO_TACH|NA|INCONCLUSIVE> PULSES=<count> PWM=<duty>`.
-- `OK` means at least 3 TACH falling edges observed during the window; **it does not authenticate fan type or certify PWM/voltage control**. `NO_TACH` is not an automatic fan failure: a fan may be stopped or disconnected, or the signal may not be wired. `NA` means software is set to 2-pin, which has no TACH. `INCONCLUSIVE` means channel mode or PWM changed while testing.
-- A test requested during calibration is rejected. It is safe to run on an unvalidated key, but to make sense of results the physical fans and TACH circuits must be powered and wired.
+**Supersedes older 4-pin sections above.** `TYPE <ch> 2|3` is the only valid
+set command; `TYPE 4` and `TYPE AUTO` are rejected. The supply PWM reference
+frequency is 250 Hz, **not** the old 4-pin 25 kHz pin-4 PWM signal.
+`HEALTH` now includes `TACH_VALID=0|1` in addition to the historical
+`TACH=seen|unseen|na` latch. A connected 3-pin fan with untrusted pulse timing
+has `TACH_VALID=0` and cannot drive RPM PID; 2-pin always reports no RPM.
+
+NVS profile format v4 migrates old v1/v2/v3 profiles by retaining the
+five-point thermal curves, but dropping RPM calibration and PID settings
+because PWM-driven motor behavior depends on the changed power hardware.
+
+`MQTT?` prints current broker and state. `MQTT HOST <host> <1..65535>`,
+`MQTT AUTH <user> <password>`, `MQTT AUTH CLEAR`, `MQTT ON|OFF` manage optional
+local-broker MQTT. See [MQTT.md](MQTT.md) for topic and safety details.

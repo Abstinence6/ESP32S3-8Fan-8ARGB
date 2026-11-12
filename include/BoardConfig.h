@@ -10,12 +10,11 @@ namespace board {
 
 static constexpr uint8_t kChannelCount = 8;
 // Two native ESP32-S3 GPIO per fan: one PWM and one tachometer input.
-// For 2/3-pin, a selected smart high-side key modulates +12V; for 4-pin,
-// a physical jumper holds +12V ON and routes PWM to fan pin 4.
-// No GPIO expander, I2C, automatic connector detection or software bypass.
+// For 2/3-pin, a qualified high-side switch controls +12 V.
+// No 4-pin PWM input, physical DC/PWM jumper, automatic detection, or GPIO expander.
 static constexpr uint8_t kDefaultFanType = 3;
-// SAFETY INTERLOCK: set true only after verifying the selected smart switch
-// supports 25 kHz PWM of a motor load, inrush, heat and an ON-at-reset circuit.
+// SAFETY INTERLOCK: enable only after bench validation of the actual power stage,
+// including switching frequency, 12 V transient handling, inrush, TACH, and power-ON at reset.
 // While false, 2/3-pin channels are held at 100% and reject lower duty.
 #ifndef FAN_DC_PWM_VALIDATED
 #define FAN_DC_PWM_VALIDATED 0
@@ -29,14 +28,18 @@ static constexpr uint16_t kArgbLedCounts[kChannelCount] = {30, 30, 30, 30, 30, 3
 static constexpr uint16_t kMaxArgbPixelsPerFrame = 170;
 static constexpr uint32_t kSerialBaud = 921600;
 
-static constexpr uint32_t kFanPwmFrequencyHz = 25000;
+// Supply PWM for 2/3-wire fans is not the 25 kHz control signal for 4-wire fans.
+// 250 Hz is a starting test setting, NOT yet verified for a particular motor.
+static constexpr uint32_t kFanPwmFrequencyHz = 250;
+static constexpr uint32_t kMaxValidRpm = 25000;
 static constexpr uint8_t kFanPwmResolutionBits = 8;
 static constexpr uint8_t kTachPulsesPerRevolution = 2;
 static constexpr uint32_t kRpmUpdateMs = 1000;
 
-// true: GPIO -> base/gate of NPN/NMOS open-collector/open-drain stage -> fan PWM pin.
-// The stage inverts the logic level. PWM high on the *fan connector* means full speed.
-static constexpr bool kPwmDriverInverts = true;
+// MUST match the final tested high-side gate-drive circuit! An ULN2803
+// pulling a P-MOSFET gate low is active HIGH at the ESP GPIO.
+// No firmware polarity setting can guarantee 12 V during reset; hardware must.
+static constexpr bool kPwmDriverInverts = false;
 static constexpr uint8_t kInitialFanPercent = 100; // fail-safe full speed
 
 static constexpr uint8_t kInitialArgbBrightness = 64; // 0..255

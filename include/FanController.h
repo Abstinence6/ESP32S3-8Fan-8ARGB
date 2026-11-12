@@ -7,7 +7,7 @@
 // Stored type affects feedback/PID permissions only, never switches supply.
 class FanController {
 public:
-    enum class Type : uint8_t { Auto = 0, TwoPin = 2, ThreePin = 3, FourPin = 4, Unknown = 255 };
+    enum class Type : uint8_t { TwoPin = 2, ThreePin = 3, Unknown = 255 };
 
     bool begin();
     bool setPercent(uint8_t channel, uint8_t percent);
@@ -24,7 +24,9 @@ public:
     // True only after real TACH edges were observed since boot/type change.
     // Capability alone (3-pin/4-pin) does not prove a fan is connected.
     bool tachObserved(uint8_t channel) const;
-    // Total observed falling TACH edges since boot (wraps naturally).
+    // Valid RPM is derived from the most recent complete measurement window.
+    // No TACH / implausible pulse rate -> false; no closed-loop decisions.
+    bool tachReliable(uint8_t channel) const;
     uint32_t tachPulseCount(uint8_t channel) const;
     // True only after user explicitly validates the DC power switch in firmware.
     bool dcHardwareAvailable() const;
@@ -39,6 +41,7 @@ private:
     uint32_t previousPulses_[board::kChannelCount] = {};
     uint32_t rpm_[board::kChannelCount] = {};
     bool tachObserved_[board::kChannelCount] = {};
+    bool tachReliable_[board::kChannelCount] = {};
     uint8_t percent_[board::kChannelCount] = {};
     uint32_t previousSampleMs_ = 0;
 };
