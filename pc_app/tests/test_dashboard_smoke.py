@@ -39,6 +39,33 @@ class DashboardSmokeTests(unittest.TestCase):
     def tearDown(self):
         self.window.close()
 
+    def test_render_preview(self):
+        """Optional offscreen screenshots for visual QA of the actual Qt layout."""
+        if os.environ.get("SAVE_DASHBOARD_PREVIEW") != "1":
+            self.skipTest("Set SAVE_DASHBOARD_PREVIEW=1 to capture screenshots")
+        from protocol import parse_status
+        self.window.dashboard.set_connected(True, "DEMO")
+        self.window.dashboard.set_sensor_count(7)
+        for ch in range(1, 9):
+            line = (
+                f"CH {ch} FAN={28 + ch * 5}% RPM={760 + ch * 155} "
+                f"TEMP={335 + ch * 23} MODE=auto SENSOR=ok TYPE=3 FAULT=0"
+            )
+            self.window.handle_line(line)
+        self.window.dashboard.set_bridge_state(True, 128)
+        self.window.dashboard.set_mqtt_state("ENABLED=1 CONNECTED=1")
+        self.window.dashboard.update_pc_state("on BUSY=0")
+        self.window.show()
+        self.app.processEvents()
+        output = Path("dist/ui-preview")
+        output.mkdir(parents=True, exist_ok=True)
+        for key in ("overview", "fans", "argb", "pc", "service", "logs"):
+            self.window.dashboard.show_page(key)
+            self.app.processEvents()
+            target = output / f"{key}.png"
+            self.assertTrue(self.window.grab().save(str(target), "PNG"))
+            self.assertGreater(target.stat().st_size, 10_000)
+
     def test_navigation_and_existing_controls(self):
         shell = self.window.dashboard
         self.assertEqual(shell.stack.count(), 6)
