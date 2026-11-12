@@ -45,4 +45,38 @@ static constexpr uint8_t kInitialFanPercent = 100; // fail-safe full speed
 static constexpr uint8_t kInitialArgbBrightness = 64; // 0..255
 static constexpr uint32_t kArgbFrameMs = 40; // up to 25 FPS, updates strips sequentially
 
+
+// Optional motherboard PWR_SW + 3.3 V power-indicator interface.
+// Deliberately NO pin default: GPIO1 is already ARGB1; many ESP32-S3
+// variants reserve other pins for flash/PSRAM, USB or bootstrapping.
+#ifndef PC_POWER_ENABLED
+#define PC_POWER_ENABLED 0
+#endif
+#ifndef PC_POWER_GPIO
+#define PC_POWER_GPIO -1
+#endif
+#ifndef PC_SENSE_GPIO
+#define PC_SENSE_GPIO -1
+#endif
+static constexpr int kPcPowerPin = PC_POWER_GPIO;
+static constexpr int kPcSensePin = PC_SENSE_GPIO;
+#if PC_POWER_ENABLED
+static_assert(kPcPowerPin >= 0 && kPcPowerPin <= 48 &&
+              kPcSensePin >= 0 && kPcSensePin <= 48 &&
+              kPcPowerPin != kPcSensePin, "PC power requires two distinct assigned ESP32-S3 GPIOs");
+constexpr bool reservedPcGpio(int pin) {
+    // Conservative: boot strapping, USB, UART0 and flash/PSRAM-related pins.
+    if (pin == 0 || pin == 3 || pin == 19 || pin == 20 ||
+        pin == 43 || pin == 44 || pin == 45 || pin == 46 ||
+        (pin >= 26 && pin <= 37)) return true;
+    for (uint8_t i = 0; i < kChannelCount; ++i) {
+        if (pin == kFanPwmPins[i] || pin == kFanTachPins[i] || pin == kArgbDataPins[i])
+            return true;
+    }
+    return false;
+}
+static_assert(!reservedPcGpio(kPcPowerPin) && !reservedPcGpio(kPcSensePin),
+              "PC power pins conflict with reserved GPIOs or fan/ARGB outputs");
+#endif
+
 } // namespace board
