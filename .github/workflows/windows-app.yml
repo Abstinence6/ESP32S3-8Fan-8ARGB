@@ -18,7 +18,9 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r pc_app/requirements.txt pyinstaller
       - name: Bundle EXE
-        run: pyinstaller --clean --noconfirm --windowed --onefile --name FanARGBControl pc_app/main.py
+        run: python -m PyInstaller --clean --noconfirm --windowed --onefile --paths pc_app --name FanARGBControl pc_app/main.py
+      - name: Verify Windows bundle includes local modules
+        run: python pc_app/verify_windows_bundle.py dist/FanARGBControl.exe
       - uses: actions/upload-artifact@v4
         with:
           name: FanARGBControl-Windows
