@@ -27,7 +27,7 @@ GROUP_WEIGHTED = "__GROUP_WEIGHTED__"
 # RawValue (example: "46.9 °C"). Older versions return numeric RawValue.
 # Reject implausible/invalid readings rather than sending unsafe temperatures.
 _TEMPERATURE_VALUE = re.compile(
-    r"(?P<value>[+-]?(?:\\d+(?:[.,]\\d*)?|[.,]\\d+))(?:\\s*(?:°\\s*)?(?P<unit>[cCfF]))?"
+    r"(?P<value>[+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+))(?:\s*(?:°\s*)?(?P<unit>[cCfF]))?"
 )
 
 
