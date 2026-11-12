@@ -490,6 +490,9 @@ class DashboardShell(QWidget):
         ep.setContentsMargins(16, 20, 16, 12)
         ep.addWidget(_label("LHM URL:", "minor"))
         ep.addWidget(self.controller.lhm_url, 1)
+        check = QPushButton("Перевірити датчики")
+        check.clicked.connect(self.controller.refresh_temperatures)
+        ep.addWidget(check)
         ep.addWidget(self.controller.lhm_status)
         layout.addWidget(endpoint)
         layout.addStretch(1)
@@ -561,7 +564,10 @@ class DashboardShell(QWidget):
         self.connection_text.style().polish(self.connection_text)
 
     def set_sensor_count(self, count: int, available: bool = True) -> None:
-        self.summary_temp.setText(f"{count} датчиків" if available else "Немає зв'язку")
+        self.summary_temp.setText(
+            f"{count} температур" if count else
+            "LHM без температур" if available else "LHM недоступний"
+        )
 
     def set_bridge_state(self, enabled: bool, frames: int = 0) -> None:
         if enabled:
