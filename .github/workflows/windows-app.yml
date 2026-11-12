@@ -21,7 +21,13 @@ jobs:
         shell: pwsh
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
+          $env:SAVE_DASHBOARD_PREVIEW = "1"
           python -m unittest pc_app.tests.test_dashboard_smoke -v
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FanARGBControl-UI-preview
+          path: dist/ui-preview/*.png
+          if-no-files-found: error
       - name: Bundle EXE
         run: python -m PyInstaller --clean --noconfirm --windowed --onefile --paths pc_app --name FanARGBControl pc_app/main.py
       - name: Verify Windows bundle includes local modules
