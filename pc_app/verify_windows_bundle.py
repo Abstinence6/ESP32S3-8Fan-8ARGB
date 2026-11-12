@@ -15,7 +15,7 @@ import zlib
 
 REQUIRED = frozenset({
     "monitor", "sacn_bridge", "protocol", "serial_owner",
-    "profiles", "config_presets", "agent",
+    "profiles", "config_presets", "agent", "ui_dashboard", "ui_dashboard_model",
 })
 MAGIC = b"MEI\x0c\x0b\x0a\x0b\x0e"
 COOKIE = struct.Struct("!8sIIII64s")
@@ -70,7 +70,7 @@ def main() -> int:
     if missing:
         print("FAIL: Windows EXE is missing: " + ", ".join(missing), file=sys.stderr)
         return 1
-    print("PASS: All 7 project modules bundled: " + ", ".join(sorted(REQUIRED)))
+    print("PASS: All required project modules bundled: " + ", ".join(sorted(REQUIRED)))
     return 0
 
 
