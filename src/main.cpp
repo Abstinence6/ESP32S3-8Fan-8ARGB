@@ -5,13 +5,15 @@
 #include "CoolingController.h"
 #include "NetworkRgbBridge.h"
 #include "MqttBridge.h"
+#include "PcPowerController.h"
 
 FanController fans;
 ArgbController leds;
 CoolingController cooling(fans, Serial);
 NetworkRgbBridge wifiRgb(leds);
 MqttBridge mqtt(cooling, fans, leds, wifiRgb);
-SerialConsole console(Serial, fans, leds, cooling, &wifiRgb, &mqtt);
+PcPowerController pcPower;
+SerialConsole console(Serial, fans, leds, cooling, &wifiRgb, &mqtt, &pcPower);
 
 void setup() {
 #if !ARDUINO_USB_CDC_ON_BOOT
@@ -35,6 +37,7 @@ void setup() {
         Serial.println(F("FATAL: unable to initialize ARGB strips"));
         while (true) delay(1000);
     }
+    pcPower.begin();
     wifiRgb.begin();
     if (!mqtt.begin()) Serial.println(F("WARN: MQTT NVS unavailable"));
     console.begin();
@@ -45,6 +48,7 @@ void loop() {
     const uint32_t now = millis();
     fans.update(now);
     cooling.update(now);
+    pcPower.update(now);
     wifiRgb.update(now);
     mqtt.update(now);
     leds.update(now);
