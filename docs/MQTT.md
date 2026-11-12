@@ -1,6 +1,6 @@
 # MQTT and Home Assistant — ESP32-S3 v5
 
-MQTT is **optional and disabled until configured**. ESP32 must first connect to
+MQTT is **optional and disabled until a broker is configured**. ESP32 must first connect to
 Wi-Fi (existing `WIFI` serial configuration), and must be able to reach the
 local MQTT broker. Transport uses TCP MQTT on port 1883 by default, through
 PubSubClient 2.8; no separate MQTT gateway on the Windows PC is required.
@@ -9,14 +9,14 @@ The ESP32 uses MQTT even when the Windows GUI is not running.
 ## Setup (USB serial at 921600 baud)
 
 ```text
-WIFI <ssid> <password>
+WIFI SET <ssid> <password>
 MQTT HOST 192.168.1.10 1883
 MQTT AUTH homeassistant your-password
 MQTT ON
 MQTT?
 ```
 
-Use `MQTT AUTH CLEAR` to clear saved credentials, `MQTT OFF` to disable MQTT.
+`MQTT HOST` also enables the MQTT client. Use `MQTT AUTH CLEAR` to clear saved credentials, `MQTT OFF` to disable MQTT.
 `MQTT?` prints broker, port, authenticated flag, connection status and base topic,
 **never the saved password**. The Windows GUI has a **Налаштувати MQTT…** button.
 Configuration resides in ESP32 NVS; reconnect is automatic with a 10 s backoff.
