@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import math
+import re
 import urllib.request
 from typing import Any
 
@@ -22,6 +23,33 @@ GROUP_MAX = "__GROUP_MAX__"
 GROUP_WEIGHTED = "__GROUP_WEIGHTED__"
 
 
+# LibreHardwareMonitor 0.9.6 may supply *formatted strings* even under
+# RawValue (example: "46.9 °C"). Older versions return numeric RawValue.
+# Reject implausible/invalid readings rather than sending unsafe temperatures.
+_TEMPERATURE_VALUE = re.compile(
+    r"(?P<value>[+-]?(?:\\d+(?:[.,]\\d*)?|[.,]\\d+))(?:\\s*(?:°\\s*)?(?P<unit>[cCfF]))?"
+)
+
+
+def _temperature_celsius(raw: Any) -> float | None:
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        value = float(raw)  # numeric RawValue from LHM is Celsius
+    elif isinstance(raw, str):
+        match = _TEMPERATURE_VALUE.fullmatch(raw.strip())
+        if not match:
+            return None
+        value = float(match.group("value").replace(",", "."))
+        if (match.group("unit") or "").upper() == "F":
+            value = (value - 32.0) * 5.0 / 9.0
+    else:
+        return None
+    # The ESP's TEMP protocol accepts 0..125 C. An invalid reading must
+    # never be clamped or substituted: its stale-temperature fail-safe stays active.
+    return value if math.isfinite(value) and 0.0 <= value <= 125.0 else None
+
+
 def parse_temperatures(tree: Any) -> list[TemperatureSensor]:
     """Return all valid *temperature* sensors using stable LHM SensorId keys."""
     found: list[TemperatureSensor] = []
@@ -37,13 +65,13 @@ def parse_temperatures(tree: Any) -> list[TemperatureSensor]:
         name = str(node.get("Text", "")).strip()
         sensor_id = node.get("SensorId")
         if node.get("Type") == "Temperature" and isinstance(sensor_id, str) and sensor_id:
-            value = node.get("RawValue")
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                celsius = float(value)
-                if math.isfinite(celsius) and sensor_id not in seen:
-                    label = " / ".join(p for p in (*ancestors, name) if p)
-                    found.append(TemperatureSensor(sensor_id, label or sensor_id, celsius))
-                    seen.add(sensor_id)
+            celsius = _temperature_celsius(node.get("RawValue"))
+            if celsius is None:
+                celsius = _temperature_celsius(node.get("Value"))
+            if celsius is not None and sensor_id not in seen:
+                label = " / ".join(p for p in (*ancestors, name) if p)
+                found.append(TemperatureSensor(sensor_id, label or sensor_id, celsius))
+                seen.add(sensor_id)
         next_ancestors = ancestors + ((name,) if name and node.get("Type") != "Temperature" else ())
         visit(node.get("Children", []), next_ancestors)
 
