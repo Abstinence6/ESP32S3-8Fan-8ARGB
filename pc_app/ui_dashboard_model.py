@@ -6,7 +6,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from config_presets import RGB_SCENES
+try:
+    from .config_presets import RGB_SCENES
+except ImportError:  # app launched as pc_app/main.py or from PyInstaller
+    from config_presets import RGB_SCENES
 
 
 def make_scene_commands(scene_name: str, channels: Iterable[int]) -> list[str]:
