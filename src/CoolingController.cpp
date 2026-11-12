@@ -7,7 +7,7 @@
 namespace {
 constexpr uint32_t kMagic = 0x46414E53UL; // "FANS"
 constexpr uint32_t kFaultMagic = 0x45564E54UL; // "EVNT"
-constexpr uint8_t kVersion = 3;
+constexpr uint8_t kVersion = 4;
 constexpr uint32_t kControlIntervalMs = 250;
 constexpr uint32_t kCalWarmupMs = 1200;
 constexpr uint32_t kCalPointMs = 3500;
@@ -61,17 +61,22 @@ bool CoolingController::readFan(uint8_t ch, StoredFan& fan) {
     char key[8];
     fanKey(ch, key, sizeof(key));
     const size_t size = storage_.getBytesLength(key);
-    if (size == sizeof(fan)) {
+    if (size == sizeof(StoredFan)) {
         if (storage_.getBytes(key, &fan, sizeof(fan)) != sizeof(fan)) return false;
-        return fan.magic == kMagic && fan.version == kVersion &&
-            fan.checksum == calculateChecksum(fan) && validCurve(fan.curve) &&
-            validCurve(fan.secondCurve) && fan.calibrated <= 1 &&
-            fan.ppr >= 1 && fan.ppr <= 12 && fan.criticalC >= 40 && fan.criticalC <= 120 &&
-            fan.minStart <= 100 && fan.minRun <= 100 && fan.stallRpm <= 3000 &&
-            fan.pidEnabled <= 1 && fan.dualEnabled <= 1 &&
-            (fan.fanType == 0 || fan.fanType == 2 || fan.fanType == 3 || fan.fanType == 4);
-    }
-    if (size == sizeof(StoredFanV2)) {
+        if (fan.magic != kMagic || (fan.version != 3 && fan.version != kVersion) ||
+            fan.checksum != calculateChecksum(fan) || !validCurve(fan.curve) ||
+            !validCurve(fan.secondCurve) || fan.calibrated > 1 ||
+            fan.ppr < 1 || fan.ppr > 12 || fan.criticalC < 40 || fan.criticalC > 120 ||
+            fan.minStart > 100 || fan.minRun > 100 || fan.stallRpm > 3000 ||
+            fan.pidEnabled > 1 || fan.dualEnabled > 1 ||
+            (fan.fanType != 0 && fan.fanType != 2 && fan.fanType != 3 && fan.fanType != 4))
+            return false;
+        if (fan.version == kVersion) return fan.fanType == 2 || fan.fanType == 3;
+        // v3 -> v4: physical drive topology changed; old PWM-to-RPM samples
+        // cannot be reused even if the stored connector type was 3-pin.
+        const uint8_t target = fan.fanType == 2 ? 2 : 3;
+        fan.fanType = target;
+    } else if (size == sizeof(StoredFanV2)) {
         StoredFanV2 old = {};
         if (storage_.getBytes(key, &old, sizeof(old)) != sizeof(old) ||
             old.magic != kMagic || old.version != 2 ||
@@ -79,37 +84,32 @@ bool CoolingController::readFan(uint8_t ch, StoredFan& fan) {
             !validCurve(old.curve) || !validCurve(old.secondCurve) ||
             old.calibrated > 1 || old.ppr < 1 || old.ppr > 12) return false;
         makeDefault(fan);
-        fan.fanType = 4; // Existing v2 devices were 4-pin; preserve calibration.
         memcpy(fan.curve, old.curve, sizeof(fan.curve));
         memcpy(fan.secondCurve, old.secondCurve, sizeof(fan.secondCurve));
-        memcpy(fan.rpm, old.rpm, sizeof(fan.rpm));
-        fan.calibrated = old.calibrated;
-        fan.minStart = old.minStart;
-        fan.minRun = old.minRun;
         fan.ppr = old.ppr;
-        fan.criticalC = old.criticalC;
-        fan.stallRpm = old.stallRpm;
-        fan.pidEnabled = old.pidEnabled;
-        fan.dualEnabled = old.dualEnabled;
-        writeFan(ch, fan);
-        return true;
-    }
-    if (size == sizeof(LegacyFan)) {
+        fan.criticalC = old.criticalC >= 40 && old.criticalC <= 120 ? old.criticalC : 85;
+        fan.stallRpm = old.stallRpm <= 3000 ? old.stallRpm : 120;
+        fan.dualEnabled = old.dualEnabled <= 1 ? old.dualEnabled : 0;
+    } else if (size == sizeof(LegacyFan)) {
         LegacyFan old = {};
         if (storage_.getBytes(key, &old, sizeof(old)) != sizeof(old) ||
             old.magic != kMagic || old.version != 1 || old.calibrated > 1 ||
             old.checksum != checksum(&old, offsetof(LegacyFan, checksum)) ||
             !validCurve(old.curve)) return false;
         makeDefault(fan);
-        fan.fanType = 4; // Existing v1 devices were 4-pin; preserve calibration.
         memcpy(fan.curve, old.curve, sizeof(old.curve));
-        memcpy(fan.rpm, old.rpm, sizeof(old.rpm));
-        fan.calibrated = old.calibrated;
-        // Write migration once, keeping the existing user's calibration.
-        writeFan(ch, fan);
-        return true;
+    } else {
+        return false;
     }
-    return false;
+    fan.calibrated = 0;
+    fan.pidEnabled = 0;
+    fan.minStart = 30;
+    fan.minRun = 20;
+    memset(fan.rpm, 0, sizeof(fan.rpm));
+    // Durable migration; never activate an obsolete calibrated profile on a
+    // new power stage if storage fails. In-memory state remains safe.
+    if (!writeFan(ch, fan)) return false;
+    return true;
 }
 
 bool CoolingController::writeFan(uint8_t ch, StoredFan& value) {
@@ -186,8 +186,7 @@ const CoolingController::CurvePoint* CoolingController::curve(uint8_t ch, bool s
 
 bool CoolingController::setFanType(uint8_t ch, FanController::Type type) {
     if (ch >= board::kChannelCount || activeCalibration_ == ch) return false;
-    if (type != FanController::Type::Auto && type != FanController::Type::TwoPin &&
-        type != FanController::Type::ThreePin && type != FanController::Type::FourPin) return false;
+    if (type != FanController::Type::TwoPin && type != FanController::Type::ThreePin) return false;
     const auto oldType = fans_.configuredType(ch);
     if (!fans_.setType(ch, type)) return false;
     StoredFan candidate = saved_[ch];
@@ -232,7 +231,7 @@ bool CoolingController::setManual(uint8_t ch, uint8_t pwm) {
 }
 bool CoolingController::setFixedRpm(uint8_t ch, uint16_t rpm) {
     if (ch >= board::kChannelCount || activeCalibration_ == ch ||
-        !saved_[ch].calibrated || !fans_.hasRpmFeedback(ch) ||
+        !saved_[ch].calibrated || !fans_.tachReliable(ch) ||
         !fans_.canControl(ch, 50) || rpm > 20000) return false;
     fanMode_[ch] = Mode::FixedRpm;
     fixedRpm_[ch] = rpm;
@@ -277,13 +276,15 @@ bool CoolingController::overTemperature(uint8_t ch) const {
 
 bool CoolingController::startCalibration(uint8_t ch, uint32_t nowMs, bool smart) {
     if (ch >= board::kChannelCount || calibrationActive() || faultLatched_[ch] ||
-        !fans_.hasRpmFeedback(ch) || !fans_.canControl(ch, 50) ||
+        !fans_.tachReliable(ch) || !fans_.canControl(ch, 50) ||
         !freshPair(ch, nowMs) || overTemperature(ch)) return false;
     previousCalibrationMode_ = fanMode_[ch];
     activeCalibration_ = static_cast<int8_t>(ch);
     calibrationStep_ = 0;
     smartCalibration_ = smart;
     downward_ = false;
+    calRetry_ = 0;
+    calBadSamples_ = 0;
     warmup_ = true;
     memset(workingRpm_, 0, sizeof(workingRpm_));
     memset(downRpm_, 0, sizeof(downRpm_));
@@ -316,7 +317,7 @@ void CoolingController::endCalibration(bool cancelled, bool validRpm) {
     }
     if (!validRpm) {
         events_.print(F("CAL_ERROR ")); events_.print(ch + 1);
-        events_.println(F(" NO_TACH"));
+        events_.println(F(" UNRELIABLE_TACH"));
         return;
     }
     StoredFan candidate = saved_[ch];
@@ -368,6 +369,12 @@ uint8_t CoolingController::pwmFromRpm(uint8_t ch, uint16_t rpm) const {
 }
 uint8_t CoolingController::controlPwm(uint8_t ch, uint8_t feedforward, uint16_t targetRpm, uint32_t nowMs) {
     if (targetRpm == 0 || !saved_[ch].calibrated) return feedforward;
+    if (!fans_.tachReliable(ch)) {
+        // No fresh measurement: avoid integrating a fabricated zero-RPM error.
+        integral_[ch] = 0;
+        lastError_[ch] = 0;
+        return feedforward;
+    }
     const uint32_t elapsed = nowMs - lastPidMs_[ch];
     if (elapsed < 1000U) return fans_.getPercent(ch);
     lastPidMs_[ch] = nowMs;
@@ -452,10 +459,22 @@ void CoolingController::update(uint32_t nowMs) {
                 }
             } else if (elapsed >= kCalPointMs) {
                 uint32_t rpm = fans_.getRpm(ch);
+                if (calibrationStep_ >= 16 && !fans_.tachReliable(ch)) {
+                    // Above 80% power, missing/implausible TACH is not a useful
+                    // calibration sample. One extra settling window then abort.
+                    if (calRetry_++ == 0) { stepStartMs_ = nowMs; return; }
+                    ++calBadSamples_;
+                    events_.print(F("CAL_WARNING ")); events_.println(ch + 1);
+                }
+                calRetry_ = 0;
                 if (rpm > 65535U) rpm = 65535U;
                 if (downward_) downRpm_[calibrationStep_] = static_cast<uint16_t>(rpm);
                 else workingRpm_[calibrationStep_] = static_cast<uint16_t>(rpm);
                 reportPoint(ch, calibrationStep_, static_cast<uint16_t>(rpm));
+                if (calBadSamples_ > 0) {
+                    endCalibration(false, false);
+                    return;
+                }
                 if (!downward_ && ++calibrationStep_ >= kCalibrationPoints) {
                     if (smartCalibration_) {
                         downward_ = true;

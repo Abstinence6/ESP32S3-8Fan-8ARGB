@@ -1,58 +1,51 @@
-# 2/3/4-pin fans: 3-pin-first PCB, no GPIO expander
+# 2-pin and 3-pin only: DC supply switching
 
-**Status:** firmware compiles for 8 channels; the power circuit is a *proposed design*, not a tested schematic. The user will install intelligent high-side power switches. There is **no MCP23017, I2C mode switch or automatic 4th-contact detector**.
+Firmware v5 **does not implement a 4-pin PWM signal**. Per fan: one 12 V
+high-side switched power output and one optional TACH input, for a total of
+16 native GPIO for fans plus eight ARGB data outputs. No MCU I/O expander or
+fan-type auto-detector is required. `TYPE <channel> 2|3` only configures whether
+TACH is expected. New and migrated profiles default to type 3.
 
-## GPIO budget
-
-| Per channel | GPIO on ESP32-S3 | Operation |
-| --- | --- | --- |
-| `PWM[ch]` | 1 | One logical 25 kHz duty stream; used by either selected power-key path or pin4 PWM path |
-| `TACH[ch]` | 1 | RPM pulse input with an external pull-up to **3.3 V** (2-pin has no feedback) |
-| ARGB | 1 | Independent data line, with correct 5 V logic/interface hardware |
-
-8 fans + 8 ARGB = **24 ESP32-S3 GPIO total**, no GPIO expander. Reserve USB, flash/PSRAM and strapping pins according to the exact ESP32-S3 module.
-
-## Physical selection is a jumper, not firmware
+## Electrical design constraints
 
 ```text
-   ESP32 PWM[ch] ---> NPN open-collector ---> 4-pin connector contact 4
-          |
-          +---> conditioned/inverted PWM ---> [ DC  o--o  KEY_IN ]
-                                               [ PWM o--o  ON_LEVEL ]
- +12 V ---> intelligent high-side switch ---> fan contact 2 (+12V)
- GND ---------------------------------------> fan contact 1 (GND)
- TACH contact 3 -- 10k pull-up to 3.3V ----> ESP32 TACH[ch]
+           +12 V --- [qualified HIGH-SIDE switch] --- FAN +12 V
+                             ^                          |
+ESP32 PWM GPIO --- [safe 3.3 V -> 12 V gate drive]       MOTOR
+ESP32 GND ---------------------------------------- FAN GND
+ESP32 TACH GPIO <---- [pull-up to 3.3 V] --------- FAN TACH (3-pin only)
 ```
 
-**3-pin (default):** set the jumper to **DC**. The intelligent high-side key receives the properly conditioned PWM signal and controls fan +12 V. TACH comes from contact 3; its signal may be unreliable during power chopping, so test with an oscilloscope and compare RPM readings.
+**NEVER connect fan TACH directly to 12 V.** TACH open collector generally
+requires pull-up to 3.3 V with a suitable resistor. Ground must be continuous
+for tach measurement: do not PWM the fan's return/GND pin.
 
-**2-pin:** same **DC** jumper, with no TACH. RPM feedback, stall detection by RPM, calibration and PI/PID are unavailable. Any fault diagnosis must come from a separate diagnostic interface of the chosen key (not yet connected).
+**No fan power stage has been validated on a real PCB.** Firmware keeps all
+2/3-pin channels at 100% duty when `FAN_DC_PWM_VALIDATED=0` (shipping default).
+It rejects 0..99% requests from Serial, the Windows GUI, MQTT and PID. A
+compile-time flag is **not** a hardware-safety guarantee.
 
-**4-pin:** set jumper to **PWM**. The smart key receives a stable **ON level**, ensuring constant +12 V, while the open-collector PWM output drives contact 4 at 25 kHz. The MCU cannot change the jumper via a software command. Contact 4 must **not** see 12 V and must not be driven push-pull into the fan's internal pull-up.
+The reference power waveform is **250 Hz, 8-bit** for testing with a selected
+high-side driver, not the 25 kHz control waveform used by 4-pin fans. Do **not**
+assert `FAN_DC_PWM_VALIDATED=1` without validating switch turn-on/off times,
+peak starting current, MOSFET heat, fan noise and startup, supply transients,
+TACH integrity and the fan's full supply voltage during reset/MCU power loss.
+Polarity is configured in `BoardConfig.h` (`kPwmDriverInverts=false` for
+ESP-output HIGH -> ULN2803 sink -> P-channel MOSFET ON). A simple ULN2803 +
+P-MOSFET with a gate pull-up typically **turns fan power OFF at MCU reset**:
+that wiring is NOT fail-safe by itself. A separate, validated hardware
+power-ON-at-reset arrangement is mandatory for critical cooling.
 
-The drawing is logical, **not a checked transistor schematic**. The key's IN polarity, threshold, current, PWM response and default-at-reset require a verified circuit. PWM must be conditioned so that `FAN 100` means a continuously ON key, **even at ESP reset or when firmware hangs**. A simple GPIO pull resistor alone may not guarantee that. Review the actual smart switch datasheet first.
+## Feedback rules
 
-## PWM frequency and safety interlock
+- `2-pin`: RPM is always unavailable (reported as zero). No RPM-based PID,
+  calibration or TACH stall detection is possible; current/fault telemetry
+  needs additional hardware if required.
+- `3-pin`: TACH may be unreliable under chopped 12 V power. Firmware rejects
+  implausible RPM samples and reports `TACH_VALID`, but that alone does not
+  prove electrical correctness. Test scope captures at the intended PWM range.
+- Calibration invalidates old RPM tables on firmware migration to v5.
+- A missing PC/MQTT temperature still forces 100% demand after 10 s in every
+  firmware mode. At reset, only correctly designed hardware can deliver power.
 
-The firmware currently uses a single 25 kHz LEDC stream per fan. **That is the intended 4-pin PWM frequency, not a guarantee that a DC high-side key supports 25 kHz**. Confirm the key allows PWM at this frequency at the motor's expected inrush/current/thermal load. If not, redesign the driving stage or configure separate compatible PWM frequencies/timers before enabling DC control; switching all fans' supply at 25 kHz without validation is unsafe.
-
-By default, `include/BoardConfig.h` has `kDcSupplyPwmValidated = false`. 2/3-pin channels are deliberately locked at 100% duty until your hardware has passed validation. When it has, set `FAN_DC_PWM_VALIDATED=1` in the PlatformIO environment (or in the header) and **reflash** the ESP32; it then permits 0–100% on DC-mode channels. This is a compile-time acknowledgment of bench-tested hardware, not automatic detection.
-
-Also test fans that stall at low duty. The firmware's thermal safety action can request 100%, but **independent hardware fail-safe must keep the key fully ON whenever ESP is reset/offline**. A 4-pin cable with a 3-pin jumper or a 3-pin cable with the PWM jumper is a mismatched wiring state; do not change jumpers while powered.
-
-## Firmware commands and persistence
-
-- Fresh NVS starts with `TYPE n 3` for all eight fans; existing 4-pin NVS settings remain unchanged when upgrading.
-- `TYPE n 2`, `TYPE n 3`, `TYPE n 4` persist the **manual configuration**. Apply only after selecting the matching jumper with power off.
-- `TYPE? n` prints `SET=<2|3|4> DETECTED=255 RPM_OK=<0|1> DC_HW=<0|1>`: `DETECTED=255` means **not sensed**; `DC_HW=0` means DC switching remains safety-locked.
-- `TYPE n AUTO` is explicitly rejected. TACH is not a way to distinguish 3-pin from 4-pin, and its absence is not proof that a 2-pin fan is connected.
-- Changing type invalidates the fan's PWM-RPM calibration and PI settings. Type 2 can still be temperature-controlled by PWM when the DC key is validated, but cannot measure RPM.
-
-## Hardware validation checklist
-
-1. Confirm exact ESP32-S3 board/module and all 24 free GPIOs.
-2. Confirm smart key's rated PWM frequency, load/inrush limits, self-heating, and control polarity.
-3. Scope the key IN and +12 V output at 0%, 50% and 100%, then test 3-pin TACH stability.
-4. Scope the 4-pin PWM contact and ensure +12 V remains constant when jumper is set to PWM.
-5. Disconnect the MCU / reset it / cut USB power: fans should default to maximum airflow by **hardware design**.
-6. Test lost-PC-temperature watchdog, blocked fan, disconnected tach, reverse/misplugged fan and short-circuited load.
+See [PCB_NEXT.md](PCB_NEXT.md), [MQTT.md](MQTT.md).

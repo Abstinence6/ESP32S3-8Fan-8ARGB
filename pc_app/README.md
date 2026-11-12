@@ -67,4 +67,17 @@ The packaged `FanARGBControl.exe --headless` runs a **headless companion** after
 
 This is **not** a Windows Service that operates before user logon. It owns the COM port, so close the agent before opening the GUI. Logging is written to `%LOCALAPPDATA%\FanARGBControl\agent.log`. Missing LHM readings cause the ESP to fall back to 100% fan PWM.
 
-**Important for Windows UI:** `TYPE?` deliberately reports `DETECTED=255` in this no-expander build: there is no physical pin-4 sensor, so the displayed 2/3/4-pin type is the user-confirmed setting, not an automatically detected connector. The GUI cannot switch the hardware jumper. DC outputs remain full-speed-only until `FAN_DC_PWM_VALIDATED=1` is explicitly configured after validating the intelligent key.
+## v5: background agent handoff and MQTT
+
+When `FanARGBControl.exe --headless` is running and owns the selected COM port,
+opening the GUI now uses a **localhost 127.0.0.1:42386** serial proxy to the
+agent rather than competing for COM. The GUI streams sensor temperatures and
+OpenRGB data while attached. When it disconnects, the agent resumes its own
+background sensor and OpenRGB tasks; a crashed GUI connection also closes and
+releases the proxy. If the agent is not active, GUI opens COM directly.
+
+The GUI has a **Налаштувати MQTT…** dialog for a locally reachable broker.
+MQTT runs on ESP32 over Wi-Fi, not on the PC; configure Wi-Fi first. MQTT
+Home Assistant Discovery and security considerations are in
+[docs/MQTT.md](../docs/MQTT.md). In firmware v5, only 2-pin and 3-pin fan types
+are supported; old 4-pin UI descriptions above are historical.

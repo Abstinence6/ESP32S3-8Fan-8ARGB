@@ -15,9 +15,11 @@ from concurrent.futures import ThreadPoolExecutor, Future
 try:
     from .monitor import MAX_ALL, DEFAULT_LHM_URL, fetch_temperatures, resolve_temperature
     from .protocol import make_temperature_command
+    from .serial_owner import SerialOwnerServer
 except ImportError:  # packaged as a standalone PyInstaller entrypoint
     from monitor import MAX_ALL, DEFAULT_LHM_URL, fetch_temperatures, resolve_temperature
     from protocol import make_temperature_command
+    from serial_owner import SerialOwnerServer
 
 
 def load_assignments(settings: QSettings) -> list[tuple[str, list[str], dict[str, float], str, bool]]:
@@ -70,6 +72,12 @@ def run_agent() -> int:
     settings = QSettings("FanARGB", "FanARGBControl")
     log = setup_logging()
     output: serial.Serial | None = None
+    port_name = str(settings.value("port", ""))
+    try:
+        owner = SerialOwnerServer(port_name)
+    except OSError as exc:
+        log.error("Another background agent is already running: %s", exc)
+        return 3
     led_counts: list[int] | None = None
     buffer = ""
     listener = E131Listener()
@@ -81,6 +89,8 @@ def run_agent() -> int:
     temp_future: Future | None = None
     temp_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="LHMAgent")
     next_connect = 0.0
+    query_due = 0.0
+    client_was_connected = False
     next_temps = 0.0
     last_rgb = 0.0
     last_frames: dict[int, bytes] = {}
@@ -89,22 +99,29 @@ def run_agent() -> int:
             now = time.monotonic()
             if output is None and now >= next_connect:
                 next_connect = now + 5.0
-                port_name = str(settings.value("port", ""))
                 if port_name:
                     try:
                         output = serial.Serial(port_name, SERIAL_BAUD, timeout=0, write_timeout=0.25)
                         led_counts = None
                         buffer = ""
                         log.info("Connected to %s", port_name)
-                        # Device can reboot on DTR. Query after a safe warm-up delay.
-                        time.sleep(2.2)
-                        output.write(b"PING\nLEDS\nSTATUS\n")
+                        # DTR may reset ESP. Do not block the agent/GUI for 2.2 s.
+                        query_due = now + 2.2
                     except (serial.SerialException, OSError) as exc:
                         output = None
                         log.warning("Unable to connect %s: %s", port_name, exc)
+            owner.poll(output)
+            if owner.has_client != client_was_connected:
+                last_frames.clear() # never replay stale RGB across GUI handoff
+                client_was_connected = owner.has_client
             if output is not None:
                 try:
+                    if query_due and now >= query_due:
+                        output.write(b"PING\nLEDS\nSTATUS\n")
+                        query_due = 0.0
                     rx = output.read(output.in_waiting or 0)
+                    if rx:
+                        owner.forward(rx)
                     if rx:
                         buffer += rx.decode("ascii", errors="replace")
                         if len(buffer) > 8192: buffer = ""
@@ -114,19 +131,20 @@ def run_agent() -> int:
                             if len(fields) == 9 and fields[0] == "LEDCOUNTS":
                                 vals = [int(v) for v in fields[1:]]
                                 if all(1 <= n <= 170 for n in vals): led_counts = vals
-                    if now >= next_temps and temp_future is None:
+                    if not owner.has_client and now >= next_temps and temp_future is None:
                         next_temps = now + 2.0
                         url = str(settings.value("lhmUrl", DEFAULT_LHM_URL))
                         temp_future = temp_executor.submit(fetch_temperatures, url, 0.8)
                     if temp_future is not None and temp_future.done():
                         try:
-                            for msg in make_sensor_commands(settings, temp_future.result()):
-                                output.write((msg + "\n").encode("ascii"))
+                            if not owner.has_client:
+                                for msg in make_sensor_commands(settings, temp_future.result()):
+                                    output.write((msg + "\n").encode("ascii"))
                         except Exception as exc:
                             log.warning("Sensor read failed; ESP thermal watchdog stays active: %s", exc)
                         temp_future = None
                     last_frames.update(listener.read_latest())
-                    if led_counts is not None and now - last_rgb >= 0.04 and last_frames:
+                    if not owner.has_client and led_counts is not None and now - last_rgb >= 0.04 and last_frames:
                         last_rgb = now
                         sending, last_frames = last_frames, {}
                         for ch, rgb in sorted(sending.items()):
@@ -150,6 +168,7 @@ def run_agent() -> int:
     except KeyboardInterrupt:
         return 0
     finally:
+        owner.close()
         listener.stop()
         temp_executor.shutdown(wait=False, cancel_futures=True)
         if output is not None:

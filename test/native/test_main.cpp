@@ -14,14 +14,14 @@ int main() {
     assert(fans.begin());
     assert(leds.begin());
     for (unsigned ch = 0; ch < 8; ++ch) {
-        assert(mock::duty[ch] == 0); // fan initially at full speed via inverted driver
+        assert(mock::duty[ch] == 255); // active-high 12V power enable
         assert(fans.getPercent(ch) == 100);
     }
 
     assert(fans.setPercent(1, 0));
-    assert(mock::duty[1] == 255);
+    assert(mock::duty[1] == 0);
     assert(fans.setPercent(0, 50));
-    assert(mock::duty[0] == 127);
+    assert(mock::duty[0] == 128);
     assert(!fans.setPercent(8, 50));
     assert(!fans.setPercent(0, 101));
 
@@ -55,7 +55,7 @@ int main() {
         assert(leds.getMode(ch) == ArgbController::Mode::Off);
     }
     Serial.out.clear();
-    Serial.send(std::string(120, 'A') + "\nFAN 2 60\n");
+    Serial.send(std::string(220, 'A') + "\nFAN 2 60\n");
     console.poll();
     assert(Serial.out.find("ERR line too long") != std::string::npos);
     assert(fans.getPercent(1) == 60);
@@ -138,6 +138,13 @@ int main() {
     // A calibration sweep logs 21 PWM/RPM samples, then saves them to NVS.
     Serial.out.clear();
     cooling.setTemperature(2, 450, mock::currentMs);
+    mock::pulse(board::kFanTachPins[2], 40);
+    mock::currentMs += 1000;
+    fans.update(mock::currentMs);
+    mock::pulse(board::kFanTachPins[2], 40);
+    mock::currentMs += 1000;
+    fans.update(mock::currentMs);
+    cooling.setTemperature(2, 450, mock::currentMs);
     assert(cooling.startCalibration(2, mock::currentMs));
     assert(!cooling.startCalibration(1, mock::currentMs));
     for (int step = 0; step < 21; ++step) {
@@ -165,6 +172,13 @@ int main() {
     assert(afterReboot.rpmAt(2, 20) == cooling.rpmAt(2, 20));
     assert(afterReboot.curve(0)[0].pwm == 30);
     afterReboot.setTemperature(3, 450, mock::currentMs);
+    mock::pulse(board::kFanTachPins[3], 40);
+    mock::currentMs += 1000;
+    fans.update(mock::currentMs);
+    mock::pulse(board::kFanTachPins[3], 40);
+    mock::currentMs += 1000;
+    fans.update(mock::currentMs);
+    afterReboot.setTemperature(3, 450, mock::currentMs);
     assert(afterReboot.startCalibration(3, mock::currentMs));
     assert(afterReboot.cancelCalibration());
     assert(!afterReboot.hasCalibration(3));
@@ -182,18 +196,17 @@ int main() {
     assert(multi.getRpm(1) == 0);
     assert(multi.setType(1, FanController::Type::ThreePin));
     assert(multi.hasRpmFeedback(1));
-    assert(multi.setType(2, FanController::Type::FourPin));
-    assert(multi.setPercent(2, 20));
-    assert(multi.hasRpmFeedback(2));
-    // No presence-sense line, so neither 3 nor 4 contact count is detected.
+    assert(!multi.setType(2, static_cast<FanController::Type>(4)));
+    assert(multi.configuredType(2) == FanController::Type::ThreePin);
+    // No presence-sense line, so a physical fan type is never detected.
     assert(multi.detectedType(0) == FanController::Type::Unknown);
     assert(multi.detectedType(2) == FanController::Type::Unknown);
-    assert(!multi.setType(0, FanController::Type::Auto));
+    assert(!multi.setType(0, static_cast<FanController::Type>(0)));
     Serial.out.clear();
     Serial.send("TYPE? 1\nTYPE 1 AUTO\nTYPE 1 3\nSTATUS\n");
     console.poll();
     assert(Serial.out.find("TYPE 1 SET=3 DETECTED=255 RPM_OK=1 DC_HW=1") != std::string::npos);
-    assert(Serial.out.find("ERR AUTO unavailable") != std::string::npos);
+    assert(Serial.out.find("ERR TYPE must be 2 or 3") != std::string::npos);
     assert(Serial.out.find("OK TYPE_SAVED") != std::string::npos);
     assert(Serial.out.find("TYPE=3 RPM_OK=1") != std::string::npos);
 

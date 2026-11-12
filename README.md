@@ -133,6 +133,34 @@ Docs: [Fan modes](docs/FAN_MODES.md), [future PCB](docs/PCB_NEXT.md), [Windows a
 
 The no-key build retains `FAN_DC_PWM_VALIDATED=0` and the 3-pin default. Commands `HEALTH` / `HEALTH 1` expose read-only fan state, `TACH=seen|unseen|na`, thermal freshness, and whether DC power PWM is validated. `ALLFAN` is now all-or-nothing: invalid fan duties return an error without changing any channel. Stall monitoring remains active after PC sensor loss if the TACH was previously confirmed. The desktop GUI includes **Діагностика 8 вентиляторів** and **Журнал аварій** buttons. No power-key chip is selected and **no new hardware is required to build or run these software diagnostics**.
 
-### v4.2: Fan TACH observation without a power key
+### v4.2: TACH observation
 
-`SELFTEST` collects falling TACH edges for 5 seconds on all eight fans and reports `OK`, `NO_TACH`, `NA` (2-pin) or `INCONCLUSIVE` if the operating point changed. The command **does not change PWM duty or fan operating modes**. A **Тест TACH (5 с)** button is available in the Windows GUI. This is useful for validating wiring, while power PWM on 2/3-pin fans remains locked at 100% until the actual smart key is selected and bench-qualified. See [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+`SELFTEST` is a non-invasive 5-second counter check; GUI button also available.
+
+## v5: 2/3-pin DC drive, Home Assistant / MQTT and Windows COM sharing
+
+**This section supersedes earlier 2/3/4-pin text in this README.** The firmware
+supports **only 2-pin and 3-pin fans**. Four-wire fan control has been removed.
+DC supply PWM uses a **250 Hz reference** instead of 25 kHz, with firmware
+interlock **OFF by default** (`FAN_DC_PWM_VALIDATED=0`): all fans are demanded
+at 100% pending electrical validation of the high-side power circuit and
+hardware fail-ON at MCU reset. `TYPE 4` is rejected; new v5 NVS migration keeps
+temperature curves and resets obsolete RPM calibration/PID state.
+
+- TACH: current-window plausibility validation (`TACH_VALID`) prevents stale
+  or obviously noisy pulse counts from feeding PID or RPM calibration.
+- ARGB: commands only enqueue changes; at most one strip is shown per ~6 ms
+  pass to avoid an uninterrupted eight-strip transfer starving fan control.
+- Windows: a headless agent owns COM, and the GUI connects to its **localhost
+  serial proxy**, falling back to direct COM if no agent owns the port.
+- **MQTT with Home Assistant Discovery** is built into ESP32 over Wi-Fi:
+  8 fan controls, 8 RPM sensors and 8 RGB light controls; no Windows host
+  required for these functions. Configure through serial `MQTT HOST`,
+  `MQTT AUTH`, `MQTT ON` or the GUI button. MQTT control cannot bypass
+  the DC power safety interlock.
+
+Setup and security: [docs/MQTT.md](docs/MQTT.md) · hardware constraints:
+[docs/FAN_MODES.md](docs/FAN_MODES.md), [docs/PCB_NEXT.md](docs/PCB_NEXT.md).
+
+**Hardware qualification is pending.** Host tests validate software guards,
+not MOSFET switching, motor tachometer integrity, or PC cooling reliability.
