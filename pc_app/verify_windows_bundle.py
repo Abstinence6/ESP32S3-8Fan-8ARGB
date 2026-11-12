@@ -77,7 +77,7 @@ def bundled_files(executable: Path) -> set[str]:
          _compression, _type) = TOC_RECORD.unpack_from(raw, pos)
         if size < TOC_RECORD.size or pos + size > end:
             raise ValueError("Invalid PyInstaller TOC")
-        name = raw[pos + TOC_RECORD.size:pos + size].rstrip(b"\\x00")
+        name = raw[pos + TOC_RECORD.size:pos + size].rstrip(b"\x00")
         found.add(name.decode("utf-8", errors="replace").replace("\\", "/").lower())
         pos += size
     return found
