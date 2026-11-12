@@ -17,7 +17,7 @@ import pyqtgraph as pg
 import serial
 from serial.tools import list_ports
 from PySide6.QtCore import QSettings, QTimer, Qt
-from PySide6.QtGui import QTextCursor
+from PySide6.QtGui import QTextCursor, QFont
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton,
@@ -1301,6 +1301,7 @@ def main() -> None:
         sys.exit(run_agent())
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    app.setFont(QFont("Arial", 10))  # Windows Cyrillic-capable system font
     window = FanArgbWindow()
     window.show()
     sys.exit(app.exec())
