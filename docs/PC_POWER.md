@@ -20,7 +20,7 @@ build_flags =
 
 Build-time checks reject the default unassigned pins, identical pins,
 out-of-range pins, GPIOs already allocated to fan PWM/TACH or ARGB, USB pins,
-strap pins, UART0 pins and flash/PSRAM-suspect pins. GPIO selections must
+strap pins, UART0 pins and flash/PSRAM-reserved pins. GPIO33/34 can also be occupied on some\nmodules; they are allowed by the compile-time guard only for a hardware\nconfiguration that has explicitly confirmed these pins are free.\nGPIO selections must
 still be verified against the actual board schematic.
 
 ## Electrical connections
