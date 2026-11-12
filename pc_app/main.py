@@ -1117,6 +1117,41 @@ class FanArgbWindow(QMainWindow):
         if accepted:
             self.send(f"FAN {self.current_fan} {value}")
 
+    def apply_argb_scene(self, scene_name: str, all_zones: bool = False) -> None:
+        """Apply a lighting-only scene without modifying cooling NVS or fan duty."""
+        if not self.port:
+            QMessageBox.warning(self, "ARGB", "Спочатку підключи ESP32-S3")
+            return
+        channels = list(range(1, 9)) if all_zones else [self.current_fan]
+        try:
+            commands = make_scene_commands(scene_name, channels)
+        except ValueError as exc:
+            QMessageBox.warning(self, "ARGB", str(exc))
+            return
+        if scene_name == "OpenRGB":
+            if not self.bridge_checkbox.isChecked():
+                self.bridge_checkbox.setChecked(True)
+            if not self.bridge_checkbox.isChecked():
+                QMessageBox.warning(
+                    self, "OpenRGB",
+                    "Не вдалося увімкнути локальний міст E1.31. "
+                    "Перевір порт UDP 5568 або налаштуй прямий Wi-Fi E1.31.",
+                )
+                return
+            self.log("OpenRGB: міст E1.31 увімкнено; очікування кадрів із OpenRGB")
+            self.dashboard.show_page("argb")
+            return
+        # Live E1.31 packets would immediately overwrite a selected static scene.
+        if self.bridge_checkbox.isChecked():
+            self.bridge_checkbox.setChecked(False)
+        for command in commands:
+            if not self.send(command):
+                QMessageBox.warning(self, "ARGB", "З'єднання втрачено під час застосування сцени")
+                return
+        self.log(
+            f"ARGB: {scene_name} → {'усі 8 зон' if all_zones else f'канал {self.current_fan}'}"
+        )
+
     def pick_color(self) -> None:
         color = QColorDialog.getColor(parent=self, title="ARGB — колір стрічки")
         if color.isValid():
