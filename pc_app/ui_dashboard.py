@@ -267,6 +267,7 @@ class DashboardShell(QWidget):
             ("esp", "ESP32-S3", "Підключення контролера"),
             ("temp", "Датчики ПК", "Libre Hardware Monitor"),
             ("rgb", "ARGB / OpenRGB", "Приймання E1.31"),
+            ("mqtt", "MQTT", "Home Assistant"),
             ("pc", "Живлення ПК", "PWR_SW · опція"),
         ):
             card, value = self._summary_card(title, "—", hint)
@@ -555,7 +556,7 @@ class DashboardShell(QWidget):
             self.connection_text.setProperty("role", "caution")
             self.summary_esp.setText("Не підключено")
             self.update_pc_state("unknown")
-            self.summary_mqtt = None
+            self.summary_mqtt.setText("Не підключено")
             for labels in self.fan_cards.values():
                 labels["rpm"].setText("— RPM")
                 labels["metrics"].setText("— %  ·  — °C")
@@ -572,6 +573,17 @@ class DashboardShell(QWidget):
             self.summary_rgb.setText(f"E1.31 · {frames} кадрів")
         else:
             self.summary_rgb.setText("Міст вимкнений")
+
+    def set_mqtt_state(self, response: str) -> None:
+        tokens = dict(
+            item.split("=", 1) for item in response.split()
+            if "=" in item
+        )
+        enabled = tokens.get("ENABLED") == "1"
+        online = tokens.get("CONNECTED") == "1"
+        self.summary_mqtt.setText(
+            "Підключено" if online else "Налаштовано" if enabled else "Вимкнено"
+        )
 
     def update_fan(self, channel: int, status) -> None:
         labels = self.fan_cards.get(channel)
