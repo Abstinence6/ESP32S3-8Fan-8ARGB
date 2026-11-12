@@ -377,6 +377,19 @@ class FanArgbWindow(QMainWindow):
         rgb_layout.addWidget(QLabel(
             "OpenRGB → Settings → E1.31 Devices: IP 127.0.0.1, Universe 1–8, "
             "DMX Start Channel 1, RGB, до 170 LED/зона"))
+        pc_box = QGroupBox("Живлення ПК · PWR_SW (додаткове обладнання)")
+        pc_layout = QHBoxLayout(pc_box)
+        self.pc_power_status = QLabel("Стан ПК: невідомий")
+        pc_layout.addWidget(self.pc_power_status)
+        for label, command in (("Увімкнути ПК", "PC ON"), ("Вимкнути ПК", "PC OFF"),
+                               ("Утримати Power 6 с", "PC FORCE")):
+            button = QPushButton(label)
+            button.clicked.connect(lambda _=False, cmd=command: self.pc_power_action(cmd))
+            pc_layout.addWidget(button)
+        read_pc = QPushButton("Оновити стан")
+        read_pc.clicked.connect(lambda: self.send("PC STATUS"))
+        pc_layout.addWidget(read_pc)
+        right_layout.addWidget(pc_box)
         right_layout.addWidget(rgb_box)
 
         log_box = QGroupBox("Serial / діагностика")
@@ -455,6 +468,7 @@ class FanArgbWindow(QMainWindow):
         self.send("PING")
         self.send("LEDS")
         self.send("STATUS")
+        self.send("PC STATUS")
         for ch in range(1, 9):
             self.send(f"CURVE? {ch}")
             self.send(f"CURVE2? {ch}")
@@ -528,6 +542,9 @@ class FanArgbWindow(QMainWindow):
                 + (" · FAULT" if status.fault else "")
                 + (f" · {status.detected_type}-pin" if status.detected_type in (2, 3) else "")
             )
+            return
+        if line.startswith("PC "):
+            self.pc_power_status.setText("Стан ПК: " + line[3:])
             return
         if line.startswith("TYPE ") or line.startswith("CONFIG "):
             parts = line.split()
@@ -1024,6 +1041,23 @@ class FanArgbWindow(QMainWindow):
             QMessageBox.warning(self, "OpenRGB", str(exc))
             return
         self.log(f"Довідник OpenRGB E1.31 збережено: {path} (налаштуй зони вручну)")
+
+    def pc_power_action(self, command: str) -> None:
+        if not self.port:
+            QMessageBox.warning(self, "PC Power", "Спочатку підключи ESP32-S3")
+            return
+        warning = {
+            "PC ON": "Натиснути кнопку Power на 300 мс для увімкнення ПК?",
+            "PC OFF": "Натиснути Power на 300 мс? ОС може вимкнутись або перейти у сон.",
+            "PC FORCE": "Утримувати Power 6 секунд? Це може призвести до втрати даних!",
+        }.get(command)
+        if not warning:
+            return
+        if QMessageBox.question(self, "Керування живленням ПК", warning,
+                                QMessageBox.StandardButton.Yes |
+                                QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            if self.send(command):
+                QTimer.singleShot(250, lambda: self.send("PC STATUS"))
 
     def manual_override(self) -> None:
         value, accepted = QInputDialog.getInt(self, "Ручний PWM", "Швидкість у %:",
