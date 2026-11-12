@@ -57,6 +57,10 @@ still be verified against the actual board schematic.
   automatic power command on boot, COM connect, Wi-Fi loss or API outage.
 
 This is a companion to the user's ESPHome example adapted for the **ESP32-S3
-firmware**, not an ESPHome configuration for the ESP32-C3. It is currently
-accessible through Serial and the Windows companion; Home Assistant MQTT
-power-control entities require a separate integration step.
+firmware**, not an ESPHome configuration for the ESP32-C3. It is accessible through Serial, the Windows companion and, when enabled,
+MQTT/Home Assistant Discovery. The MQTT bridge publishes a PC Power binary
+sensor and three **momentary buttons** (On, Off, Force Off) with guarded
+commands via `<device-base-topic>/pc/set`. MQTT must be explicitly configured
+on a trusted local broker; do not publish retained commands to that topic.
+The Power On/Off commands are guarded by the sensed current state.
+Avoid exposing the MQTT broker to untrusted network clients.
