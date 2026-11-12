@@ -68,7 +68,7 @@ constexpr bool reservedPcGpio(int pin) {
     // Conservative: boot strapping, USB, UART0 and flash/PSRAM-related pins.
     if (pin == 0 || pin == 3 || pin == 19 || pin == 20 ||
         pin == 43 || pin == 44 || pin == 45 || pin == 46 ||
-        (pin >= 26 && pin <= 37)) return true;
+        (pin >= 26 && pin <= 32) || (pin >= 35 && pin <= 37)) return true;
     for (uint8_t i = 0; i < kChannelCount; ++i) {
         if (pin == kFanPwmPins[i] || pin == kFanTachPins[i] || pin == kArgbDataPins[i])
             return true;
