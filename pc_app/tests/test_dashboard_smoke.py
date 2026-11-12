@@ -25,6 +25,8 @@ class DashboardSmokeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+        from PySide6.QtGui import QFont
+        cls.app.setFont(QFont("Arial", 10))
 
     def setUp(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
