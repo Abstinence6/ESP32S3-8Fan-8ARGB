@@ -94,14 +94,14 @@ bool MqttBridge::setEnabled(bool enabled) {
 #endif
     return true;
 }
-bool MqttBridge::connected() const {
+bool MqttBridge::connected() {
 #if defined(ARDUINO_ARCH_ESP32)
     return settings_.enabled && network_.connected() && mqtt_.connected();
 #else
     return false;
 #endif
 }
-void MqttBridge::printStatus(Stream& serial) const {
+void MqttBridge::printStatus(Stream& serial) {
     serial.print(F("MQTT ENABLED=")); serial.print(settings_.enabled);
     serial.print(F(" HOST=")); serial.print(settings_.host);
     serial.print(F(" PORT=")); serial.print(settings_.port);
