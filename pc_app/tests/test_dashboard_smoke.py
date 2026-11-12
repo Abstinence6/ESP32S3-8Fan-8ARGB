@@ -85,6 +85,39 @@ class DashboardSmokeTests(unittest.TestCase):
         logs = shell.stack.widget(shell.page_index["logs"]).widget()
         self.assertTrue(logs.isAncestorOf(self.window.log_text))
 
+    def test_formatted_lhm_sensor_reaches_dashboard(self):
+        # Real HTTP JSON shape -> parser -> finished worker result -> Qt sensor view.
+        from concurrent.futures import Future
+        from monitor import parse_temperatures
+        tree = {"Text": "PC", "Children": [{
+            "Text": "CPU", "Children": [{
+                "Text": "CPU Package", "Type": "Temperature",
+                "SensorId": "/cpu/0/temperature/0",
+                "RawValue": "46.9 °C", "Value": "46.9 °C",
+                "Children": [],
+            }]
+        }]}
+        result = Future()
+        result.set_result(parse_temperatures(tree))
+        self.window.temperature_future = result
+        self.window.apply_temperature_result()
+        self.assertEqual(self.window.sensor_table.rowCount(), 1)
+        self.assertEqual(self.window.temperatures[0].celsius, 46.9)
+        self.assertIn("1", self.window.dashboard.summary_temp.text())
+        self.assertIn("CPU Package", [
+            self.window.source_boxes[0].itemText(i)
+            for i in range(self.window.source_boxes[0].count())
+        ].__str__())
+
+    def test_lhm_empty_response_is_not_connection_failure(self):
+        from concurrent.futures import Future
+        result = Future()
+        result.set_result([])
+        self.window.temperature_future = result
+        self.window.apply_temperature_result()
+        self.assertIn("0 температур", self.window.lhm_status.text())
+        self.assertIn("без температур", self.window.dashboard.summary_temp.text())
+
     def test_telemetry_updates_overview_and_pc_gates(self):
         self.window.handle_line(
             "CH 3 FAN=55% RPM=1200 TEMP=430 MODE=auto SENSOR=ok TYPE=3 FAULT=0"
