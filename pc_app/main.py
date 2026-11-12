@@ -103,6 +103,9 @@ class FanArgbWindow(QMainWindow):
         self.sacn_timer.timeout.connect(self.poll_sacn)
         self.sacn_timer.start(20)
         self.refresh_temperatures()
+        self.aux_status_timer = QTimer(self)
+        self.aux_status_timer.timeout.connect(self.refresh_aux_status)
+        self.aux_status_timer.start(5000)
         if str(self.settings.value("sacnEnabled", "false")).lower() in ("true", "1"):
             self.bridge_checkbox.setChecked(True)
 
@@ -484,6 +487,7 @@ class FanArgbWindow(QMainWindow):
             self.led_counts = None
             self.settings.setValue("port", port_name)
             self.connect_button.setText("Від'єднати")
+            self.dashboard.set_connected(True, port_name)
             self.statusBar().showMessage(f"ESP: {port_name} підключено")
             self.log(f"Підключено до {port_name} ({'через фоновий агент' if using_agent else 'COM напряму'})")
             # Opening a serial port can reset an ESP board; wait for the boot message.
@@ -499,11 +503,17 @@ class FanArgbWindow(QMainWindow):
         self.send("LEDS")
         self.send("STATUS")
         self.send("PC STATUS")
+        self.send("MQTT?")
         for ch in range(1, 9):
             self.send(f"CURVE? {ch}")
             self.send(f"CURVE2? {ch}")
             self.send(f"TYPE? {ch}")
             self.send(f"CONFIG {ch}")
+
+    def refresh_aux_status(self) -> None:
+        if self.port:
+            self.send("PC STATUS")
+            self.send("MQTT?")
 
     def disconnect(self) -> None:
         if self.port:
@@ -514,6 +524,7 @@ class FanArgbWindow(QMainWindow):
         self.port = None
         self.led_counts = None
         self.connect_button.setText("Підключити")
+        self.dashboard.set_connected(False)
         self.statusBar().showMessage("ESP: відключено — автономний захист через 10 с без температур")
         self.log("ESP відключено")
 
@@ -559,6 +570,7 @@ class FanArgbWindow(QMainWindow):
         status = parse_status(line)
         if status:
             self.fan_status[status.channel] = status
+            self.dashboard.update_fan(status.channel, status)
             row = status.channel - 1
             self.fan_table.item(row, 1).setText(f"{status.pwm}%")
             self.fan_table.item(row, 2).setText(str(status.rpm) if status.rpm_feedback else "—")
@@ -575,6 +587,10 @@ class FanArgbWindow(QMainWindow):
             return
         if line.startswith("PC "):
             self.pc_power_status.setText("Стан ПК: " + line[3:])
+            self.dashboard.update_pc_state(line[3:])
+            return
+        if line.startswith("MQTT ENABLED="):
+            self.dashboard.set_mqtt_state(line[5:])
             return
         if line.startswith("TYPE ") or line.startswith("CONFIG "):
             parts = line.split()
@@ -678,6 +694,9 @@ class FanArgbWindow(QMainWindow):
             self.lhm_status.setText("Немає зв'язку з LHM")
             self.lhm_status.setToolTip(str(exc))
             self.lhm_status.setStyleSheet("color: #d05555")
+        self.dashboard.set_sensor_count(
+            len(self.temperatures), available=bool(self.temperatures)
+        )
         self._update_sensor_table()
         self._update_source_boxes()
         self._update_secondary_box()
@@ -726,10 +745,12 @@ class FanArgbWindow(QMainWindow):
                 box.addItem("Недоступний датчик: " + saved_id, saved_id)
             box.setCurrentIndex(next(i for i in range(box.count()) if box.itemData(i) == saved_id))
             box.blockSignals(False)
+            self.dashboard.set_fan_source(ch, box.currentText())
 
     def source_changed(self, ch: int) -> None:
         box = self.source_boxes[ch - 1]
         self.settings.setValue(f"source{ch}", box.currentData())
+        self.dashboard.set_fan_source(ch, box.currentText())
 
     def _update_secondary_box(self) -> None:
         if not hasattr(self, "secondary_source_box"):
@@ -825,6 +846,7 @@ class FanArgbWindow(QMainWindow):
         if not 0 <= index < 8:
             return
         self.current_fan = index + 1
+        self.dashboard.sync_zone(index)
         self.fan_table.selectRow(index)
         self._update_targets()
         self._update_rpm_plot()
@@ -1181,6 +1203,7 @@ class FanArgbWindow(QMainWindow):
             self.sacn.stop()
             self.sacn_pending.clear()
             self.bridge_status.setText("Вимкнено")
+            self.dashboard.set_bridge_state(False)
             self.settings.setValue("sacnEnabled", False)
             return
         try:
@@ -1194,6 +1217,7 @@ class FanArgbWindow(QMainWindow):
             self.settings.setValue("sacnEnabled", False)
             return
         self.settings.setValue("sacnEnabled", True)
+        self.dashboard.set_bridge_state(True, self.sacn_forwarded)
         self.bridge_status.setText(f"Прийом: 127.0.0.1:{SACN_PORT} (0 кадрів)")
 
     def poll_sacn(self) -> None:
@@ -1226,6 +1250,7 @@ class FanArgbWindow(QMainWindow):
             self.bridge_status.setText(
                 f"Прийом: 127.0.0.1:{SACN_PORT} ({self.sacn_forwarded} кадрів → ESP)"
             )
+            self.dashboard.set_bridge_state(True, self.sacn_forwarded)
 
     def closeEvent(self, event) -> None:
         self.sacn.stop()
