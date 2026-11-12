@@ -28,8 +28,11 @@ jobs:
           name: FanARGBControl-UI-preview
           path: dist/ui-preview/*.png
           if-no-files-found: error
+      - name: Download verified NWinfo local sensor engine
+        shell: pwsh
+        run: ./pc_app/prepare_nwinfo.ps1 -OutputDirectory dist/nwinfo
       - name: Bundle EXE
-        run: python -m PyInstaller --clean --noconfirm --windowed --onefile --paths pc_app --name FanARGBControl pc_app/main.py
+        run: python -m PyInstaller --clean --noconfirm --windowed --onefile --paths pc_app --add-data "dist/nwinfo;nwinfo" --name FanARGBControl pc_app/main.py
       - name: Verify Windows bundle includes local modules
         run: python pc_app/verify_windows_bundle.py dist/FanARGBControl.exe
       - uses: actions/upload-artifact@v4
