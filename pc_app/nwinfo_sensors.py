@@ -112,18 +112,23 @@ def locate_nwinfo() -> Path:
             return path
         raise FileNotFoundError("FANARGB_NWINFO_EXE має вказувати на файл nwinfo.exe")
     root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
-    candidates = [
-        root / "nwinfo" / "nwinfo.exe",
-        root / "nwinfo" / "NWinfo" / "nwinfo.exe",
-        root / "nwinfo.exe",
-        Path(__file__).resolve().parent / "nwinfo.exe",
+    source = Path(__file__).resolve().parent
+    folders = [
+        root / "nwinfo", root / "dist" / "nwinfo",
+        source / "nwinfo", source / "dist" / "nwinfo",
     ]
-    for path in candidates:
+    for folder in folders:
+        if not folder.is_dir():
+            continue
+        matches = sorted(
+            (p for p in folder.rglob("*") if p.is_file() and p.name.lower() == "nwinfo.exe"),
+            key=lambda p: (len(p.parts), str(p).casefold()),
+        )
+        if matches:
+            return matches[0]
+    for path in (root / "nwinfo.exe", source / "nwinfo.exe"):
         if path.is_file():
             return path
-    matches = sorted((root / "nwinfo").rglob("nwinfo.exe")) if (root / "nwinfo").is_dir() else []
-    if matches:
-        return matches[0]
     raise FileNotFoundError(
         "Вбудований NWinfo не знайдено. Використай повну Windows-збірку FanARGBControl."
     )
