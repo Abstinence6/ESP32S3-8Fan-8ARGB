@@ -16,6 +16,7 @@ import zlib
 REQUIRED = frozenset({
     "monitor", "sacn_bridge", "protocol", "serial_owner",
     "profiles", "config_presets", "agent", "ui_dashboard", "ui_dashboard_model",
+    "nwinfo_sensors",
 })
 MAGIC = b"MEI\x0c\x0b\x0a\x0b\x0e"
 COOKIE = struct.Struct("!8sIIII64s")
@@ -61,6 +62,27 @@ def bundled_modules(executable: Path) -> set[str]:
     raise ValueError("PyInstaller PYZ.pyz not present")
 
 
+def bundled_files(executable: Path) -> set[str]:
+    """Check the PyInstaller CArchive includes a native nwinfo.exe executable."""
+    raw = executable.read_bytes()
+    cookie_pos = raw.rfind(MAGIC)
+    if cookie_pos == -1 or cookie_pos + COOKIE.size > len(raw):
+        raise ValueError("Not a PyInstaller CArchive")
+    _marker, package_size, table_offset, table_size, _ver, _dll = COOKIE.unpack_from(raw, cookie_pos)
+    base = cookie_pos + COOKIE.size - package_size
+    pos, end = base + table_offset, base + table_offset + table_size
+    found = set()
+    while pos < end:
+        (size, _offset, _compressed_len, _uncompressed_len,
+         _compression, _type) = TOC_RECORD.unpack_from(raw, pos)
+        if size < TOC_RECORD.size or pos + size > end:
+            raise ValueError("Invalid PyInstaller TOC")
+        name = raw[pos + TOC_RECORD.size:pos + size].rstrip(b"\x00")
+        found.add(name.decode("utf-8", errors="replace").replace("\\", "/").lower())
+        pos += size
+    return found
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("Usage: verify_windows_bundle.py <path-to-FanARGBControl.exe>", file=sys.stderr)
@@ -70,7 +92,11 @@ def main() -> int:
     if missing:
         print("FAIL: Windows EXE is missing: " + ", ".join(missing), file=sys.stderr)
         return 1
-    print("PASS: All required project modules bundled: " + ", ".join(sorted(REQUIRED)))
+    entries = bundled_files(Path(sys.argv[1]))
+    if not any(x.endswith("/nwinfo.exe") or x == "nwinfo.exe" for x in entries):
+        print("FAIL: NWinfo sensor engine is missing from Windows EXE", file=sys.stderr)
+        return 1
+    print("PASS: All project modules and NWinfo sensor executable bundled.")
     return 0
 
 

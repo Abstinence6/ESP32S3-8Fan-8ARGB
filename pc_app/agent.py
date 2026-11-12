@@ -13,11 +13,13 @@ import time
 from concurrent.futures import ThreadPoolExecutor, Future
 
 try:
-    from .monitor import MAX_ALL, DEFAULT_LHM_URL, fetch_temperatures, resolve_temperature
+    from .monitor import MAX_ALL, resolve_temperature
+    from .nwinfo_sensors import fetch_temperatures
     from .protocol import make_temperature_command
     from .serial_owner import SerialOwnerServer
 except ImportError:  # packaged as a standalone PyInstaller entrypoint
-    from monitor import MAX_ALL, DEFAULT_LHM_URL, fetch_temperatures, resolve_temperature
+    from monitor import MAX_ALL, resolve_temperature
+    from nwinfo_sensors import fetch_temperatures
     from protocol import make_temperature_command
     from serial_owner import SerialOwnerServer
 
@@ -87,7 +89,7 @@ def run_agent() -> int:
         log.error("Cannot bind OpenRGB E1.31 port: %s", exc)
         return 2
     temp_future: Future | None = None
-    temp_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="LHMAgent")
+    temp_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="SensorAgent")
     next_connect = 0.0
     query_due = 0.0
     client_was_connected = False
@@ -133,8 +135,7 @@ def run_agent() -> int:
                                 if all(1 <= n <= 170 for n in vals): led_counts = vals
                     if not owner.has_client and now >= next_temps and temp_future is None:
                         next_temps = now + 2.0
-                        url = str(settings.value("lhmUrl", DEFAULT_LHM_URL))
-                        temp_future = temp_executor.submit(fetch_temperatures, url, 0.8)
+                        temp_future = temp_executor.submit(fetch_temperatures, 4.0)
                     if temp_future is not None and temp_future.done():
                         try:
                             if not owner.has_client:

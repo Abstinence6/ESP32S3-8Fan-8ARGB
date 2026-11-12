@@ -4,7 +4,7 @@
 
 The desktop GUI uses six focused pages instead of one large engineering panel:
 
-- **Огляд**: eight live fan cards, ESP connection, LHM, E1.31, MQTT and PC Power status.
+- **Огляд**: eight live fan cards, ESP connection, NWinfo local sensors, E1.31, MQTT and PC Power status.
 - **Вентилятори**: sensor/source selection, curves, PWM/RPM and history.
 - **ARGB**: single-zone or all-zone lighting presets; these send only LED
   commands and never overwrite fan curves. Live OpenRGB uses E1.31.
@@ -19,7 +19,7 @@ smoke test** checks that pages construct, sensor updates reach fan cards and
 PC power buttons obey the reported state.
 
 
-Requirements: Windows 10/11; Python 3.11+; optional Libre Hardware Monitor for actual PC temperatures. This is a Python/PySide6 GUI, not a browser UI. No cloud telemetry.
+Requirements: Windows 10/11 x64. The packaged EXE has a **bundled NWinfo sensor engine**: no separate LibreHardwareMonitor, LHM HTTP server or Python installation is needed. Source-code execution requires Python 3.11+, the Python requirements and NWinfo CLI in `pc_app/nwinfo/` or the `FANARGB_NWINFO_EXE` environment override. No cloud telemetry.
 
 ## Install and run
 
@@ -29,7 +29,7 @@ py -3 -m pip install -r requirements.txt
 py -3 main.py
 ```
 
-Enable **Options → Remote Web Server → Run** in [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases). Default local sensor endpoint is `http://127.0.0.1:8085/data.json`; keep access to localhost where possible and do not expose the endpoint to the internet. Depending on hardware/driver, Libre Hardware Monitor may need to run as administrator to detect all sensors. The application shows **every Temperature sensor detected** by Libre Hardware Monitor; it cannot invent unavailable readings.
+The bundled [NWinfo](https://github.com/a1ive/nwinfo) executable reads temperatures locally using only its **CPU, GPU and SMART** providers (`--sensors=CPU,GPU,SMART`). The LHM/HWiNFO/GPU-Z providers are not enabled. GPU temperatures come from graphics-driver APIs (AMD ADL2, NVIDIA NVAPI, Intel IGCL). CPU package/core temperatures require privileged access to MSRs via an allowed hardware-access driver and may require running FanARGBControl as Administrator. Hardware/driver support varies. No temperature is invented or replaced with a guessed WMI thermal-zone reading.
 
 Connect the **COM port** of the ESP32-S3 at **921600 baud**. The GUI reads all eight stored fan curves, displays current duty/RPM and gives each fan a temperature sensor selector. The default selector is MAX of all available temperatures; an individual CPU, GPU, motherboard or disk sensor may be selected instead. Select a fan on the right and **drag the five dots** to edit the temperature/PWM curve. Click **Save curve in ESP** to store it in flash (NVS).
 
@@ -38,9 +38,9 @@ Calibration: select one fan, click **Calibrate**, confirm temporary stop at low 
 ## Safety and persistence
 
 - PC temperatures are streamed over USB every ~2 seconds; the **curve and calibration are stored on the ESP**. Sensor selection is stored locally in Windows QSettings because the PC sensor IDs belong to the host machine.
-- A temperature sensor can disappear or LHM can stop: **the app stops sending that fan's temperature**. ESP automatically sets the fan to 100% within 10 seconds (for Auto mode). Manual override intentionally bypasses automatic safety control — use carefully.
+- If NWinfo cannot access a real temperature sensor: **the app stops sending that fan's temperature**. ESP automatically sets the fan to 100% within 10 seconds (for Auto mode). Manual override intentionally bypasses automatic safety control — use carefully.
 - Without the GUI running, the ESP does **not** know CPU/GPU temperatures. Automatic mode remains at full speed by design; independent thermistors or coolant probes could later provide autonomous control.
-- The app only reads LHM sensors; it never changes your motherboard's fan configuration.
+- The app only reads NWinfo-reported hardware temperatures; it never changes your motherboard's fan configuration.
 
 ## Package a Windows EXE
 
@@ -48,11 +48,12 @@ The GitHub Actions `windows-app.yml` workflow packages the app with PyInstaller 
 
 ```powershell
 py -3 -m pip install -r requirements.txt pyinstaller
-py -3 -m PyInstaller --clean --noconfirm --windowed --onefile --paths . --name FanARGBControl main.py
-py -3 verify_windows_bundle.py dist/FanARGBControl.exe
+powershell -ExecutionPolicy Bypass -File .\build_windows.ps1
+# This script downloads the pinned, SHA-256 verified official NWinfoLite zip,
+# bundles its native CLI/drivers in the onefile EXE and checks embedded files.
 ```
 
-Run `dist/FanARGBControl.exe`. Libre Hardware Monitor is a separate dependency. When building from the repository root (as GitHub Actions does), use `--paths pc_app` rather than `--paths .`. The bundled-module check fails if `monitor`, `agent`, or other local modules are missing; ordinary Python unit tests do not detect this packaging problem.
+Run `dist/FanARGBControl.exe`. No separate monitor or HTTP server is required. The GitHub Actions build verifies both the Python modules and bundled native `nwinfo.exe` inside the final executable. The `prepare_nwinfo.ps1` script pins the official NWinfoLite v1.6.6 SHA-256. Because low-level CPU sensor access depends on an approved Windows driver, the application may need elevated rights; do not disable Windows protections to make readings appear.
 
 ## Sensor groups (AVG and MAX)
 
@@ -62,9 +63,9 @@ For **each** fan, the `Датчик для кривої` selector offers:
 - An individual CPU/GPU/SSD/other temperature sensor.
 - `AVG групи` / `MAX групи`: average or maximum of an **explicitly selected group** of sensors.
 
-Select a fan, press **Вибрати датчики групи**, check the desired sensor IDs, and choose AVG/MAX in its source selector. The group is saved **on the PC** using QSettings (stable LibreHardwareMonitor SensorIds), while the five-point fan curve itself remains in ESP32 NVS. If a group is empty **or any selected sensor disappears**, the GUI stops sending temperatures for that fan. The ESP then switches that automatic fan to 100% after the normal 10-second watchdog timeout. No fictional temperature, zero substitute, or silently partial average is used.
+Select a fan, press **Вибрати датчики групи**, check the desired sensor IDs, and choose AVG/MAX in its source selector. The group is saved **on the PC** using QSettings (stable NWinfo-based device/attribute IDs), while the five-point fan curve itself remains in ESP32 NVS. If a group is empty **or any selected sensor disappears**, the GUI stops sending temperatures for that fan. The ESP then switches that automatic fan to 100% after the normal 10-second watchdog timeout. No fictional temperature, zero substitute, or silently partial average is used.
 
-Sensor HTTP polling runs in a background thread so a nonresponsive LibreHardwareMonitor does not freeze the UI or OpenRGB lighting stream.
+NWinfo is executed in a background worker with a timeout so driver/API delays never freeze the Qt GUI or the OpenRGB lighting bridge. The old LHM sensor IDs are **not equivalent** to NWinfo IDs: if you previously selected individual sensors, choose their NWinfo counterparts again. Until then the unavailable assignment prevents updates and the firmware retains its 10-second 100% fail-safe.
 
 ## OpenRGB and alternative E1.31 transmitters
 
@@ -83,7 +84,7 @@ This is **manual E1.31 integration**, not automatic HID/USB discovery in OpenRGB
 
 ### Optional background user-logon agent
 
-The packaged `FanARGBControl.exe --headless` runs a **headless companion** after Windows logon. It streams CPU/GPU/SSD temperatures and bridges OpenRGB E1.31 to USB. To register the built EXE in Task Scheduler: `powershell -ExecutionPolicy Bypass -File pc_app/register_agent.ps1`; remove with `pc_app/unregister_agent.ps1`. User must also run LibreHardwareMonitor web server in their session.
+The packaged `FanARGBControl.exe --headless` runs a **headless companion** after Windows logon. It streams CPU/GPU/SSD temperatures and bridges OpenRGB E1.31 to USB. To register the built EXE in Task Scheduler: `powershell -ExecutionPolicy Bypass -File pc_app/register_agent.ps1`; remove with `pc_app/unregister_agent.ps1`. No separate LHM server is needed. The scheduled agent uses the same bundled NWinfo engine.
 
 This is **not** a Windows Service that operates before user logon. It owns the COM port, so close the agent before opening the GUI. Logging is written to `%LOCALAPPDATA%\FanARGBControl\agent.log`. Missing LHM readings cause the ESP to fall back to 100% fan PWM.
 

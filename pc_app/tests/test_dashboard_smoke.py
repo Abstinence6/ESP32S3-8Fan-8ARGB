@@ -85,6 +85,29 @@ class DashboardSmokeTests(unittest.TestCase):
         logs = shell.stack.widget(shell.page_index["logs"]).widget()
         self.assertTrue(logs.isAncestorOf(self.window.log_text))
 
+    def test_nwinfo_local_sensors_reach_gui_and_fan_choices(self):
+        from concurrent.futures import Future
+        from nwinfo_sensors import parse_nwinfo_temperatures
+        from monitor import MAX_ALL
+        report = {"Sensors": {
+            "CPU": {"Intel Core": {"Package Temperature": 54}},
+            "GPU": {"AMD Radeon": {"Temperature": 66}},
+            "SMART": {"SSD": {"Temperature": 38}},
+        }}
+        completed = Future()
+        completed.set_result(parse_nwinfo_temperatures(report))
+        self.window.temperature_future = completed
+        self.window.apply_temperature_result()
+        self.assertEqual(self.window.sensor_table.rowCount(), 3)
+        self.assertIn("3 температур", self.window.sensor_status.text())
+        self.assertEqual(self.window.source_boxes[0].currentData(), MAX_ALL)
+        names = [
+            self.window.source_boxes[0].itemText(i)
+            for i in range(self.window.source_boxes[0].count())
+        ]
+        self.assertTrue(any("Intel Core" in x for x in names))
+        self.assertTrue(any("AMD Radeon" in x for x in names))
+
     def test_telemetry_updates_overview_and_pc_gates(self):
         self.window.handle_line(
             "CH 3 FAN=55% RPM=1200 TEMP=430 MODE=auto SENSOR=ok TYPE=3 FAULT=0"

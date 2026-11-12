@@ -266,7 +266,7 @@ class DashboardShell(QWidget):
         summary.setVerticalSpacing(12)
         for card_index, (key, title, hint) in enumerate((
             ("esp", "ESP32-S3", "Підключення контролера"),
-            ("temp", "Датчики ПК", "Libre Hardware Monitor"),
+            ("temp", "Датчики ПК", "Локально · CPU / GPU / SSD"),
             ("rgb", "ARGB / OpenRGB", "Приймання E1.31"),
             ("mqtt", "MQTT", "Home Assistant"),
             ("pc", "Живлення ПК", "PWR_SW · опція"),
@@ -482,15 +482,17 @@ class DashboardShell(QWidget):
         advanced = self._service_group("Діагностика та MQTT / Home Assistant", diagnostic_row)
         layout.addWidget(advanced)
 
-        sensors_box.setTitle("Libre Hardware Monitor · доступні датчики")
+        sensors_box.setTitle("NWinfo · доступні температурні датчики")
         sensors_box.setMinimumHeight(235)
         layout.addWidget(sensors_box)
         endpoint = QGroupBox("Сервер датчиків")
         ep = QHBoxLayout(endpoint)
         ep.setContentsMargins(16, 20, 16, 12)
-        ep.addWidget(_label("LHM URL:", "minor"))
-        ep.addWidget(self.controller.lhm_url, 1)
-        ep.addWidget(self.controller.lhm_status)
+        ep.addWidget(_label("Локальні CPU / GPU / SSD · без вебсервера", "minor"), 1)
+        scan = QPushButton("Оновити датчики")
+        scan.clicked.connect(self.controller.refresh_temperatures)
+        ep.addWidget(scan)
+        ep.addWidget(self.controller.sensor_status)
         layout.addWidget(endpoint)
         layout.addStretch(1)
         self._add_page("service", page)
@@ -561,7 +563,10 @@ class DashboardShell(QWidget):
         self.connection_text.style().polish(self.connection_text)
 
     def set_sensor_count(self, count: int, available: bool = True) -> None:
-        self.summary_temp.setText(f"{count} датчиків" if available else "Немає зв'язку")
+        self.summary_temp.setText(
+            f"{count} температур" if count else
+            "Немає температур" if available else "Датчики недоступні"
+        )
 
     def set_bridge_state(self, enabled: bool, frames: int = 0) -> None:
         if enabled:

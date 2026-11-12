@@ -28,9 +28,10 @@ from PySide6.QtWidgets import (
 )
 
 from monitor import (
-    DEFAULT_LHM_URL, GROUP_AVG, GROUP_MAX, GROUP_WEIGHTED, MAX_ALL,
-    TemperatureSensor, fetch_temperatures, resolve_temperature,
+    GROUP_AVG, GROUP_MAX, GROUP_WEIGHTED, MAX_ALL,
+    TemperatureSensor, resolve_temperature,
 )
+from nwinfo_sensors import fetch_temperatures
 from sacn_bridge import E131Listener, SACN_PORT, SERIAL_BAUD, encode_rgb_frame
 from protocol import validate_curve, DEFAULT_CURVE, make_curve_command, make_temperature_command, parse_curve, parse_status
 from serial_owner import SerialProxyClient
@@ -80,7 +81,8 @@ class FanArgbWindow(QMainWindow):
             except (ValueError, TypeError):
                 self.sensor_groups[ch] = []
         self.led_counts: list[int] | None = None  # do not stream until ESP confirms sizes
-        self.temperature_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="LHM")
+        self.temperature_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="NWinfo")
+        self._last_sensor_issue: str | None = None
         self.temperature_future: Future | None = None
         self.sacn = E131Listener()
         self.sacn_pending: dict[int, bytes] = {}
@@ -126,12 +128,9 @@ class FanArgbWindow(QMainWindow):
         self.connect_button.clicked.connect(self.toggle_serial)
         connect_row.addWidget(self.connect_button)
         connect_row.addSpacing(18)
-        connect_row.addWidget(QLabel("Libre Hardware Monitor:"))
-        self.lhm_url = QLineEdit(self.settings.value("lhmUrl", DEFAULT_LHM_URL))
-        self.lhm_url.setMinimumWidth(260)
-        connect_row.addWidget(self.lhm_url)
-        self.lhm_status = QLabel("Датчики: пошук…")
-        connect_row.addWidget(self.lhm_status)
+        connect_row.addWidget(QLabel("Датчики Windows · NWinfo:"))
+        self.sensor_status = QLabel("Пошук датчиків…")
+        connect_row.addWidget(self.sensor_status)
         connect_row.addStretch(1)
         layout.addLayout(connect_row)
 
@@ -674,28 +673,42 @@ class FanArgbWindow(QMainWindow):
             cursor.removeSelectedText()
 
     def refresh_temperatures(self) -> None:
-        # Never block the Qt GUI thread while the sensor service responds or times out.
-        url = self.lhm_url.text().strip()
-        self.settings.setValue("lhmUrl", url)
+        # A separate worker runs bundled NWinfo; the Qt GUI stays responsive.
         if self.temperature_future is None:
-            self.temperature_future = self.temperature_executor.submit(fetch_temperatures, url, 0.8)
+            self.temperature_future = self.temperature_executor.submit(fetch_temperatures, 4.0)
 
     def apply_temperature_result(self) -> None:
         future = self.temperature_future
         if future is None or not future.done():
             return
         self.temperature_future = None
+        ready = False
+        issue: str | None = None
         try:
             self.temperatures = future.result()
-            self.lhm_status.setText(f"{len(self.temperatures)} температур")
-            self.lhm_status.setStyleSheet("color: #3c9c57")
+            ready = True
+            if self.temperatures:
+                self.sensor_status.setText(f"NWinfo · {len(self.temperatures)} температур")
+                self.sensor_status.setStyleSheet("color: #70cda6")
+                self.sensor_status.setToolTip("Локальне читання CPU / GPU / SSD, без вебсервера")
+            else:
+                issue = ("NWinfo не отримав температур. Для CPU може знадобитися "
+                         "запуск із правами адміністратора та дозволений драйвер.")
+                self.sensor_status.setText("NWinfo · немає температур")
+                self.sensor_status.setStyleSheet("color: #edba6d")
+                self.sensor_status.setToolTip(issue)
         except Exception as exc:
             self.temperatures = []
-            self.lhm_status.setText("Немає зв'язку з LHM")
-            self.lhm_status.setToolTip(str(exc))
-            self.lhm_status.setStyleSheet("color: #d05555")
+            issue = f"NWinfo: {type(exc).__name__}: {exc}"
+            self.sensor_status.setText("NWinfo · помилка датчиків")
+            self.sensor_status.setStyleSheet("color: #f18b92")
+            self.sensor_status.setToolTip(issue)
+        if issue != self._last_sensor_issue:
+            if issue:
+                self.log(issue)
+            self._last_sensor_issue = issue
         self.dashboard.set_sensor_count(
-            len(self.temperatures), available=bool(self.temperatures)
+            len(self.temperatures), available=ready
         )
         self._update_sensor_table()
         self._update_source_boxes()
