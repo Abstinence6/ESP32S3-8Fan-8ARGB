@@ -38,13 +38,16 @@ from profiles import PRESETS
 from config_presets import (RGB_SCENES, FAN_CURVES, commands as preset_commands,
                             create_configuration, from_json as parse_configuration,
                             to_json as serialize_configuration, openrgb_e131_manifest)
+from ui_dashboard_model import make_scene_commands
+from ui_dashboard import DashboardShell
 
 
 class FanArgbWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("ESP32-S3 · Fan & ARGB Controller")
-        self.resize(1480, 890)
+        self.setWindowTitle("FanARGB · ESP32-S3")
+        self.resize(1510, 930)
+        self.setMinimumSize(1080, 700)
         self.settings = QSettings("FanARGB", "FanARGBControl")
         self.port: Optional[serial.Serial | SerialProxyClient] = None
         self.read_buffer = ""
@@ -424,7 +427,34 @@ class FanArgbWindow(QMainWindow):
         diagnostic_row.addWidget(mqtt_button)
         log_layout.addLayout(diagnostic_row)
         right_layout.addWidget(log_box)
-        self.statusBar().showMessage("ESP: відключено — до підключення вентилятори повинні бути в fail-safe 100%")
+
+        # Move the existing controls into focused pages. Widgets retain their
+        # signals/slots: no firmware or serial behavior changes in the redesign.
+        self.dashboard = DashboardShell(
+            self,
+            refresh_ports=refresh_ports,
+            table_box=table_box,
+            choose_row=choose_row,
+            curve_box=curve_box,
+            history_box=history_box,
+            sensors_box=sensors_box,
+            calibration_box=calibration_box,
+            rgb_box=rgb_box,
+            pc_box=pc_box,
+            log_box=log_box,
+            hardware_rgb=hardware_rgb,
+            config_files=config_files,
+            preset_row=preset_row,
+            diagnostic_row=diagnostic_row,
+            scenes=RGB_SCENES.keys(),
+        )
+        self.setCentralWidget(self.dashboard)
+        self.dashboard.set_bridge_state(False)
+        for ch, box in enumerate(self.source_boxes, start=1):
+            self.dashboard.set_fan_source(ch, box.currentText())
+        self.statusBar().showMessage(
+            "ESP відключено · автоматичне охолодження переходить у fail-safe без телеметрії"
+        )
 
     def refresh_ports(self) -> None:
         selected = self.port_box.currentData() or self.settings.value("port", "")
