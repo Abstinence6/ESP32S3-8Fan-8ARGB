@@ -24,7 +24,7 @@ def create_configuration(fan_profile: str = "Balanced", rgb_scene: str = "Off") 
     return {
         "version": VERSION,
         "fan_curves": [[point[:] for point in FAN_CURVES[fan_profile]] for _ in range(8)],
-        "argb": [dict(RGB_SCENES[rgb_scene]) for _ in range(8)],
+        "argb": [json.loads(json.dumps(RGB_SCENES[rgb_scene])) for _ in range(8)],
     }
 
 
