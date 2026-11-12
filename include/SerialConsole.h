@@ -6,10 +6,11 @@
 #include "CoolingController.h"
 class MqttBridge;
 #include "NetworkRgbBridge.h"
+#include "PcPowerController.h"
 
 class SerialConsole {
 public:
-    SerialConsole(Stream& serial, FanController& fans, ArgbController& leds, CoolingController& cooling, NetworkRgbBridge* wifi = nullptr, MqttBridge* mqtt = nullptr);
+    SerialConsole(Stream& serial, FanController& fans, ArgbController& leds, CoolingController& cooling, NetworkRgbBridge* wifi = nullptr, MqttBridge* mqtt = nullptr, PcPowerController* pc = nullptr);
     void begin();
     void poll();
 
@@ -33,6 +34,7 @@ private:
     CoolingController& cooling_;
     NetworkRgbBridge* wifi_;
     MqttBridge* mqtt_;
+    PcPowerController* pc_;
     bool selfTestActive_ = false;
     uint32_t selfTestStartMs_ = 0;
     uint32_t selfTestBasePulses_[board::kChannelCount] = {};

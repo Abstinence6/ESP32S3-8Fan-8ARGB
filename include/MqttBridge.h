@@ -4,6 +4,7 @@
 #include "CoolingController.h"
 #include "ArgbController.h"
 #include "NetworkRgbBridge.h"
+#include "PcPowerController.h"
 
 #if defined(ARDUINO_ARCH_ESP32)
 #include <WiFi.h>
@@ -15,7 +16,7 @@
 class MqttBridge {
 public:
     MqttBridge(CoolingController& cooling, FanController& fans,
-               ArgbController& leds, NetworkRgbBridge& network);
+               ArgbController& leds, NetworkRgbBridge& network, PcPowerController* pc = nullptr);
     bool begin();
     void update(uint32_t nowMs);
     bool setBroker(const char* host, uint16_t port);
@@ -43,11 +44,13 @@ private:
     FanController& fans_;
     ArgbController& leds_;
     NetworkRgbBridge& network_;
+    PcPowerController* pc_;
     Preferences storage_;
     Settings settings_ = {};
     char baseTopic_[40] = "esp32fan/esp32s3";
     uint32_t retryAtMs_ = 0;
     uint32_t lastPublishMs_ = 0;
+    uint32_t lastPcPublishMs_ = 0;
     uint8_t nextChannel_ = 0;
     uint8_t discoveryStep_ = 0;
     uint32_t lastDiscoveryMs_ = 0;

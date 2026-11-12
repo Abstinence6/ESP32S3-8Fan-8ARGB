@@ -8,6 +8,10 @@
 #define IRAM_ATTR
 #define INPUT_PULLUP 1
 #define FALLING 2
+#define INPUT 0
+#define OUTPUT_OPEN_DRAIN 3
+#define HIGH 1
+#define LOW 0
 #define F(s) s
 
 typedef int portMUX_TYPE;
@@ -21,6 +25,7 @@ namespace mock {
 extern uint32_t currentMs;
 extern std::array<uint32_t, 8> duty;
 extern std::array<uint8_t, 8> pin;
+extern std::array<int, 64> digitalLevels;
 extern std::array<void(*)(void*), 64> handlers;
 extern std::array<void*, 64> handlerArgs;
 void pulse(uint8_t inputPin, unsigned count);
@@ -32,6 +37,8 @@ double ledcSetup(uint8_t channel, double freq, uint8_t bits);
 void ledcAttachPin(uint8_t pin, uint8_t channel);
 void ledcWrite(uint8_t channel, uint32_t value);
 void pinMode(uint8_t, uint8_t);
+int digitalRead(uint8_t);
+void digitalWrite(uint8_t, uint8_t);
 int digitalPinToInterrupt(uint8_t pin);
 void attachInterruptArg(int pin, void (*isr)(void*), void* arg, int mode);
 

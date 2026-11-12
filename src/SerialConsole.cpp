@@ -6,8 +6,8 @@
 #include <string.h>
 
 SerialConsole::SerialConsole(Stream& serial, FanController& fans, ArgbController& leds,
-                             CoolingController& cooling, NetworkRgbBridge* wifi, MqttBridge* mqtt)
-    : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling), wifi_(wifi), mqtt_(mqtt) {}
+                             CoolingController& cooling, NetworkRgbBridge* wifi, MqttBridge* mqtt, PcPowerController* pc)
+    : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling), wifi_(wifi), mqtt_(mqtt), pc_(pc) {}
 
 void SerialConsole::begin() {
     serial_.println(F("8Fan/8ARGB ready | protocol v4 | type HELP"));
@@ -151,6 +151,31 @@ void SerialConsole::handleLine(char* line) {
     if (strcmp(command, "HELP") == 0) {
         if (!noMore()) return error();
         printHelp();
+        return;
+    }
+    if (strcmp(command, "PC") == 0) {
+        if (!pc_) { serial_.println(F("ERR PC unavailable")); return; }
+        char* op = next();
+        if (!op || !noMore()) return error();
+        for (char* p = op; *p; ++p)
+            *p = static_cast<char>(toupper(static_cast<unsigned char>(*p)));
+        if (!strcmp(op, "STATUS")) {
+            serial_.print(F("PC "));
+            serial_.print(pc_->stateText());
+            serial_.print(F(" BUSY="));
+            serial_.println(pc_->busy() ? 1 : 0);
+            return;
+        }
+        PcPowerController::Action action;
+        if (!strcmp(op, "ON")) action = PcPowerController::Action::On;
+        else if (!strcmp(op, "OFF")) action = PcPowerController::Action::Off;
+        else if (!strcmp(op, "FORCE")) action = PcPowerController::Action::ForceOff;
+        else return error();
+        if (!pc_->request(action, millis())) {
+            serial_.println(F("ERR PC disabled, unknown, busy or invalid state"));
+            return;
+        }
+        serial_.println(F("OK PC_PULSE_STARTED"));
         return;
     }
     if (strcmp(command, "LEDS") == 0) {
@@ -495,7 +520,7 @@ void SerialConsole::handleLine(char* line) {
 
 void SerialConsole::printHelp() {
     serial_.println(F("Channels: 1..8, temperatures: deci-Celsius, e.g. 455 = 45.5 C"));
-    serial_.println(F("PING | STATUS | HEALTH [ch] | SELFTEST [CANCEL] | HELP | LEDS"));
+    serial_.println(F("PING | STATUS | HEALTH [ch] | SELFTEST [CANCEL] | HELP | LEDS | PC STATUS|ON|OFF|FORCE"));
     serial_.println(F("MQTT? | MQTT HOST <broker> <port> | MQTT AUTH <user> <pass> | MQTT ON|OFF"));
     serial_.println(F("TEMP <ch> <0..1250> | AUTO <ch> | ALLAUTO"));
     serial_.println(F("FAN <ch> <0..100> | ALLFAN <0..100> (manual override)"));

@@ -21,8 +21,8 @@ bool parseUInt(const char* s, unsigned max, unsigned& value) {
 }
 
 MqttBridge::MqttBridge(CoolingController& cooling, FanController& fans,
-                       ArgbController& leds, NetworkRgbBridge& network)
-    : cooling_(cooling), fans_(fans), leds_(leds), network_(network)
+                       ArgbController& leds, NetworkRgbBridge& network, PcPowerController* pc)
+    : cooling_(cooling), fans_(fans), leds_(leds), network_(network), pc_(pc)
 #if defined(ARDUINO_ARCH_ESP32)
     , mqtt_(tcp_)
 #endif
@@ -117,6 +117,12 @@ bool MqttBridge::applyCommand(const char* topic, const char* payload, uint32_t n
     const char* p = topic + prefix + 1;
     unsigned number = 0;
     const char* suffix = nullptr;
+    if (!strcmp(p, "pc/set") && pc_ && pc_->enabled()) {
+        if (!strcmp(payload, "ON")) return pc_->request(PcPowerController::Action::On, nowMs);
+        if (!strcmp(payload, "OFF")) return pc_->request(PcPowerController::Action::Off, nowMs);
+        if (!strcmp(payload, "FORCE")) return pc_->request(PcPowerController::Action::ForceOff, nowMs);
+        return false;
+    }
     if (!strncmp(p, "fan/", 4)) {
         p += 4;
         if (*p < '1' || *p > '8' || p[1] != '/') return false;
@@ -197,6 +203,32 @@ void MqttBridge::publishDiscovery() {
     char topic[120], payload[900];
     const char* id = strchr(baseTopic_, '/');
     id = id ? id + 1 : "esp32s3";
+    if (discoveryStep_ == board::kChannelCount && pc_ && pc_->enabled()) {
+        ++discoveryStep_;
+        snprintf(topic, sizeof(topic), "homeassistant/binary_sensor/%s_pc_power/config", id);
+        snprintf(payload, sizeof(payload),
+            "{\"name\":\"PC Power\",\"unique_id\":\"%s_pc_power\","
+            "\"state_topic\":\"%s/pc/state\",\"payload_on\":\"ON\","
+            "\"payload_off\":\"OFF\",\"device_class\":\"power\","
+            "\"availability_topic\":\"%s/availability\","
+            "\"device\":{\"identifiers\":[\"%s\"],\"name\":\"ESP32-S3 Fan/ARGB %s\"}}",
+            id, baseTopic_, baseTopic_, id, id);
+        mqtt_.publish(topic, payload, true);
+        const char* names[] = {"PC Power On", "PC Power Off", "PC Force Off"};
+        const char* keys[] = {"pc_on", "pc_off", "pc_force"};
+        const char* commands[] = {"ON", "OFF", "FORCE"};
+        for (unsigned j = 0; j < 3; ++j) {
+            snprintf(topic, sizeof(topic), "homeassistant/button/%s_%s/config", id, keys[j]);
+            snprintf(payload, sizeof(payload),
+                "{\"name\":\"%s\",\"unique_id\":\"%s_%s\","
+                "\"command_topic\":\"%s/pc/set\",\"payload_press\":\"%s\","
+                "\"availability_topic\":\"%s/availability\","
+                "\"device\":{\"identifiers\":[\"%s\"],\"name\":\"ESP32-S3 Fan/ARGB %s\"}}",
+                names[j], id, keys[j], baseTopic_, commands[j], baseTopic_, id, id);
+            mqtt_.publish(topic, payload, true);
+        }
+        return;
+    }
     if (discoveryStep_ >= board::kChannelCount) return;
     const unsigned i = ++discoveryStep_;
     {
@@ -257,16 +289,28 @@ void MqttBridge::update(uint32_t nowMs) {
             snprintf(topic, sizeof(topic), "%s/%s", baseTopic_, wildcard);
             mqtt_.subscribe(topic);
         }
+        if (pc_ && pc_->enabled()) {
+            snprintf(topic, sizeof(topic), "%s/pc/set", baseTopic_);
+            mqtt_.subscribe(topic);
+        }
         discoveryStep_ = 0;
         lastDiscoveryMs_ = nowMs;
         lastPublishMs_ = nowMs - 2000U;
     }
     mqtt_.loop();
     // Limit HA discovery traffic: three retained configs per 300 ms visit.
-    if (discoveryStep_ < board::kChannelCount &&
+    if (discoveryStep_ < board::kChannelCount + ((pc_ && pc_->enabled()) ? 1U : 0U) &&
         nowMs - lastDiscoveryMs_ >= 300U) {
         lastDiscoveryMs_ = nowMs;
         publishDiscovery();
+    }
+    if (pc_ && pc_->enabled() && nowMs - lastPcPublishMs_ >= 2000U) {
+        lastPcPublishMs_ = nowMs;
+        char topic[96];
+        snprintf(topic, sizeof(topic), "%s/pc/state", baseTopic_);
+        const auto state = pc_->state();
+        mqtt_.publish(topic, state == PcPowerController::State::On ? "ON" :
+                            state == PcPowerController::State::Off ? "OFF" : "unknown", true);
     }
     if (nowMs - lastPublishMs_ >= 250U) {
         lastPublishMs_ = nowMs;
