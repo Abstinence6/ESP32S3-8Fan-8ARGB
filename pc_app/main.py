@@ -49,6 +49,7 @@ class FanArgbWindow(QMainWindow):
         self.resize(1510, 930)
         self.setMinimumSize(1080, 700)
         self.settings = QSettings("FanARGB", "FanARGBControl")
+        self._last_lhm_issue: str | None = None
         self.port: Optional[serial.Serial | SerialProxyClient] = None
         self.read_buffer = ""
         self.temperatures: list[TemperatureSensor] = []
@@ -685,17 +686,33 @@ class FanArgbWindow(QMainWindow):
         if future is None or not future.done():
             return
         self.temperature_future = None
+        connected = False
+        issue = None
         try:
             self.temperatures = future.result()
-            self.lhm_status.setText(f"{len(self.temperatures)} температур")
-            self.lhm_status.setStyleSheet("color: #3c9c57")
+            connected = True
+            if self.temperatures:
+                self.lhm_status.setText(f"{len(self.temperatures)} температур")
+                self.lhm_status.setStyleSheet("color: #70cda6")
+                self.lhm_status.setToolTip("LHM: отримано температури з /data.json")
+            else:
+                issue = ("LHM відповідає, але температурних датчиків у /data.json немає. "
+                         "Перевір, чи вони видимі у LibreHardwareMonitor.")
+                self.lhm_status.setText("0 температур · перевір LHM")
+                self.lhm_status.setStyleSheet("color: #edba6d")
+                self.lhm_status.setToolTip(issue)
         except Exception as exc:
             self.temperatures = []
-            self.lhm_status.setText("Немає зв'язку з LHM")
-            self.lhm_status.setToolTip(str(exc))
-            self.lhm_status.setStyleSheet("color: #d05555")
+            issue = f"LHM недоступний: {type(exc).__name__}: {exc}"
+            self.lhm_status.setText("LHM недоступний")
+            self.lhm_status.setToolTip(issue + "\nУвімкни Options → Remote Web Server → Run")
+            self.lhm_status.setStyleSheet("color: #f18b92")
+        if issue != self._last_lhm_issue:
+            if issue:
+                self.log(issue)
+            self._last_lhm_issue = issue
         self.dashboard.set_sensor_count(
-            len(self.temperatures), available=bool(self.temperatures)
+            len(self.temperatures), available=connected
         )
         self._update_sensor_table()
         self._update_source_boxes()
