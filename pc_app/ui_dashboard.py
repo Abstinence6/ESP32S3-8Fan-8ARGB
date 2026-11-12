@@ -26,7 +26,7 @@ PAGES = (
 
 STYLE = """
 QMainWindow, QWidget#dashboardRoot, QScrollArea, QScrollArea > QWidget > QWidget {
-    background: #10141d; color: #e8edf7; font-family: "Segoe UI";
+    background: #10141d; color: #e8edf7;
 }
 QWidget { color: #e8edf7; font-size: 10pt; }
 QFrame#sidebar { background: #151b27; border-right: 1px solid #2b3545; }
@@ -261,18 +261,19 @@ class DashboardShell(QWidget):
             "Огляд системи",
             "Головне без зайвих налаштувань. Натисни на вентилятор, щоб змінити його параметри.",
         )
-        summary = QHBoxLayout()
-        summary.setSpacing(12)
-        for key, title, hint in (
+        summary = QGridLayout()
+        summary.setHorizontalSpacing(12)
+        summary.setVerticalSpacing(12)
+        for card_index, (key, title, hint) in enumerate((
             ("esp", "ESP32-S3", "Підключення контролера"),
             ("temp", "Датчики ПК", "Libre Hardware Monitor"),
             ("rgb", "ARGB / OpenRGB", "Приймання E1.31"),
             ("mqtt", "MQTT", "Home Assistant"),
             ("pc", "Живлення ПК", "PWR_SW · опція"),
-        ):
+        )):
             card, value = self._summary_card(title, "—", hint)
             setattr(self, f"summary_{key}", value)
-            summary.addWidget(card, 1)
+            summary.addWidget(card, card_index // 3, card_index % 3)
         layout.addLayout(summary)
         heading = QHBoxLayout()
         heading.addWidget(_label("Вентилятори · 8 каналів", "labelTitle"))
@@ -307,7 +308,7 @@ class DashboardShell(QWidget):
             action = QPushButton("Налаштувати  →")
             action.clicked.connect(lambda checked=False, channel=ch: self.open_fan(channel))
             box.addWidget(action)
-            grid.addWidget(frame, (ch - 1) // 4, (ch - 1) % 4)
+            grid.addWidget(frame, (ch - 1) // 3, (ch - 1) % 3)
             self.fan_cards[ch] = {
                 "rpm": rpm, "metrics": metrics, "source": source, "state": state,
             }
@@ -327,33 +328,27 @@ class DashboardShell(QWidget):
 
     def _create_fans(self, table_box, choose_row, curve_box, history_box) -> None:
         page, layout = self._content(
-            "Вентилятори", "Вибери канал у таблиці та налаштуй автоматичну криву.",
+            "Вентилятори",
+            "Спочатку вибери канал, потім редагуй криву й режим керування.",
         )
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setChildrenCollapsible(False)
-        table_box.setTitle("Канали та джерела температури")
-        table_box.setMinimumWidth(435)
-        splitter.addWidget(table_box)
-        right_panel = QWidget()
-        editor = QVBoxLayout(right_panel)
-        editor.setContentsMargins(4, 0, 0, 0)
-        editor.setSpacing(12)
+        # A vertical editor avoids clipped curve buttons and horizontal scrolling
+        # on standard 1366px and 1080px displays.
+        table_box.setTitle("8 каналів · швидкість, RPM та джерело температури")
+        table_box.setMinimumHeight(380)
+        layout.addWidget(table_box)
         row_holder = QFrame()
         row_holder.setObjectName("quietCard")
         row_layout = QHBoxLayout(row_holder)
-        row_layout.setContentsMargins(12, 10, 12, 10)
-        row_layout.setSpacing(8)
+        row_layout.setContentsMargins(15, 11, 15, 11)
+        row_layout.setSpacing(10)
         _move_controls(choose_row, row_layout)
-        editor.addWidget(row_holder)
-        curve_box.setTitle("Крива PWM · переміщуй п'ять точок")
-        curve_box.setMinimumHeight(355)
-        editor.addWidget(curve_box, 3)
+        layout.addWidget(row_holder)
+        curve_box.setTitle("Крива PWM · перетягни п'ять точок")
+        curve_box.setMinimumHeight(430)
+        layout.addWidget(curve_box)
         history_box.setTitle("Історія вибраного вентилятора")
-        editor.addWidget(history_box, 1)
-        splitter.addWidget(right_panel)
-        splitter.setSizes([460, 695])
-        splitter.setMinimumHeight(610)
-        layout.addWidget(splitter, 1)
+        layout.addWidget(history_box)
+        layout.addStretch(1)
         self._add_page("fans", page)
 
     def _create_argb(self, rgb_box, scenes: Iterable[str]) -> None:
