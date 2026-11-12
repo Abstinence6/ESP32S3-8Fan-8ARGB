@@ -207,11 +207,11 @@ void MqttBridge::publishDiscovery() {
         ++discoveryStep_;
         snprintf(topic, sizeof(topic), "homeassistant/binary_sensor/%s_pc_power/config", id);
         snprintf(payload, sizeof(payload),
-            "{\\"name\\":\\"PC Power\\",\\"unique_id\\":\\"%s_pc_power\\","
-            "\\"state_topic\\":\\"%s/pc/state\\",\\"payload_on\\":\\"ON\\","
-            "\\"payload_off\\":\\"OFF\\",\\"device_class\\":\\"power\\","
-            "\\"availability_topic\\":\\"%s/availability\\","
-            "\\"device\\":{\\"identifiers\\":[\\"%s\\"],\\"name\\":\\"ESP32-S3 Fan/ARGB %s\\"}}",
+            "{\"name\":\"PC Power\",\"unique_id\":\"%s_pc_power\","
+            "\"state_topic\":\"%s/pc/state\",\"payload_on\":\"ON\","
+            "\"payload_off\":\"OFF\",\"device_class\":\"power\","
+            "\"availability_topic\":\"%s/availability\","
+            "\"device\":{\"identifiers\":[\"%s\"],\"name\":\"ESP32-S3 Fan/ARGB %s\"}}",
             id, baseTopic_, baseTopic_, id, id);
         mqtt_.publish(topic, payload, true);
         const char* names[] = {"PC Power On", "PC Power Off", "PC Force Off"};
@@ -220,10 +220,10 @@ void MqttBridge::publishDiscovery() {
         for (unsigned j = 0; j < 3; ++j) {
             snprintf(topic, sizeof(topic), "homeassistant/button/%s_%s/config", id, keys[j]);
             snprintf(payload, sizeof(payload),
-                "{\\"name\\":\\"%s\\",\\"unique_id\\":\\"%s_%s\\","
-                "\\"command_topic\\":\\"%s/pc/set\\",\\"payload_press\\":\\"%s\\","
-                "\\"availability_topic\\":\\"%s/availability\\","
-                "\\"device\\":{\\"identifiers\\":[\\"%s\\"],\\"name\\":\\"ESP32-S3 Fan/ARGB %s\\"}}",
+                "{\"name\":\"%s\",\"unique_id\":\"%s_%s\","
+                "\"command_topic\":\"%s/pc/set\",\"payload_press\":\"%s\","
+                "\"availability_topic\":\"%s/availability\","
+                "\"device\":{\"identifiers\":[\"%s\"],\"name\":\"ESP32-S3 Fan/ARGB %s\"}}",
                 names[j], id, keys[j], baseTopic_, commands[j], baseTopic_, id, id);
             mqtt_.publish(topic, payload, true);
         }
