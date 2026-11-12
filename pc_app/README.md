@@ -1,5 +1,24 @@
 # Windows application for ESP32-S3 Fan & ARGB Controller
 
+## Dashboard interface
+
+The desktop GUI uses six focused pages instead of one large engineering panel:
+
+- **Огляд**: eight live fan cards, ESP connection, LHM, E1.31, MQTT and PC Power status.
+- **Вентилятори**: sensor/source selection, curves, PWM/RPM and history.
+- **ARGB**: single-zone or all-zone lighting presets; these send only LED
+  commands and never overwrite fan curves. Live OpenRGB uses E1.31.
+- **Живлення ПК**: monitored PC state and guarded power/force-off actions.
+- **Сервіс**: calibration, hardware ARGB, sensor tables, network setup,
+  combined configuration presets and diagnostics.
+- **Логи**: Serial output and advanced raw command entry.
+
+The firmware protocol, channel numbering, NVS storage, fan power interlock
+and stale-temperature fail-safe remain unchanged. A separate **offscreen GUI
+smoke test** checks that pages construct, sensor updates reach fan cards and
+PC power buttons obey the reported state.
+
+
 Requirements: Windows 10/11; Python 3.11+; optional Libre Hardware Monitor for actual PC temperatures. This is a Python/PySide6 GUI, not a browser UI. No cloud telemetry.
 
 ## Install and run
