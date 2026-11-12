@@ -1,23 +1,14 @@
-# PCB checklist: universal 3-pin-first controller without I/O expanders
+# PCB checklist — 8 × 2/3-pin fans and 8 × ARGB
 
-## Proposed fan channel
+Status: **schematic proposed only; no physical electrical validation.**
 
-- **2 ESP32-S3 GPIO per fan**: PWM output and TACH input. Eight fans consume 16 GPIO; eight ARGB data lines consume another 8 = **24 total**.
-- A 4-pin connector accepts 2-pin/3-pin/4-pin fans with correct keying/orientation. Use separate 12 V and 5 V fused PSU rails, suitable return paths and decoupling.
-- The **user-supplied intelligent high-side switch** controls +12 V. A physical **DC/PWM jumper** selects whether its input follows PWM or is held permanently ON. Open-collector fan PWM contact 4 is a separate conditioned path; no extra GPIO selects it.
-- **3-pin is the main mode** (DC jumper, PWM through key), 2-pin shares the same mode with no TACH, 4-pin needs jumper PWM (+12 V always on).
-- Do not connect fan contact 4, GPIO or key input to uncontrolled 12 V. Never put 5/12 V directly on an ESP32 input. TACH uses a pull-up to 3.3 V.
-- No MCP23017, GPIO expander, automatic type detector or in-circuit software bypass; no new I2C pins allocated.
+- 8 independent high-side +12 V fan power switches, with appropriate gate drivers and external protection. **No 4-pin PWM contacts or switch-position jumpers**.
+- 8 PWM GPIO, 8 TACH GPIO (unused for 2-pin), and 8 ARGB GPIO = 24 ESP32-S3 pins. Verify exact ESP32-S3 variant/PSRAM/USB straps.
+- Set `FAN_OUTPUT_INVERTED` to actual gate-driver polarity. The default matches an earlier prototype and is not evidence of correct 12 V behavior.
+- Hardware **must keep cooling powered during ESP reset/unpowered**. A simple P-MOSFET pull-up-to-12V + ULN2803 input from ESP defaults OFF; do not treat that topology as fail-safe.
+- Per-channel current/fuse, short protection, MOSFET transient protection and thermal design; 12 V and 5 V fused separately. 3-pin TACH pull-up ~10 kΩ to 3.3 V.
+- 2-pin lacks TACH. A real stall/current fault indicator would require a suitable smart power switch plus an additional sense line / ADC/multiplexing arrangement, **not present in this firmware/PCB pin budget**. No inferred or fictional 2-pin fault monitoring.
+- ARGB: dedicated 5 V supply, level shift to 5 V, per-channel protection, bulk decoupling and power injection.
+- Scope test both switching frequency and speed telemetry before unlocking `FAN_DC_PWM_VALIDATED` or `FAN_DC_TACH_VALIDATED`.
 
-## Before enabling DC PWM
-
-The firmware's 2/3-pin duty is **100% only** by default (`FAN_DC_PWM_VALIDATED=0`). The selected smart switch must be checked for **25 kHz PWM motor switching**, supply-voltage transients, inductive energy, rated peak motor startup current, thermal derating and safety ON default when MCU is reset/unpowered. Many high-side switches cannot run 25 kHz power PWM. In that case, revise the circuit/software rather than merely setting the validation flag.
-
-## Optional next PCB revision (not implemented)
-
-- On-board NTC/DS18B20/coolant/flow inputs; they need protection, wiring and sometimes more pins, so current 24-GPIO budget must be rechecked.
-- Sense 5/12 V through adequately scaled ADC dividers or a dedicated monitor (not connected to bare GPIO).
-- Measure actual key fault/current status if available, especially important for 2-pin fans without TACH.
-- ARGB overcurrent protection, power injection and 3.3-to-5 V logic interface suitable for chosen strip type.
-
-See [FAN_MODES.md](FAN_MODES.md). No physical PCB has been validated by these firmware tests.
+See [FAN_MODES.md](FAN_MODES.md), [WIRING.md](WIRING.md) and [TEST_PLAN.md](TEST_PLAN.md).

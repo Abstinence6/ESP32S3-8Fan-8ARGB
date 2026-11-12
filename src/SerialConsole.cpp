@@ -5,8 +5,8 @@
 #include <string.h>
 
 SerialConsole::SerialConsole(Stream& serial, FanController& fans, ArgbController& leds,
-                             CoolingController& cooling, NetworkRgbBridge* wifi)
-    : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling), wifi_(wifi) {}
+                             CoolingController& cooling, NetworkRgbBridge* wifi, MqttBridge* mqtt)
+    : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling), wifi_(wifi), mqtt_(mqtt) {}
 
 void SerialConsole::begin() {
     serial_.println(F("8Fan/8ARGB ready | protocol v4 | type HELP"));
@@ -15,10 +15,11 @@ void SerialConsole::begin() {
 void SerialConsole::poll() {
     // Corrupt/partial packets cannot lock out normal fan and temperature commands.
     if (rx_ != RxState::Text && millis() - rgbLastByteMs_ > 300U) resetBinary();
-    while (serial_.available() > 0) {
+    // Bound serial work so RGB traffic cannot starve fan safety updates.
+    uint16_t consumed = 0;
+    while (serial_.available() > 0 && consumed++ < 768U) {
         handleByte(static_cast<uint8_t>(serial_.read()));
     }
-    // Read-only 5-second tachometer check. No change to fan duty or modes.
     if (selfTestActive_ && static_cast<uint32_t>(millis() - selfTestStartMs_) >= 5000U)
         finishSelfTest();
 }
@@ -281,6 +282,45 @@ void SerialConsole::handleLine(char* line) {
         if (!cooling_.setAuto(ch-1)) { serial_.println(F("ERR calibration busy")); return; }
         serial_.println(F("OK")); return;
     }
+    if (strcmp(command, "MQTT") == 0) {
+        if (!mqtt_) { serial_.println(F("ERR MQTT unavailable")); return; }
+        char* action = next();
+        if (!action) return error();
+        for (char* p = action; *p; ++p) *p = static_cast<char>(toupper(static_cast<unsigned char>(*p)));
+        if (!strcmp(action, "STATUS")) {
+            if (!noMore()) return error();
+            mqtt_->printStatus(serial_); return;
+        }
+        if (!strcmp(action, "HOST")) {
+            char* host = next(); uint16_t port = 1883;
+            if (!host || !parseU16(next(), 65535, port) || !noMore() || !port ||
+                !mqtt_->setHost(host, port)) { serial_.println(F("ERR MQTT host")); return; }
+            serial_.println(F("OK MQTT_HOST")); return;
+        }
+        if (!strcmp(action, "AUTH")) {
+            char* user = next(); char* pass = next();
+            if (!user || !pass || !noMore() || !mqtt_->setAuth(user, pass)) {
+                serial_.println(F("ERR MQTT auth")); return;
+            }
+            serial_.println(F("OK MQTT_AUTH")); return;
+        }
+        if (!strcmp(action, "PREFIX")) {
+            char* prefix = next();
+            if (!prefix || !noMore() || !mqtt_->setPrefix(prefix)) {
+                serial_.println(F("ERR MQTT prefix")); return;
+            }
+            serial_.println(F("OK MQTT_PREFIX")); return;
+        }
+        if (!strcmp(action, "ENABLE")) {
+            uint8_t enabled = 0;
+            if (!parseByte(next(), 1, enabled) || !noMore() ||
+                !mqtt_->setEnabled(enabled != 0)) {
+                serial_.println(F("ERR MQTT enable")); return;
+            }
+            serial_.println(F("OK MQTT_ENABLE")); return;
+        }
+        return error();
+    }
     if (strcmp(command, "WIFI") == 0) {
         if (!wifi_) { serial_.println(F("ERR wifi not available")); return; }
         char* op = next();
@@ -346,9 +386,9 @@ void SerialConsole::handleLine(char* line) {
         if (!strcmp(value, "AUTO") || !strcmp(value, "0")) type = FanController::Type::Auto;
         if (!strcmp(value, "2")) type = FanController::Type::TwoPin;
         if (!strcmp(value, "3")) type = FanController::Type::ThreePin;
-        if (!strcmp(value, "4")) type = FanController::Type::FourPin;
+        // 4-pin is deliberately unsupported.
         if (!cooling_.setFanType(ch-1, type)) {
-            serial_.println(F("ERR AUTO unavailable without pin4 detection or invalid TYPE")); return;
+            serial_.println(F("ERR only 2-pin or 3-pin supported")); return;
         }
         serial_.println(F("OK TYPE_SAVED")); return;
     }
@@ -478,11 +518,13 @@ void SerialConsole::printHelp() {
     serial_.println(F("TEMP2 / CURVE2 / CURVE2? for second thermal source; DUAL <ch> 0|1"));
     serial_.println(F("PID <ch> 0|1 | RPM <ch> <rpm> (requires calibration)"));
     serial_.println(F("PPR <ch> 1..12 | CRIT <ch> 40..120 | STALL <ch> 0..3000"));
-    serial_.println(F("TYPE? <ch> | TYPE <ch> 2|3|4 (matches physical jumper; no auto)"));
+    serial_.println(F("TYPE? <ch> | TYPE <ch> 2|3 (3-pin has TACH, no auto)"));
     serial_.println(F("CONFIG <ch> | FAULTS | CLEARFAULT <ch> | CLEARHISTORY"));
     serial_.println(F("LED <ch> <R> <G> <B> | ALLLED <R> <G> <B>"));
     serial_.println(F("OFF <ch> | ALLOFF | RAINBOW <ch> | BRIGHT <ch> <0..255>"));
     serial_.println(F("WIFI SET <ssid> <pass> | WIFI STATUS | WIFI OFF (no spaces in SSID/pass)"));
+    serial_.println(F("MQTT HOST <broker> <port> | MQTT AUTH <user> <pass> | MQTT PREFIX <topic>"));
+    serial_.println(F("MQTT ENABLE 0|1 | MQTT STATUS (local broker, no TLS)"));
     serial_.println(F("STRIP <ch> 1..170 | REVERSE <ch> 0|1 | RGBBUDGET <100..20000> | ARGBSTATUS"));
     serial_.println(F("Binary ARGB: A5 5A ch countLE16 RGB... crc16LE (CCITT-FALSE)"));
 }
@@ -507,6 +549,7 @@ void SerialConsole::finishSelfTest() {
         if (!fans_.hasRpmFeedback(ch)) result = "NA";
         else if (type != selfTestBaseType_[ch] || pwm != selfTestBasePwm_[ch])
             result = "INCONCLUSIVE";
+        else if (!fans_.tachTrustworthy(ch)) result = "INCONCLUSIVE";
         else if (count >= 3U) result = "OK";
         serial_.print(F("SELFTEST ")); serial_.print(ch + 1);
         serial_.print(F(" RESULT=")); serial_.print(result);
@@ -523,7 +566,9 @@ void SerialConsole::printHealth(uint8_t ch) {
                             mode == CoolingController::Mode::Calibration ? "cal" :
                             mode == CoolingController::Mode::FixedRpm ? "rpm" : "auto";
     const char* tachLabel = !fans_.hasRpmFeedback(ch) ? "na" :
-                            fans_.tachObserved(ch) ? "seen" : "unseen";
+                            !fans_.tachTrustworthy(ch) ? "untrusted" :
+                            fans_.tachValid(ch) ? "valid" :
+                            fans_.tachObserved(ch) ? "stale" : "unseen";
     const bool sensorFresh = cooling_.temperatureFresh(ch, now) &&
         (!cooling_.dualSensor(ch) || cooling_.temperatureFresh(ch, now, true));
     serial_.print(F("HEALTH ")); serial_.print(ch + 1);

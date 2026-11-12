@@ -2,17 +2,22 @@
 
 namespace mock {
 uint32_t currentMs = 0;
+uint32_t currentUs = 1000;
 std::array<uint32_t, 8> duty = {};
 std::array<uint8_t, 8> pin = {};
 std::array<void(*)(void*), 64> handlers = {};
 std::array<void*, 64> handlerArgs = {};
 void pulse(uint8_t inputPin, unsigned count) {
-    while (count-- && handlers[inputPin]) handlers[inputPin](handlerArgs[inputPin]);
+    while (count-- && handlers[inputPin]) { currentUs += 5000; handlers[inputPin](handlerArgs[inputPin]); }
+}
+void glitch(uint8_t inputPin) {
+    if (handlers[inputPin]) { currentUs += 20; handlers[inputPin](handlerArgs[inputPin]); }
 }
 }
 
 MockSerial Serial;
 uint32_t millis() { return mock::currentMs; }
+uint32_t micros() { return mock::currentUs; }
 void delay(uint32_t) {}
 double ledcSetup(uint8_t, double freq, uint8_t) { return freq; }
 void ledcAttachPin(uint8_t pin, uint8_t channel) { mock::pin[channel] = pin; }

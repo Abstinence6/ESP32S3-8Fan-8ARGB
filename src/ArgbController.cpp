@@ -85,7 +85,8 @@ void ArgbController::render() {
         for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) markDirty(ch);
         lastScale_ = scale;
     }
-    for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
+    for (uint8_t scan = 0; scan < board::kChannelCount; ++scan) {
+        const uint8_t ch = static_cast<uint8_t>((nextStrip_ + scan) % board::kChannelCount);
         if (!dirty_[ch]) continue;
         dirty_[ch] = false;
         const uint16_t count = strips_[ch].numPixels();
@@ -99,6 +100,8 @@ void ArgbController::render() {
             strips_[ch].setPixelColor(idx, strips_[ch].Color(r,g,b));
         }
         strips_[ch].show();
+        nextStrip_ = static_cast<uint8_t>((ch + 1) % board::kChannelCount);
+        break; // Never block for multiple RMT transfers in one cooling cycle.
     }
 }
 
@@ -110,7 +113,6 @@ void ArgbController::drawSolid(uint8_t ch) {
         frame_[ch][n+2] = colors_[ch].b;
     }
     markDirty(ch);
-    render();
 }
 bool ArgbController::setSolid(uint8_t ch, uint8_t r, uint8_t g, uint8_t b) {
     if (ch >= board::kChannelCount) return false;
@@ -124,7 +126,6 @@ bool ArgbController::setOff(uint8_t ch) {
     modes_[ch] = Mode::Off;
     memset(frame_[ch], 0, sizeof(frame_[ch]));
     markDirty(ch);
-    render();
     return true;
 }
 bool ArgbController::setRainbow(uint8_t ch) {
@@ -141,7 +142,6 @@ bool ArgbController::setPixels(uint8_t ch, const uint8_t* rgb, uint16_t count) {
     memcpy(frame_[ch], rgb, count * 3U);
     memset(frame_[ch] + count * 3U, 0, (strips_[ch].numPixels() - count) * 3U);
     markDirty(ch);
-    render();
     return true;
 }
 bool ArgbController::configureStrip(uint8_t ch, uint16_t count, bool reversed) {
@@ -153,7 +153,6 @@ bool ArgbController::configureStrip(uint8_t ch, uint16_t count, bool reversed) {
     memset(frame_[ch], 0, sizeof(frame_[ch]));
     modes_[ch] = Mode::Off;
     markDirty(ch);
-    render();
     if (persist()) return true;
     strips_[ch].updateLength(oldCount);
     reversed_[ch] = oldReverse;
@@ -165,7 +164,6 @@ bool ArgbController::setPowerBudget(uint16_t ma) {
     powerLimitMa_ = ma;
     if (!persist()) { powerLimitMa_ = previous; return false; }
     for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) markDirty(ch);
-    render();
     return true;
 }
 bool ArgbController::isReversed(uint8_t ch) const { return ch < board::kChannelCount && reversed_[ch]; }
@@ -174,33 +172,36 @@ bool ArgbController::setBrightness(uint8_t ch, uint8_t value) {
     if (ch >= board::kChannelCount) return false;
     brightness_[ch] = value;
     markDirty(ch);
-    render();
     return true;
 }
 ArgbController::Mode ArgbController::getMode(uint8_t ch) const { return ch < board::kChannelCount ? modes_[ch] : Mode::Off; }
 uint8_t ArgbController::getBrightness(uint8_t ch) const { return ch < board::kChannelCount ? brightness_[ch] : 0; }
 void ArgbController::update(uint32_t nowMs) {
-    // Do not leave RGB on indefinitely after an OpenRGB stream is interrupted.
     for (uint8_t ch = 0; ch < board::kChannelCount; ++ch)
         if (modes_[ch] == Mode::External && nowMs - lastExternalFrameMs_[ch] > kExternalTimeoutMs)
             setOff(ch);
-    if (nowMs - previousFrameMs_ < board::kArgbFrameMs) return;
-    previousFrameMs_ = nowMs;
-    bool changed = false;
-    for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
-        if (modes_[ch] != Mode::Rainbow) continue;
-        const uint16_t count = strips_[ch].numPixels();
-        for (uint16_t pixel = 0; pixel < count; ++pixel) {
-            const uint16_t hue = static_cast<uint16_t>(rainbowHue_ + (static_cast<uint32_t>(pixel) * 65536UL) / count);
-            const uint32_t color = Adafruit_NeoPixel::gamma32(Adafruit_NeoPixel::ColorHSV(hue));
-            const uint16_t n = pixel * 3U;
-            frame_[ch][n] = static_cast<uint8_t>(color >> 16U);
-            frame_[ch][n+1] = static_cast<uint8_t>(color >> 8U);
-            frame_[ch][n+2] = static_cast<uint8_t>(color);
+    if (nowMs - previousFrameMs_ >= board::kArgbFrameMs) {
+        previousFrameMs_ = nowMs;
+        bool changed = false;
+        for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
+            if (modes_[ch] != Mode::Rainbow) continue;
+            const uint16_t count = strips_[ch].numPixels();
+            for (uint16_t pixel = 0; pixel < count; ++pixel) {
+                const uint16_t hue = static_cast<uint16_t>(rainbowHue_ + (static_cast<uint32_t>(pixel) * 65536UL) / count);
+                const uint32_t color = Adafruit_NeoPixel::gamma32(Adafruit_NeoPixel::ColorHSV(hue));
+                const uint16_t n = pixel * 3U;
+                frame_[ch][n] = static_cast<uint8_t>(color >> 16U);
+                frame_[ch][n+1] = static_cast<uint8_t>(color >> 8U);
+                frame_[ch][n+2] = static_cast<uint8_t>(color);
+            }
+            markDirty(ch);
+            changed = true;
         }
-        markDirty(ch);
-        changed = true;
+        if (changed) rainbowHue_ += 192;
     }
-    if (changed) render();
-    rainbowHue_ += 192;
+    // 170 WS2812 pixels cost ~5.1 ms on the wire; budget one strip per tick.
+    if (nowMs - lastShowMs_ >= 6U) {
+        lastShowMs_ = nowMs;
+        render();
+    }
 }

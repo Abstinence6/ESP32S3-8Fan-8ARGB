@@ -34,6 +34,7 @@ from monitor import (
 from sacn_bridge import E131Listener, SACN_PORT, SERIAL_BAUD, encode_rgb_frame
 from protocol import validate_curve, DEFAULT_CURVE, make_curve_command, make_temperature_command, parse_curve, parse_status
 from profiles import PRESETS
+from ipc import AgentSerialProxy
 
 
 class FanArgbWindow(QMainWindow):
@@ -42,7 +43,7 @@ class FanArgbWindow(QMainWindow):
         self.setWindowTitle("ESP32-S3 · Fan & ARGB Controller")
         self.resize(1480, 890)
         self.settings = QSettings("FanARGB", "FanARGBControl")
-        self.port: Optional[serial.Serial] = None
+        self.port: Optional[serial.Serial | AgentSerialProxy] = None
         self.read_buffer = ""
         self.temperatures: list[TemperatureSensor] = []
         self.curves = {ch: list(DEFAULT_CURVE) for ch in range(1, 9)}
@@ -217,7 +218,7 @@ class FanArgbWindow(QMainWindow):
         choose_row.addWidget(self.fan_box)
         choose_row.addWidget(QLabel("Тип:"))
         self.type_box = QComboBox()
-        for name, wire in (("2-pin / ключ", 2), ("3-pin / ключ+TACH", 3), ("4-pin / PWM", 4)):
+        for name, wire in (("2-pin / ключ", 2), ("3-pin / ключ+TACH", 3)):
             self.type_box.addItem(name, wire)
         self.type_box.setCurrentIndex(1)
         choose_row.addWidget(self.type_box)
@@ -339,6 +340,9 @@ class FanArgbWindow(QMainWindow):
         wifi_button = QPushButton("Wi-Fi / E1.31 / DDP…")
         wifi_button.clicked.connect(self.configure_wifi)
         hardware_rgb.addWidget(wifi_button)
+        mqtt_button = QPushButton("MQTT / Home Assistant…")
+        mqtt_button.clicked.connect(self.configure_mqtt)
+        hardware_rgb.addWidget(mqtt_button)
         rgb_layout.addLayout(hardware_rgb)
         e131_row = QHBoxLayout()
         self.bridge_checkbox = QCheckBox("E1.31 → USB, 8 окремих зон")
@@ -398,19 +402,24 @@ class FanArgbWindow(QMainWindow):
             self.disconnect()
             return
         port_name = self.port_box.currentData()
-        if not port_name:
-            QMessageBox.warning(self, "COM порт", "Підключи ESP32-S3 та вибери COM порт")
-            return
         try:
-            self.port = serial.Serial(port_name, SERIAL_BAUD, timeout=0, write_timeout=0.3)
+            try:
+                self.port = AgentSerialProxy.connect(timeout=0.5)
+                owner_label = "через фоновий агент"
+            except (OSError, ConnectionError, TimeoutError, ValueError):
+                if not port_name:
+                    QMessageBox.warning(self, "COM порт", "Підключи ESP32-S3 та вибери COM порт")
+                    return
+                self.port = serial.Serial(port_name, SERIAL_BAUD, timeout=0, write_timeout=0.3)
+                owner_label = "напряму"
             self.led_counts = None
             self.settings.setValue("port", port_name)
             self.connect_button.setText("Від'єднати")
-            self.statusBar().showMessage(f"ESP: {port_name} підключено")
-            self.log(f"Підключено до {port_name} ({SERIAL_BAUD} бод)")
+            self.statusBar().showMessage(f"ESP: {port_name} підключено {owner_label}")
+            self.log(f"Підключено до {port_name} {owner_label} ({SERIAL_BAUD} бод)")
             # Opening a serial port can reset an ESP board; wait for the boot message.
             QTimer.singleShot(2200, self.read_device_state)
-        except (serial.SerialException, OSError) as exc:
+        except (serial.SerialException, OSError, ValueError) as exc:
             self.port = None
             QMessageBox.critical(self, "Serial", str(exc))
 
@@ -444,7 +453,7 @@ class FanArgbWindow(QMainWindow):
         try:
             self.port.write((message + "\n").encode("ascii"))
             return True
-        except (serial.SerialException, OSError) as exc:
+        except (serial.SerialException, OSError, ValueError) as exc:
             self.log(f"ПОМИЛКА Serial: {exc}")
             self.disconnect()
             return False
@@ -452,7 +461,8 @@ class FanArgbWindow(QMainWindow):
     def send_raw(self) -> None:
         raw = self.raw_input.text().strip()
         if raw and self.send(raw):
-            self.log("> " + raw)
+            secret = raw.upper().startswith(("MQTT AUTH ", "WIFI SET "))
+            self.log("> " + ("[команда з паролем прихована]" if secret else raw))
             self.raw_input.clear()
 
     def poll_serial(self) -> None:
@@ -460,7 +470,7 @@ class FanArgbWindow(QMainWindow):
             return
         try:
             chunk = self.port.read(self.port.in_waiting or 0)
-        except (serial.SerialException, OSError) as exc:
+        except (serial.SerialException, OSError, ValueError) as exc:
             self.log(f"ПОМИЛКА: {exc}")
             self.disconnect()
             return
@@ -491,7 +501,7 @@ class FanArgbWindow(QMainWindow):
             self.fan_table.item(row, 4).setText(
                 f"{status.mode} · {'OK' if status.fresh else 'fail-safe'}"
                 + (" · FAULT" if status.fault else "")
-                + (f" · {status.detected_type}-pin" if status.detected_type in (2, 3, 4) else "")
+                + (f" · {status.detected_type}-pin" if status.detected_type in (2, 3) else "")
             )
             return
         if line.startswith("TYPE ") or line.startswith("CONFIG "):
@@ -606,12 +616,12 @@ class FanArgbWindow(QMainWindow):
             celsius = resolve_temperature(
                 str(box.currentData()), self.temperatures, self.sensor_groups[ch], self.sensor_weights[ch]
             )
-            if celsius is not None:
+            if celsius is not None and not getattr(self.port, "is_agent_proxy", False):
                 try:
                     self.send(make_temperature_command(ch, celsius))
                 except ValueError:
                     pass
-            if self.fan_dual_enabled[ch]:
+            if self.fan_dual_enabled[ch] and not getattr(self.port, "is_agent_proxy", False):
                 second = str(self.settings.value(f"source2{ch}", MAX_ALL))
                 celsius2 = resolve_temperature(second, self.temperatures, self.sensor_groups[ch], self.sensor_weights[ch])
                 if celsius2 is not None:
@@ -769,10 +779,10 @@ class FanArgbWindow(QMainWindow):
         wire = int(self.type_box.currentData())
         confirm = QMessageBox.warning(
             self, "Перевір фізичну перемичку",
-            "TYPE зберігає вибір у ESP, але НЕ перемикає проводку.\n"
-            "2/3-pin: перемичка DC, ключ живлення має підтримувати PWM.\n"
-            "4-pin: перемичка PWM, ключ постійно ON, +12 В без переривань.\n"
-            "Підтверджуєш, що перемичка та підключений вентилятор відповідають типу?",
+            "TYPE зберігає вибір типу в ESP.\n"
+            "2-pin: немає TACH; 3-pin: потрібен TACH до 3,3 В.\n"
+            "Регулювання +12 В заблоковано до перевірки силового ключа.\n"
+            "Підтверджуєш правильне підключення вентилятора?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if confirm != QMessageBox.StandardButton.Yes: return
         self.send(f"TYPE {self.current_fan} {wire}")
@@ -959,7 +969,59 @@ class FanArgbWindow(QMainWindow):
         # Do not log the password, and do not include it in GUI history.
         self.send(f"WIFI SET {ssid} {password}")
 
+    def configure_mqtt(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("MQTT / Home Assistant")
+        layout = QVBoxLayout(dialog)
+        fields = QFormLayout()
+        host = QLineEdit(str(self.settings.value("mqttHost", "")))
+        port = QLineEdit(str(self.settings.value("mqttPort", "1883")))
+        prefix = QLineEdit(str(self.settings.value("mqttPrefix", "esp32s3/fanargb")))
+        user = QLineEdit(str(self.settings.value("mqttUser", "")))
+        password = QLineEdit()
+        password.setEchoMode(QLineEdit.EchoMode.Password)
+        password.setPlaceholderText("Залиш порожнім, щоб не змінювати")
+        enabled = QCheckBox("Увімкнути MQTT")
+        enabled.setChecked(str(self.settings.value("mqttEnabled", "false")).lower() in ("true", "1"))
+        fields.addRow("Broker (IP або DNS):", host)
+        fields.addRow("Порт:", port)
+        fields.addRow("Префікс топіків:", prefix)
+        fields.addRow("Користувач:", user)
+        fields.addRow("Пароль:", password)
+        fields.addRow(enabled)
+        layout.addLayout(fields)
+        layout.addWidget(QLabel("ESP32 має бути підключена до Wi-Fi. MQTT працює без TLS — лише довірена локальна мережа."))
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
+                                   QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted: return
+        broker, base, name = host.text().strip(), prefix.text().strip(), user.text().strip()
+        try:
+            number = int(port.text().strip())
+            if not 1 <= number <= 65535: raise ValueError("порт")
+            if not broker or not base or any(c.isspace() for c in broker+base+name+password.text()):
+                raise ValueError("у полях не можна використовувати пробіли")
+            if len(broker) > 63 or len(base) > 47: raise ValueError("надто довге поле")
+        except ValueError as exc:
+            QMessageBox.warning(self, "MQTT", f"Неправильні налаштування: {exc}")
+            return
+        if not self.send(f"MQTT HOST {broker} {number}"): return
+        self.send(f"MQTT PREFIX {base}")
+        if password.text():
+            self.send(f"MQTT AUTH {name} {password.text()}")
+        self.send(f"MQTT ENABLE {1 if enabled.isChecked() else 0}")
+        self.send("MQTT STATUS")
+        for key, val in (("mqttHost",broker),("mqttPort",number),
+                         ("mqttPrefix",base),("mqttUser",name),("mqttEnabled",enabled.isChecked())):
+            self.settings.setValue(key,val)
+        self.settings.sync()
+
     def toggle_sacn(self, enabled: bool) -> None:
+        if enabled and getattr(self.port, "is_agent_proxy", False):
+            self.bridge_status.setText("OpenRGB обробляє фоновий агент")
+            return
         if not enabled:
             self.sacn.stop()
             self.sacn_pending.clear()
@@ -980,6 +1042,8 @@ class FanArgbWindow(QMainWindow):
         self.bridge_status.setText(f"Прийом: 127.0.0.1:{SACN_PORT} (0 кадрів)")
 
     def poll_sacn(self) -> None:
+        if getattr(self.port, "is_agent_proxy", False):
+            return # agent already owns the OpenRGB UDP stream
         if self.sacn.sock is None:
             return
         # Keep the last frame per strip; drop stale frames when effects run faster

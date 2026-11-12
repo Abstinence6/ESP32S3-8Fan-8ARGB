@@ -1,12 +1,12 @@
 # ESP32-S3 8-Fan / 8-ARGB Controller
 
-Starter firmware for **8 independent 2/3/4-pin PC fans (3-pin default)** and **8 independent 5 V addressable RGB strips** on an **ESP32-S3**. Built with **PlatformIO, Arduino-ESP32 2.0.17, and Adafruit NeoPixel**.
+Starter firmware for **8 independent 2/3-pin DC fans (3-pin default)** and **8 independent 5 V addressable RGB strips** on an **ESP32-S3**. Built with **PlatformIO, Arduino-ESP32 2.0.17, and Adafruit NeoPixel**.
 
 **Status:** starter/reference code, not yet tested on physical hardware. The sample pin assignment targets ESP32-S3-DevKitC-1 and MUST be checked against your actual ESP32-S3 module and PCB before powering peripherals.
 
 ## Features
 
-- 8 independent **25 kHz / 8-bit PWM** channels via LEDC, 0..100%.
+- 8 independent **250 Hz / 8-bit supply-PWM** channels via LEDC, default **safety locked at 100%** until hardware qualification.
 - 8 TACH inputs, **RPM** measured using falling-edge interrupts (default 2 pulses/revolution).
 - 8 independent WS2812B / SK6812-RGB (3-channel) LED data outputs with OpenRGB E1.31 pixel streaming (via Windows companion).
 - Independent static colors / brightness / rainbow animation, plus off.
@@ -64,12 +64,12 @@ ALLOFF
 ## Hardware rules (required)
 
 - **Never feed 5 V or 12 V to an ESP32-S3 GPIO.** Grounds must be common.
-- Each PC 4-pin fan's PWM input should be driven by a **5 V tolerant open-collector/open-drain stage** (e.g. NPN or NMOS). The default software configuration assumes this stage INVERTS the GPIO logic. The fan's own PWM pull-up sets the high level. Do not add a 12 V pull-up to this signal.
+- Only **2/3-pin DC fans** are supported. Each +12 V fan rail requires a proper high-side MOSFET/driver; never drive 12 V into ESP32 GPIO. The electrical driver polarity is firmware-configured (`FAN_OUTPUT_INVERTED`), not automatically detected.
 - TACH is typically an open-collector output: add an **external ~10 kOhm pull-up to 3.3 V** for each input, not to 5/12 V.
 - Supply fans from their own correctly rated **12 V rail** (or the voltage required by the fans). Supply ARGB from a properly rated **5 V PSU**, NOT the ESP32 5 V pin.
 - Use a **74AHCT125 / 74AHCT245 level shifter at 5 V** for the 3.3 V ARGB data signals; series resistors and suitable PSU decoupling are strongly recommended.
 - A WS2812B RGB pixel can draw up to **~60 mA at full white**. At 8 x 30 pixels that can reach **~14.4 A @ 5 V**, excluding controller losses. Size PSU, cabling and injection accordingly.
-- PWM=0% does NOT guarantee that all 4-pin fan models fully stop. Power-off requires a separate switched power stage if needed. Startup defaults to 100% fan PWM (fan high speed) and ARGB off.
+- The firmware requests **100% power at startup**, but real fan power during ESP reset/offline requires an independent **hardware fail-safe ON** circuit. ARGB starts off.
 
 See `docs/WIRING.md` for details.
 
@@ -79,7 +79,7 @@ See `docs/WIRING.md` for details.
 - ESP32-S3 has only 4 RMT TX channels, but **Adafruit NeoPixel show() calls execute one by one and release the RMT channel** on Arduino-ESP32 2.x, so 8 independent strips are possible (not simultaneously updated).
 - Rainbow effects update at most every 40 ms; actual FPS depends on the sum of all strip lengths and RMT transfer times.
 - RPM is averaged over 1 s; tach signals need a suitable pull-up and clean edges.
-- The firmware stores fan calibration and PWM-temperature curves in NVS. The companion UI supplies PC temperatures; ESP-S3 does not independently measure CPU/GPU temperature. Wi-Fi RGB integration is optional. Power switching for 2/3-pin fans requires the user-supplied smart key and physical DC/PWM jumper.
+- The firmware stores fan calibration and PWM-temperature curves in NVS. The companion UI supplies PC temperatures; ESP-S3 does not independently measure CPU/GPU temperature. Wi-Fi RGB and MQTT/Home Assistant integrations are optional. Power switching for 2/3-pin fans requires a *verified* high-side circuit, with no DC/PWM jumper.
 
 ## Structure
 
@@ -113,11 +113,15 @@ For full details, see [`docs/PROTOCOL.md`](docs/PROTOCOL.md) and [`pc_app/README
 
 [OpenRGB configuration, limits and troubleshooting](docs/OPENRGB.md). The protocol is documented in [docs/PROTOCOL.md](docs/PROTOCOL.md); GUI setup is in [pc_app/README.md](pc_app/README.md). **Update both PC app and firmware** when upgrading to v3 due to changed baud rate.
 
-## v4: 3-pin main fan mode, universal fan connector
+## v5: 2/3-pin-only cooling, MQTT and single-owner USB
 
-All eight fan outputs share one **PWM GPIO + one TACH GPIO per fan**, with eight ARGB data GPIOs (24 total); no MCP23017 or additional I/O expanders. Fresh NVS profiles use **3-pin mode**. The jumper on each fan channel selects **DC power switching** (2/3-pin via the intelligent smart key) or **steady 12 V + PWM on contact 4** (4-pin). The software `TYPE n 2|3|4` must match the jumper; it cannot operate the jumper. **Automatic type detection is unavailable and TYPE AUTO is rejected**, since TACH alone cannot prove 2/3/4 contacts.
+**Only 2-pin and 3-pin** fans remain supported. Eight channels share one PWM and one reserved TACH GPIO per fan, plus eight ARGB outputs (24 ESP32 pins). `TYPE n 2|3` sets logical feedback permissions. 4-pin and AUTO are rejected; no MCP23017 or DC/PWM jumper. Duty defaults to **250 Hz**, tunable by `FAN_DC_PWM_HZ` during a build.
 
-**Safety interlock:** `FAN_DC_PWM_VALIDATED=0` by default; until the selected smart switch is proven suitable for 25 kHz power PWM and a hardware fail-safe ON state, 2/3-pin channels stay at **100%**. Enabling PWM control requires an explicit firmware rebuild after bench testing. See [docs/FAN_MODES.md](docs/FAN_MODES.md) and [docs/PCB_NEXT.md](docs/PCB_NEXT.md).
+**Hardware interlock:** `FAN_DC_PWM_VALIDATED=0` keeps supply PWM at 100%. Below-full-power 3-pin TACH is untrusted unless `FAN_DC_TACH_VALIDATED=1`, separately qualified. An ESP reset-power-ON fail-safe is mandatory: a bare P-MOSFET plus ULN2803A with gate pulled to +12 V normally powers fans OFF during reset. Tests do **not** certify the circuit. Old v1–v3 NVS calibration is invalidated while saved temperature curves remain.
+
+The optional **MQTT/Home Assistant** bridge runs in a separate ESP FreeRTOS network task: per-fan states/RPM/faults and guarded PWM/ARGB commands, HA discovery, and a local broker. It is disabled by default and is **not** encrypted. See [MQTT](docs/MQTT.md). The Windows app can connect through a background agent that exclusively owns the serial port using a local IPC link.
+
+See [fan modes](docs/FAN_MODES.md), [PCB plan](docs/PCB_NEXT.md), [test plan](docs/TEST_PLAN.md) and [Windows app](pc_app/README.md).
 
 ## v4 modules added
 
@@ -125,7 +129,7 @@ All eight fan outputs share one **PWM GPIO + one TACH GPIO per fan**, with eight
 - Secondary temperature curve, weighted selected-sensor averages, CSV trends and named PC cooling profiles.
 - Optional Wi-Fi E1.31/DDP, ARGB brightness/current-budget limiter, editable LED count/reversal and 3-second external frame timeout.
 - A Windows `--headless` user-logon agent (not a boot-time service) that owns the USB COM port.
-- Provisional 2/3/4-pin fan modes with manual jumper selection; no GPIO expander or auto-detection. The 3-pin DC stage remains hardware-unverified and is safety-locked to full power by default.
+- 2/3-pin-only DC modes, no 4-pin, no expander, no detection. Supply switching remains hardware-unverified and safety-locked at 100%.
 
 Docs: [Fan modes](docs/FAN_MODES.md), [future PCB](docs/PCB_NEXT.md), [Windows app](pc_app/README.md).
 
@@ -133,6 +137,6 @@ Docs: [Fan modes](docs/FAN_MODES.md), [future PCB](docs/PCB_NEXT.md), [Windows a
 
 The no-key build retains `FAN_DC_PWM_VALIDATED=0` and the 3-pin default. Commands `HEALTH` / `HEALTH 1` expose read-only fan state, `TACH=seen|unseen|na`, thermal freshness, and whether DC power PWM is validated. `ALLFAN` is now all-or-nothing: invalid fan duties return an error without changing any channel. Stall monitoring remains active after PC sensor loss if the TACH was previously confirmed. The desktop GUI includes **Діагностика 8 вентиляторів** and **Журнал аварій** buttons. No power-key chip is selected and **no new hardware is required to build or run these software diagnostics**.
 
-### v4.2: Fan TACH observation without a power key
+### v4.2: Read-only TACH test
 
-`SELFTEST` collects falling TACH edges for 5 seconds on all eight fans and reports `OK`, `NO_TACH`, `NA` (2-pin) or `INCONCLUSIVE` if the operating point changed. The command **does not change PWM duty or fan operating modes**. A **Тест TACH (5 с)** button is available in the Windows GUI. This is useful for validating wiring, while power PWM on 2/3-pin fans remains locked at 100% until the actual smart key is selected and bench-qualified. See [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+`SELFTEST` observes 8 tachometers for 5 seconds without changing PWM or modes. The Windows app includes a matching button.

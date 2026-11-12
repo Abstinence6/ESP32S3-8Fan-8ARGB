@@ -55,4 +55,6 @@ private:
     uint32_t previousFrameMs_ = 0;
     uint32_t lastExternalFrameMs_[board::kChannelCount] = {};
     uint16_t rainbowHue_ = 0;
+    uint8_t nextStrip_ = 0;
+    uint32_t lastShowMs_ = 0;
 };

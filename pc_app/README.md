@@ -19,7 +19,7 @@ Calibration: select one fan, click **Calibrate**, confirm temporary stop at low 
 ## Safety and persistence
 
 - PC temperatures are streamed over USB every ~2 seconds; the **curve and calibration are stored on the ESP**. Sensor selection is stored locally in Windows QSettings because the PC sensor IDs belong to the host machine.
-- A temperature sensor can disappear or LHM can stop: **the app stops sending that fan's temperature**. ESP automatically sets the fan to 100% within 10 seconds (for Auto mode). Manual override intentionally bypasses automatic safety control — use carefully.
+- A temperature sensor can disappear or LHM can stop: **the app stops sending that fan's temperature**. ESP automatically sets the fan to 100% within 10 seconds (for Auto mode). Manual mode is still forced to 100% on stale temperature telemetry or a critical temperature.
 - Without the GUI running, the ESP does **not** know CPU/GPU temperatures. Automatic mode remains at full speed by design; independent thermistors or coolant probes could later provide autonomous control.
 - The app only reads LHM sensors; it never changes your motherboard's fan configuration.
 
@@ -52,19 +52,17 @@ OpenRGB **E1.31 Devices** send RGB pixels to the local companion over UDP 5568, 
 
 This is **manual E1.31 integration**, not automatic HID/USB discovery in OpenRGB and not a native SignalRGB plugin. For a step-by-step OpenRGB configuration and limitations, see [docs/OPENRGB.md](../docs/OPENRGB.md).
 
-## v4: enhanced cooling and optional fan connector types
+## v5: 2/3-pin cooling, MQTT and shared COM
 
-- Choose a fan in the GUI and set **Type: 2-pin, 3-pin (default), or 4-pin**. One PWM and one TACH ESP32-S3 GPIO per fan. There is no GPIO expander or automatic type detector. The choice must match the physical DC/PWM jumper on the PCB; the type button asks for confirmation. 2/3-pin duty under 100% remains disabled until the intelligent high-side key is verified for 25 kHz motor PWM and `FAN_DC_PWM_VALIDATED=1` is explicitly enabled in firmware. See [`docs/FAN_MODES.md`](../docs/FAN_MODES.md).
-- **Smart calibration** (requires valid temperatures and RPM feedback), optional PID and target RPM (not available on 2-pin), RPM/PWM live status, second temperature-based curve, and per-fan calibration migration across firmware versions.
-- Sensor sources: MAX all, one sensor, AVG/MAX of a group and weighted average with per-sensor weights (set via **Вибрати датчики групи**).
-- Named curve presets **Silent**, **Balanced**, **Performance**, and local **Custom**. Apply to all eight channels with confirmation. Curves are then stored in ESP NVS.
-- PWM timeline and CSV export (records kept in memory for the current GUI session, maximum 3600 samples per channel).
-- ARGB: per-strip LED count/reversal and a saved approximate global current limit, plus network E1.31/DDP where Wi-Fi credentials have been configured. The current limiter is a *software estimate*, not a replacement for fuses or power supply current limiting.
+- Fans use **2-pin** (no RPM feedback) or **3-pin** (TACH) only. 4-pin is intentionally removed. The 12 V high-side supply key has not been validated; `FAN_DC_PWM_VALIDATED=0` keeps all fan duty at 100% until tested. A 250 Hz starting frequency is configurable at build time. No connector jumper or GPIO expander.
+- 3-pin TACH at partial supply duty is considered untrusted until `FAN_DC_TACH_VALIDATED=1` is separately bench-qualified. This protects calibration, PID and stall reports from fabricated RPM.
+- Stored PWM-temperature curves survive v1/v2/v3 NVS migration; invalid legacy power-driver RPM calibration is erased.
+- GUI **MQTT / Home Assistant…** configures an ESP-connected MQTT broker. The broker/client itself runs **directly on ESP via Wi-Fi**, not through the PC. See [MQTT docs](../docs/MQTT.md).
+- Smart calibration (after validating power and TACH), PID, a second temperature source, weighted/MAX/AVG groups, and named cooling profiles remain available.
+- ARGB output is paced through the normal loop (maximum one strip `show()` per scheduled update), avoiding blocking inside incoming USB/Wi-Fi RGB handlers.
 
 ### Optional background user-logon agent
 
 The packaged `FanARGBControl.exe --headless` runs a **headless companion** after Windows logon. It streams CPU/GPU/SSD temperatures and bridges OpenRGB E1.31 to USB. To register the built EXE in Task Scheduler: `powershell -ExecutionPolicy Bypass -File pc_app/register_agent.ps1`; remove with `pc_app/unregister_agent.ps1`. User must also run LibreHardwareMonitor web server in their session.
 
-This is **not** a Windows Service that operates before user logon. It owns the COM port, so close the agent before opening the GUI. Logging is written to `%LOCALAPPDATA%\FanARGBControl\agent.log`. Missing LHM readings cause the ESP to fall back to 100% fan PWM.
-
-**Important for Windows UI:** `TYPE?` deliberately reports `DETECTED=255` in this no-expander build: there is no physical pin-4 sensor, so the displayed 2/3/4-pin type is the user-confirmed setting, not an automatically detected connector. The GUI cannot switch the hardware jumper. DC outputs remain full-speed-only until `FAN_DC_PWM_VALIDATED=1` is explicitly configured after validating the intelligent key.
+This is **not** a Windows Service that operates before user logon. It owns the COM port. The GUI now connects through a **127.0.0.1 local IPC bridge** while the agent runs; do not open the same device directly from another program. If no agent is active, the GUI opens COM directly. Logging is written to `%LOCALAPPDATA%\FanARGBControl\agent.log`. Missing LHM readings cause the ESP to fall back to 100% fan PWM.

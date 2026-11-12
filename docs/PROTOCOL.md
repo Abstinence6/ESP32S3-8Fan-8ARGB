@@ -1,4 +1,4 @@
-# Serial protocol v3 (921600 baud, ASCII control + binary ARGB)
+# Serial protocol v5 (921600 baud, ASCII control + binary ARGB)
 
 All regular commands and responses are single-line ASCII, except for multiple-line status/calibration result streams. ARGB pixel frames use binary packets on the **same** serial connection. Fan channel numbers are **1..8**. Send only one command per line, terminating with `\n`. Other MCU replies may arrive asynchronously while a calibration is running.
 
@@ -6,7 +6,7 @@ All regular commands and responses are single-line ASCII, except for multiple-li
 
 | Command | Example | Effect |
 |---|---|---|
-| `PING` | `PING` | Response `PONG 2` |
+| `PING` | `PING` | Response `PONG 4` |
 | `LEDS` | `LEDS` | Response `LEDCOUNTS <n1> ... <n8>` for physical ARGB pixel counts |
 | `STATUS` | `STATUS` | Returns 8 `CH ...` lines |
 | `TEMP <fan> <deciC>` | `TEMP 1 487` | Update fan 1's measured temperature to 48.7 °C, refreshing 10 s heartbeat |
@@ -17,8 +17,8 @@ All regular commands and responses are single-line ASCII, except for multiple-li
 | `CAL GET <fan>` | `CAL GET 3` | Read last completed calibration stored in NVS |
 | `AUTO <fan>` | `AUTO 3` | Return fan to automatic curve mode |
 | `ALLAUTO` | `ALLAUTO` | Automatic mode on all 8 fans |
-| `FAN <fan> <percent>` | `FAN 3 60` | Manual PWM override (ignores temp watchdog) |
-| `ALLFAN <percent>` | `ALLFAN 100` | Manual override on all channels |
+| `FAN <fan> <percent>` | `FAN 3 60` | Manual PWM override (still subject to safety interlock/watchdog) |
+| `ALLFAN <percent>` | `ALLFAN 100` | Atomic manual override on all channels |
 | `LED`, `ALLLED`, `OFF`, `ALLOFF`, `RAINBOW`, `BRIGHT` | `LED 3 255 0 0` | ARGB commands (unchanged) |
 
 Temperatures must be integers from 0 to 1250 (0.0–125.0 °C). Each curve has five temperature points in 0–125 °C, strictly ascending, and PWM 0–100%, nondecreasing. NVS is written only on successful `CURVE` or completed calibration, never by streaming temperatures or `STATUS`.
@@ -26,7 +26,7 @@ Temperatures must be integers from 0 to 1250 (0.0–125.0 °C). Each curve has f
 ## Replies
 
 - `OK`, `OK CURVE_SAVED`, or `ERR ...` for a command.
-- `CH 1 FAN=55% RPM=1270 TEMP=487 MODE=auto SENSOR=ok` — current fan state, temperature in deci-Celsius. `SENSOR=stale` means fail-safe PWM=100% in auto mode; `MODE=manual` intentionally overrides temperature control.
+- `CH 1 FAN=55% RPM=1270 TEMP=487 MODE=auto SENSOR=ok` — current fan state, temperature in deci-Celsius. `SENSOR=stale` means fail-safe PWM=100% in auto mode; `MODE=manual` still obeys stale-temperature fail-safe.
 - `CURVE 1 20 30 30 40 45 60 60 80 75 100` — stored curve.
 - `CAL_STARTED 3` — calibration started.
 - `CAL_POINT 3 5 400` — current calibration's step 5% PWM -> 400 RPM.
@@ -69,14 +69,15 @@ The ESP displays incoming RGB values in **External** mode and automatically uses
 
 **Important compatibility:** v3 desktop and firmware must be updated together; older serial applications running at 115200 baud will not communicate correctly.
 
-## Universal 2/3/4-pin fan protocol (v4)
+## 2/3-pin DC fan protocol (v5)
 
-- `TYPE? <ch>` returns `TYPE <ch> SET=<2|3|4> DETECTED=255 RPM_OK=<0|1> DC_HW=<0|1>` (no connector sensing; DC_HW is compile-time validation, not measured presence).
-- `TYPE <ch> 2|3|4` saves a user-confirmed connector mode; 3-pin is default on fresh NVS. `TYPE <ch> AUTO` is rejected (no hardware detector). 2/3-pin power PWM is held at 100% until the smart key is verified and `FAN_DC_PWM_VALIDATED=1` is built into firmware.
-- `CONFIG <ch>` now contains `TYPE` and `DETECTED`; `STATUS` adds `TYPE` and `RPM_OK`.
-- Type changes invalidate RPM calibration for that channel. A 2-pin fan has no TACH: RPM, PID and tach-based stall detection are unavailable.
+- `TYPE? <ch>` returns `TYPE <ch> SET=<2|3> DETECTED=255 RPM_OK=<0|1> DC_HW=<0|1>`. There is no automatic connector detection.
+- `TYPE <ch> 2|3` saves a user-confirmed logical type (3-pin default). `TYPE <ch> 4` and `TYPE <ch> AUTO` are rejected. 2/3-pin power PWM is held at 100% until qualified and compiled with `FAN_DC_PWM_VALIDATED=1`.
+- `FAN_DC_PWM_HZ=250` is a build-time configurable starting point (80–1000 Hz). Partial supply-PWM TACH is untrusted by default unless separately tested and compiled with `FAN_DC_TACH_VALIDATED=1`.
+- Migration from old NVS profile versions preserves curves but invalidates old RPM calibration and PID. `STATUS` includes `TYPE` and `RPM_OK`.
+- `HEALTH` TACH field is `na|unseen|valid|stale|untrusted`. An initial `seen` latch internally means some past verified pulse, not current RPM.
 
-See [FAN_MODES.md](FAN_MODES.md) for physical jumper wiring, frequency validation and limitations.
+See [FAN_MODES.md](FAN_MODES.md).
 
 ## v4.1: Operational safety and read-only diagnostics
 
@@ -84,13 +85,14 @@ See [FAN_MODES.md](FAN_MODES.md) for physical jumper wiring, frequency validatio
 - `ALLAUTO` is also rejected while a calibration is running, preventing a partial mode change.
 - `HEALTH` reports the state of all eight channels, terminated by `HEALTH_END`. `HEALTH <ch>` reports one channel (also terminated by `HEALTH_END`) without changing PWM, modes, GPIO, fan type or temperature settings.
 - Health lines have the form `HEALTH 1 TYPE=3 DETECTED=255 PWM=100 RPM=0 TACH=unseen SENSOR=stale FAULT=0 DC_READY=0 MODE=auto`.
-- `TACH=seen` means *some real tach pulses have been observed since this boot or type change*, **not** that the fan is currently rotating. `TACH=unseen` can mean a missing/broken tach connection, a stopped fan, or a not-yet-spinning fan. `TACH=na` is expected for 2-pin. `TYPE` is the user-selected logical mode; `DETECTED=255` remains unknown because no identification hardware exists. `DC_READY=0` means the DC-power PWM safety interlock is active.
+- `TACH=valid` is fresh trustworthy pulses; `TACH=stale` is a previous observation with no current pulses; `TACH=untrusted` means partial 3-pin supply duty without bench-validated feedback; `TACH=unseen` has no observed pulses. `TACH=na` is expected for 2-pin. `TYPE` is the user-selected logical mode; `DETECTED=255` remains unknown because no identification hardware exists. `DC_READY=0` means the DC-power PWM safety interlock is active.
 - After TACH has actually been seen, a later tach failure can trigger stall recovery even if the PC stops providing temperatures. At that point the controller already commands 100% duty, but it still records a stall event and attempts a safe fan restart. To avoid false alarms on unconnected channels, stall detection is not armed before the first genuine TACH sample. For 2-pin, use smart-key fault telemetry in future hardware; no TACH means no RPM/stall feedback.
 - In every mode, no recent temperature update means a fail-safe request of 100% duty. **Without a validated key and physical fail-safe circuitry, software cannot guarantee actual fan power when the MCU is resetting/unpowered.**
 
-## v4.2: Read-only TACH self-test (no DC key required)
+## v4.2: Read-only TACH self-test
 
-- `SELFTEST` starts a **nonblocking 5-second** observation window for every fan, without changing PWM duty, power switching, modes, curves, or saved configuration. A second start while active returns `ERR selftest busy`; `SELFTEST CANCEL` stops without reporting results.
-- The response begins with `SELFTEST_STARTED 5000` and ends with `SELFTEST_END`. Each fan produces `SELFTEST <1..8> RESULT=<OK|NO_TACH|NA|INCONCLUSIVE> PULSES=<count> PWM=<duty>`.
-- `OK` means at least 3 TACH falling edges observed during the window; **it does not authenticate fan type or certify PWM/voltage control**. `NO_TACH` is not an automatic fan failure: a fan may be stopped or disconnected, or the signal may not be wired. `NA` means software is set to 2-pin, which has no TACH. `INCONCLUSIVE` means channel mode or PWM changed while testing.
-- A test requested during calibration is rejected. It is safe to run on an unvalidated key, but to make sense of results the physical fans and TACH circuits must be powered and wired.
+`SELFTEST` observes 8 fan TACH channels for 5 seconds without changing the operating point. `SELFTEST CANCEL` aborts it. Results `OK`, `NO_TACH`, `NA`, and `INCONCLUSIVE` are emitted per channel, followed by `SELFTEST_END`.
+
+## v5 MQTT / Home Assistant
+
+`MQTT HOST <host> <port>` | `MQTT AUTH <user> <password>` | `MQTT PREFIX <topic>` | `MQTT ENABLE 0|1` | `MQTT STATUS`. MQTT is disabled by default, works over local TCP 1883 (no TLS), and is independent of USB after Wi-Fi setup. Details and HA discovery: [docs/MQTT.md](MQTT.md).

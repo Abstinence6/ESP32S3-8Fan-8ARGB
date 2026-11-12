@@ -5,10 +5,11 @@
 #include "ArgbController.h"
 #include "CoolingController.h"
 #include "NetworkRgbBridge.h"
+#include "MqttBridge.h"
 
 class SerialConsole {
 public:
-    SerialConsole(Stream& serial, FanController& fans, ArgbController& leds, CoolingController& cooling, NetworkRgbBridge* wifi = nullptr);
+    SerialConsole(Stream& serial, FanController& fans, ArgbController& leds, CoolingController& cooling, NetworkRgbBridge* wifi = nullptr, MqttBridge* mqtt = nullptr);
     void begin();
     void poll();
 
@@ -31,12 +32,13 @@ private:
     ArgbController& leds_;
     CoolingController& cooling_;
     NetworkRgbBridge* wifi_;
+    MqttBridge* mqtt_;
     bool selfTestActive_ = false;
     uint32_t selfTestStartMs_ = 0;
     uint32_t selfTestBasePulses_[board::kChannelCount] = {};
     uint8_t selfTestBasePwm_[board::kChannelCount] = {};
     FanController::Type selfTestBaseType_[board::kChannelCount] = {};
-    char line_[96] = {};
+    char line_[192] = {};
     uint8_t size_ = 0;
     bool discardingLongLine_ = false;
     RxState rx_ = RxState::Text;

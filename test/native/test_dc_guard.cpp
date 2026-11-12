@@ -17,10 +17,10 @@ int main() {
     assert(!fans.hasRpmFeedback(0));
     assert(!fans.setPercent(0, 0));
     assert(fans.getPercent(0) == 100);
-    assert(fans.setType(0, FanController::Type::FourPin));
-    assert(fans.canControl(0, 50));
-    assert(fans.setPercent(0, 50));
-    assert(fans.getPercent(0) == 50);
+    assert(!fans.setType(0, static_cast<FanController::Type>(4)));
+    assert(!fans.canControl(0, 50));
+    assert(!fans.setPercent(0, 50));
+    assert(fans.getPercent(0) == 100);
     assert(fans.detectedType(0) == FanController::Type::Unknown);
     assert(!fans.setType(0, FanController::Type::Auto));
     std::cout << "PASS: nonvalidated smart key is hard-gated to full fan power\n";

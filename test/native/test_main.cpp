@@ -55,7 +55,7 @@ int main() {
         assert(leds.getMode(ch) == ArgbController::Mode::Off);
     }
     Serial.out.clear();
-    Serial.send(std::string(120, 'A') + "\nFAN 2 60\n");
+    Serial.send(std::string(220, 'A') + "\nFAN 2 60\n");
     console.poll();
     assert(Serial.out.find("ERR line too long") != std::string::npos);
     assert(fans.getPercent(1) == 60);
@@ -182,7 +182,7 @@ int main() {
     assert(multi.getRpm(1) == 0);
     assert(multi.setType(1, FanController::Type::ThreePin));
     assert(multi.hasRpmFeedback(1));
-    assert(multi.setType(2, FanController::Type::FourPin));
+    assert(!multi.setType(2, static_cast<FanController::Type>(4)));
     assert(multi.setPercent(2, 20));
     assert(multi.hasRpmFeedback(2));
     // No presence-sense line, so neither 3 nor 4 contact count is detected.
@@ -193,7 +193,7 @@ int main() {
     Serial.send("TYPE? 1\nTYPE 1 AUTO\nTYPE 1 3\nSTATUS\n");
     console.poll();
     assert(Serial.out.find("TYPE 1 SET=3 DETECTED=255 RPM_OK=1 DC_HW=1") != std::string::npos);
-    assert(Serial.out.find("ERR AUTO unavailable") != std::string::npos);
+    assert(Serial.out.find("ERR only 2-pin or 3-pin") != std::string::npos);
     assert(Serial.out.find("OK TYPE_SAVED") != std::string::npos);
     assert(Serial.out.find("TYPE=3 RPM_OK=1") != std::string::npos);
 

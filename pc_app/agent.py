@@ -37,6 +37,7 @@ def load_assignments(settings: QSettings) -> list[tuple[str, list[str], dict[str
 
 
 def make_sensor_commands(settings: QSettings, sensors) -> list[str]:
+    settings.sync()  # GUI can update the same Windows settings while agent owns USB.
     lines: list[str] = []
     for ch, (assignment, group, weights, second, dual) in enumerate(load_assignments(settings), start=1):
         primary = resolve_temperature(assignment, sensors, group, weights)
@@ -67,16 +68,24 @@ def run_agent() -> int:
         from .sacn_bridge import E131Listener, SERIAL_BAUD, encode_rgb_frame
     except ImportError:
         from sacn_bridge import E131Listener, SERIAL_BAUD, encode_rgb_frame
+    try:
+        from .ipc import AgentSerialBridge
+    except ImportError:
+        from ipc import AgentSerialBridge
     settings = QSettings("FanARGB", "FanARGBControl")
     log = setup_logging()
     output: serial.Serial | None = None
     led_counts: list[int] | None = None
     buffer = ""
     listener = E131Listener()
+    ipc = AgentSerialBridge()
     try:
         listener.start() # localhost only, port 5568
+        ipc.start()  # only one agent can claim the loopback serial-owner socket
     except OSError as exc:
-        log.error("Cannot bind OpenRGB E1.31 port: %s", exc)
+        listener.stop()
+        ipc.close()
+        log.error("Cannot bind agent ports: %s", exc)
         return 2
     temp_future: Future | None = None
     temp_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="LHMAgent")
@@ -87,6 +96,7 @@ def run_agent() -> int:
     try:
         while True:
             now = time.monotonic()
+            ipc.poll(output)
             if output is None and now >= next_connect:
                 next_connect = now + 5.0
                 port_name = str(settings.value("port", ""))
@@ -106,6 +116,7 @@ def run_agent() -> int:
                 try:
                     rx = output.read(output.in_waiting or 0)
                     if rx:
+                        ipc.forward_rx(rx)
                         buffer += rx.decode("ascii", errors="replace")
                         if len(buffer) > 8192: buffer = ""
                         while "\n" in buffer:
@@ -151,6 +162,7 @@ def run_agent() -> int:
         return 0
     finally:
         listener.stop()
+        ipc.close()
         temp_executor.shutdown(wait=False, cancel_futures=True)
         if output is not None:
             output.close()
