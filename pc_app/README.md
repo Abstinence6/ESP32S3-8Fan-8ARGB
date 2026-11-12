@@ -29,10 +29,11 @@ The GitHub Actions `windows-app.yml` workflow packages the app with PyInstaller 
 
 ```powershell
 py -3 -m pip install -r requirements.txt pyinstaller
-py -3 -m PyInstaller --clean --noconfirm --windowed --onefile --name FanARGBControl main.py
+py -3 -m PyInstaller --clean --noconfirm --windowed --onefile --paths . --name FanARGBControl main.py
+py -3 verify_windows_bundle.py dist/FanARGBControl.exe
 ```
 
-Run `dist/FanARGBControl.exe`. Libre Hardware Monitor is a separate dependency.
+Run `dist/FanARGBControl.exe`. Libre Hardware Monitor is a separate dependency. When building from the repository root (as GitHub Actions does), use `--paths pc_app` rather than `--paths .`. The bundled-module check fails if `monitor`, `agent`, or other local modules are missing; ordinary Python unit tests do not detect this packaging problem.
 
 ## Sensor groups (AVG and MAX)
 
