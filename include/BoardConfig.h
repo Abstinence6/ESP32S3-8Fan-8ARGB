@@ -30,18 +30,20 @@ static constexpr bool kDcSupplyPwmValidated = (FAN_DC_PWM_VALIDATED != 0);
 static constexpr uint8_t kFanPwmPins[kChannelCount] = {21, 35, 39, 42, 6, 16, 10, 14};
 static constexpr uint8_t kFanTachPins[kChannelCount] = {47, 36, 40, 2, 5, 15, 9, 13};
 static constexpr uint8_t kArgbDataPins[kChannelCount] = {48, 37, 41, 1, 4, 7, 46, 12};
-constexpr bool uniqueChannelPins() {
-    bool seen[49] = {};
-    for (uint8_t ch = 0; ch < kChannelCount; ++ch) {
-        const uint8_t pins[3] = {kFanPwmPins[ch], kFanTachPins[ch], kArgbDataPins[ch]};
-        for (uint8_t pin : pins) {
-            if (pin > 48 || seen[pin]) return false;
-            seen[pin] = true;
-        }
-    }
-    return true;
+// C++11-compatible constexpr check (Arduino-ESP32 2.x may use gnu++11).
+constexpr uint8_t pinAt(uint8_t index) {
+    return index < kChannelCount ? kFanPwmPins[index] :
+        index < 2 * kChannelCount ? kFanTachPins[index - kChannelCount] :
+        kArgbDataPins[index - 2 * kChannelCount];
 }
-static_assert(uniqueChannelPins(), "PWM/TACH/ARGB GPIO assignments must be distinct");
+constexpr bool uniquePinsFrom(uint8_t first, uint8_t next) {
+    return first >= 3 * kChannelCount ? true :
+        next >= 3 * kChannelCount ? uniquePinsFrom(first + 1, first + 2) :
+        (pinAt(first) <= 48 && pinAt(first) != pinAt(next) &&
+         uniquePinsFrom(first, next + 1));
+}
+static_assert(uniquePinsFrom(0, 1), "PWM/TACH/ARGB GPIO assignments must be distinct");
+static_assert(kArgbDataPins[kChannelCount - 1] <= 48, "Last ARGB GPIO is invalid");
 static constexpr uint16_t kArgbLedCounts[kChannelCount] = {30, 30, 30, 30, 30, 30, 30, 30};
 // sACN: one universe per channel, up to 170 RGB pixels (510 DMX slots).
 static constexpr uint16_t kMaxArgbPixelsPerFrame = 170;
