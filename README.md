@@ -164,3 +164,19 @@ Setup and security: [docs/MQTT.md](docs/MQTT.md) · hardware constraints:
 
 **Hardware qualification is pending.** Host tests validate software guards,
 not MOSFET switching, motor tachometer integrity, or PC cooling reliability.
+
+## Configuration presets and OpenRGB setup helper
+
+The Windows GUI now provides **full configuration presets** combining one of
+**Silent / Balanced / Performance** cooling curves with **Off / Static warm /
+Static cool / Rainbow / OpenRGB** lighting scenes across all eight outputs.
+Profiles can be exported as versioned JSON and imported after validation.
+Changes are sent to the device only after explicit confirmation. Existing
+fan-type selection, DC PWM safety interlock, watchdog, and calibrations are
+not overwritten by these presets.
+
+The **OpenRGB E1.31 settings** button generates a JSON *reference* of all eight
+zones, using the real LED counts from `LEDS`. It helps configure the existing
+OpenRGB E1.31 Devices manually for local USB bridging or direct ESP Wi-Fi;
+it is not a native OpenRGB profile import or USB auto-discovery.
+See [configuration preset documentation](docs/CONFIG_PRESETS.md).
