@@ -11,8 +11,8 @@ FanController fans;
 ArgbController leds;
 CoolingController cooling(fans, Serial);
 NetworkRgbBridge wifiRgb(leds);
-MqttBridge mqtt(cooling, fans, leds, wifiRgb);
 PcPowerController pcPower;
+MqttBridge mqtt(cooling, fans, leds, wifiRgb, &pcPower);
 SerialConsole console(Serial, fans, leds, cooling, &wifiRgb, &mqtt, &pcPower);
 
 void setup() {
