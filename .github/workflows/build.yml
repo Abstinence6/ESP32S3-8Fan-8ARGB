@@ -20,3 +20,36 @@ jobs:
         run: python -m pip install --upgrade platformio
       - name: Build ESP32-S3 firmware
         run: pio run -e esp32s3
+      - name: Package ESP32-S3 firmware binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/esp32s3
+          cp .pio/build/esp32s3/bootloader.bin dist/esp32s3/
+          cp .pio/build/esp32s3/partitions.bin dist/esp32s3/
+          cp .pio/build/esp32s3/firmware.bin dist/esp32s3/
+          BOOT_APP0="$(find "$HOME/.platformio/packages/framework-arduinoespressif32" -name boot_app0.bin -print -quit)"
+          test -n "$BOOT_APP0"
+          cp "$BOOT_APP0" dist/esp32s3/
+          cat > dist/esp32s3/FLASHING.txt <<'EOF'
+          ESP32-S3-DevKitC-1 / PlatformIO esp32s3 (Arduino)
+          Build: default platformio.ini, PC_POWER_ENABLED=0 (PC power GPIO unassigned).
+          Verify your physical board, flash size, partition scheme and UART/USB port.
+
+          For a complete initial flash, with Python esptool installed:
+          python -m esptool --chip esp32s3 --port COMx --baud 460800 write_flash \
+            0x0 bootloader.bin 0x8000 partitions.bin \
+            0xe000 boot_app0.bin 0x10000 firmware.bin
+
+          For firmware-only update after the matching bootloader/partition layout
+          was already installed:
+          python -m esptool --chip esp32s3 --port COMx write_flash 0x10000 firmware.bin
+
+          Do not enable unvalidated 2/3-pin fan power PWM on real PC fans.
+          See docs/PC_POWER.md for required opt-in and safe wiring for PWR_SW.
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ESP32S3-8Fan-8ARGB-firmware
+          path: dist/esp32s3/
+          if-no-files-found: error
