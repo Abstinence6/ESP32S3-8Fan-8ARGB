@@ -35,6 +35,9 @@ from sacn_bridge import E131Listener, SACN_PORT, SERIAL_BAUD, encode_rgb_frame
 from protocol import validate_curve, DEFAULT_CURVE, make_curve_command, make_temperature_command, parse_curve, parse_status
 from serial_owner import SerialProxyClient
 from profiles import PRESETS
+from config_presets import (RGB_SCENES, FAN_CURVES, commands as preset_commands,
+                            create_configuration, from_json as parse_configuration,
+                            to_json as serialize_configuration, openrgb_e131_manifest)
 
 
 class FanArgbWindow(QMainWindow):
@@ -327,6 +330,29 @@ class FanArgbWindow(QMainWindow):
         off_button.clicked.connect(lambda: self.send(f"OFF {self.current_fan}"))
         rgb_actions.addWidget(off_button)
         rgb_layout.addLayout(rgb_actions)
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel("Конфігурація:"))
+        self.config_cooling = QComboBox()
+        self.config_cooling.addItems(FAN_CURVES.keys())
+        self.config_cooling.setCurrentText("Balanced")
+        preset_row.addWidget(self.config_cooling)
+        self.config_lighting = QComboBox()
+        self.config_lighting.addItems(RGB_SCENES.keys())
+        preset_row.addWidget(self.config_lighting)
+        apply_config = QPushButton("Застосувати")
+        apply_config.clicked.connect(self.apply_configuration)
+        preset_row.addWidget(apply_config)
+        rgb_layout.addLayout(preset_row)
+        config_files = QHBoxLayout()
+        for label, handler in (
+            ("Експорт конфігурації…", self.export_configuration),
+            ("Імпорт конфігурації…", self.import_configuration),
+            ("OpenRGB E1.31 налаштування…", self.export_openrgb_reference),
+        ):
+            button = QPushButton(label)
+            button.clicked.connect(handler)
+            config_files.addWidget(button)
+        rgb_layout.addLayout(config_files)
         hardware_rgb = QHBoxLayout()
         strip_count_button = QPushButton("LED у каналі…")
         strip_count_button.clicked.connect(self.configure_led_count)
@@ -903,6 +929,101 @@ class FanArgbWindow(QMainWindow):
             self.curves[ch] = points
         self._update_targets()
         self.log(f"Профіль {name}: відправлено 8 кривих на збереження в ESP")
+
+    def apply_configuration(self, loaded: dict | None = None) -> None:
+        if not self.port:
+            QMessageBox.warning(self, "Конфігурація", "Підключи ESP32 перед застосуванням")
+            return
+        try:
+            config = loaded if loaded is not None else create_configuration(
+                self.config_cooling.currentText(), self.config_lighting.currentText())
+            lines = preset_commands(config)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Конфігурація", str(exc))
+            return
+        confirmed = QMessageBox.question(
+            self, "Застосувати конфігурацію",
+            "Замінити температурні криві восьми вентиляторів (запис у NVS) "
+            "і застосувати режими ARGB? Тип вентиляторів та захист не змінюються.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if confirmed != QMessageBox.StandardButton.Yes:
+            return
+        for line in lines:
+            if not self.send(line):
+                QMessageBox.warning(self, "Конфігурація",
+                                    "З'єднання втрачено; конфігурацію застосовано частково")
+                return
+        for ch, curve in enumerate(config["fan_curves"], start=1):
+            self.curves[ch] = [tuple(p) for p in curve]
+        self._update_targets()
+        self.log(f"Застосовано конфігурацію: {len(lines)} команд надіслано")
+        if any(scene["mode"] == "external" for scene in config["argb"]):
+            self.log("OpenRGB: очікування зовнішніх кадрів E1.31; увімкни міст або Wi-Fi")
+
+    def export_configuration(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Експорт конфігурації", "fan_argb_config.json", "JSON (*.json)")
+        if not path:
+            return
+        try:
+            data = create_configuration(self.config_cooling.currentText(),
+                                        self.config_lighting.currentText())
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(serialize_configuration(data))
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Експорт", str(exc))
+            return
+        self.log(f"Конфігурацію експортовано: {path}")
+
+    def import_configuration(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Імпорт конфігурації", "", "JSON (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                data = parse_configuration(handle.read())
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Імпорт", f"Невалідна конфігурація: {exc}")
+            return
+        self.apply_configuration(data)
+
+    def export_openrgb_reference(self) -> None:
+        if self.led_counts is None:
+            QMessageBox.warning(self, "OpenRGB",
+                                "Спочатку підключи ESP32 та дочекайся відповіді LEDCOUNTS")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Довідник E1.31 для OpenRGB",
+            "openrgb_e131_reference.json", "JSON (*.json)")
+        if not path:
+            return
+        ip = "127.0.0.1"
+        if QMessageBox.question(
+                self, "OpenRGB",
+                "Використовувати пряме E1.31 через Wi-Fi замість USB-моста?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                ) == QMessageBox.StandardButton.Yes:
+            ip, accepted = QInputDialog.getText(
+                self, "ESP32 Wi-Fi IP", "IP-адреса ESP32 у локальній мережі:")
+            if not accepted or not ip.strip():
+                return
+            import ipaddress
+            try:
+                ipaddress.IPv4Address(ip.strip())
+            except ipaddress.AddressValueError:
+                QMessageBox.warning(self, "OpenRGB", "Некоректна IPv4-адреса")
+                return
+            ip = ip.strip()
+        try:
+            reference = openrgb_e131_manifest(self.led_counts, ip)
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(reference, handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "OpenRGB", str(exc))
+            return
+        self.log(f"Довідник OpenRGB E1.31 збережено: {path} (налаштуй зони вручну)")
 
     def manual_override(self) -> None:
         value, accepted = QInputDialog.getInt(self, "Ручний PWM", "Швидкість у %:",
