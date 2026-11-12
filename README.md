@@ -180,3 +180,16 @@ zones, using the real LED counts from `LEDS`. It helps configure the existing
 OpenRGB E1.31 Devices manually for local USB bridging or direct ESP Wi-Fi;
 it is not a native OpenRGB profile import or USB auto-discovery.
 See [configuration preset documentation](docs/CONFIG_PRESETS.md).
+
+## Optional PC PWR_SW integration
+
+The ESP32-S3 can optionally control a PC case power switch using a **separate
+open-drain output** and **3.3 V-safe sensed PC power indicator**. It adds
+nonblocking 300 ms On/Off and 6-second Force Off presses, with ON/OFF
+state gating, startup release and debounce. **Disabled by default** until
+free GPIOs and a safe electrical interface are explicitly configured.
+GPIO1 is occupied by ARGB1, and the ESP32-C3 ESPHome pin map must NOT
+be copied to this ESP32-S3 firmware. Commands are available through Serial
+(`PC STATUS|ON|OFF|FORCE`), the Windows companion and MQTT/Home Assistant
+Discovery (when enabled). Full wiring, safeguards and compile-time GPIO
+configuration: [docs/PC_POWER.md](docs/PC_POWER.md).
