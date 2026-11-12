@@ -4,8 +4,9 @@
 
 // Reference pin assignment: ESP32-S3-DevKitC-1.
 // IMPORTANT: Verify every GPIO against the exact module, board and schematic.
-// Not using USB GPIO19/20, flash GPIO26-32, octal-PSRAM GPIO35-37,
-// boot straps GPIO0/3/45/46, or UART0 GPIO43/44.
+// GPIO19/20 remain for USB; GPIO26-32 for flash; GPIO43/44 for UART0.
+// This user-specific mapping intentionally uses GPIO35-37 (only safe without
+// Octal PSRAM/Flash) and GPIO46 (boot-strapping: check reset/flash wiring).
 namespace board {
 
 static constexpr uint8_t kChannelCount = 8;
@@ -20,9 +21,29 @@ static constexpr uint8_t kDefaultFanType = 3;
 #define FAN_DC_PWM_VALIDATED 0
 #endif
 static constexpr bool kDcSupplyPwmValidated = (FAN_DC_PWM_VALIDATED != 0);
-static constexpr uint8_t kFanPwmPins[kChannelCount] = {4, 5, 6, 7, 15, 16, 17, 18};
-static constexpr uint8_t kFanTachPins[kChannelCount] = {8, 9, 10, 11, 12, 13, 14, 21};
-static constexpr uint8_t kArgbDataPins[kChannelCount] = {1, 2, 38, 39, 40, 41, 42, 47};
+// User PCB routing: channel 1..8 is PWM / TACH / ARGB.
+// GPIO35..37 require a module WITHOUT Octal Flash/PSRAM on these pins.
+// GPIO46 (ARGB7) is a bootstrapping pin: external circuitry must not
+// assert its level during reset/firmware-download mode.
+// Validate actual ESP32-S3 module, RMT/NeoPixel waveforms, TACH pullups
+// and 12 V high-side driver before powering fans or LED strips.
+static constexpr uint8_t kFanPwmPins[kChannelCount] = {21, 35, 39, 42, 6, 16, 10, 14};
+static constexpr uint8_t kFanTachPins[kChannelCount] = {47, 36, 40, 2, 5, 15, 9, 13};
+static constexpr uint8_t kArgbDataPins[kChannelCount] = {48, 37, 41, 1, 4, 7, 46, 12};
+// C++11-compatible constexpr check (Arduino-ESP32 2.x may use gnu++11).
+constexpr uint8_t pinAt(uint8_t index) {
+    return index < kChannelCount ? kFanPwmPins[index] :
+        index < 2 * kChannelCount ? kFanTachPins[index - kChannelCount] :
+        kArgbDataPins[index - 2 * kChannelCount];
+}
+constexpr bool uniquePinsFrom(uint8_t first, uint8_t next) {
+    return first >= 3 * kChannelCount ? true :
+        next >= 3 * kChannelCount ? uniquePinsFrom(first + 1, first + 2) :
+        (pinAt(first) <= 48 && pinAt(first) != pinAt(next) &&
+         uniquePinsFrom(first, next + 1));
+}
+static_assert(uniquePinsFrom(0, 1), "PWM/TACH/ARGB GPIO assignments must be distinct");
+static_assert(kArgbDataPins[kChannelCount - 1] <= 48, "Last ARGB GPIO is invalid");
 static constexpr uint16_t kArgbLedCounts[kChannelCount] = {30, 30, 30, 30, 30, 30, 30, 30};
 // sACN: one universe per channel, up to 170 RGB pixels (510 DMX slots).
 static constexpr uint16_t kMaxArgbPixelsPerFrame = 170;

@@ -20,3 +20,20 @@ jobs:
         run: python -m pip install --upgrade platformio
       - name: Build ESP32-S3 firmware
         run: pio run -e esp32s3
+      - name: Collect flashable binary images
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p dist/esp32s3
+          cp .pio/build/esp32s3/firmware.bin dist/esp32s3/firmware.bin
+          cp .pio/build/esp32s3/bootloader.bin dist/esp32s3/bootloader.bin
+          cp .pio/build/esp32s3/partitions.bin dist/esp32s3/partitions.bin
+          BOOT_APP0="$(find "$HOME/.platformio/packages/framework-arduinoespressif32" -name boot_app0.bin -print -quit)"
+          test -n "$BOOT_APP0"
+          cp "$BOOT_APP0" dist/esp32s3/boot_app0.bin
+          printf '%s\n'             'ESP32-S3, PlatformIO env esp32s3; GPIO mapping documented in README.md.'             'Fresh flash: install esptool then run the command below from this folder.'             'python -m esptool --chip esp32s3 --port COMx write_flash 0x0 bootloader.bin 0x8000 partitions.bin 0xe000 boot_app0.bin 0x10000 firmware.bin'             'Existing matching partition layout: python -m esptool --chip esp32s3 --port COMx write_flash 0x10000 firmware.bin'             'IMPORTANT: GPIO35-37 are not usable on Octal-PSRAM variants. GPIO46 is a bootstrapping pin.'             'PC_POWER_ENABLED=0 and FAN_DC_PWM_VALIDATED=0 by default.'             > dist/esp32s3/FLASH.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ESP32S3-8Fan-8ARGB-firmware
+          path: dist/esp32s3/
+          if-no-files-found: error

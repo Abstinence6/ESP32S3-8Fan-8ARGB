@@ -50,16 +50,16 @@ ALLOFF
 
 | # | PWM fan | TACH fan | ARGB data | Default LED count |
 |---|---:|---:|---:|---:|
-| 1 | GPIO4 | GPIO8  | GPIO1  | 30 |
-| 2 | GPIO5 | GPIO9  | GPIO2  | 30 |
-| 3 | GPIO6 | GPIO10 | GPIO38 | 30 |
-| 4 | GPIO7 | GPIO11 | GPIO39 | 30 |
-| 5 | GPIO15 | GPIO12 | GPIO40 | 30 |
-| 6 | GPIO16 | GPIO13 | GPIO41 | 30 |
-| 7 | GPIO17 | GPIO14 | GPIO42 | 30 |
-| 8 | GPIO18 | GPIO21 | GPIO47 | 30 |
+| 1 | GPIO21 | GPIO47 | GPIO48 | 30 |
+| 2 | GPIO35 | GPIO36 | GPIO37 | 30 |
+| 3 | GPIO39 | GPIO40 | GPIO41 | 30 |
+| 4 | GPIO42 | GPIO2  | GPIO1  | 30 |
+| 5 | GPIO6  | GPIO5  | GPIO4  | 30 |
+| 6 | GPIO16 | GPIO15 | GPIO7  | 30 |
+| 7 | GPIO10 | GPIO9  | GPIO46 | 30 |
+| 8 | GPIO14 | GPIO13 | GPIO12 | 30 |
 
-**Caution:** GPIO38 is also connected to an on-board RGB LED on some DevKitC-1 v1.1 boards. The pin map is only an example, not a ready-to-wire production PCB. GPIO35-37 can be occupied by octal PSRAM, GPIO19/20 by native USB, and GPIO0/3/45/46 are boot strap pins.
+**This is the user's wiring, not the old DevKitC reference pinout.** GPIO35/36/37 are occupied on ESP32-S3 variants with **Octal PSRAM/Flash**, so this binary is **not safe for those variants**; reassign these three signals to free pins on the physical PCB. GPIO46 for ARGB7 is a **strapping pin**: it can be an output after startup, but the connected ARGB driver must not assert a conflicting level during reset/firmware download. GPIO48 may be shared with an onboard RGB LED on specific DevKit boards. Check the actual module and reset/bootstrap circuitry. The default build leaves `PC_POWER_ENABLED=0` and `FAN_DC_PWM_VALIDATED=0` (DC fans held at 100%). Do not enable either feature without the required hardware checks.
 
 ## Hardware rules (required)
 

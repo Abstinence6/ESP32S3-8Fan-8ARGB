@@ -2,6 +2,29 @@
 
 This is an **interface description, not a validated PCB schematic**.
 
+
+## Actual user GPIO map (8 fans + 8 ARGB)
+
+| Output | PWM (fan supply driver) | TACH input | ARGB data |
+|---|---:|---:|---:|
+| 1 | GPIO21 | GPIO47 | GPIO48 |
+| 2 | GPIO35 | GPIO36 | GPIO37 |
+| 3 | GPIO39 | GPIO40 | GPIO41 |
+| 4 | GPIO42 | GPIO2 | GPIO1 |
+| 5 | GPIO6 | GPIO5 | GPIO4 |
+| 6 | GPIO16 | GPIO15 | GPIO7 |
+| 7 | GPIO10 | GPIO9 | GPIO46 |
+| 8 | GPIO14 | GPIO13 | GPIO12 |
+
+**Module qualification mandatory:** Channel 2's GPIO35/36/37 are
+unavailable on boards using Octal PSRAM/Flash (ESP32-S3R8 and similar).
+Do not flash/use this map on such boards without changing the wiring.
+GPIO46 is a strapping pin: ARGB7 must not be pulled high at reset or during
+firmware-download boot. GPIO48 can drive an onboard LED on some development
+boards. The PWM outputs here drive qualified high-side **12 V fan supply**
+stages for 2/3-pin fans, not the 4-pin fan PWM input. DC power PWM remains
+software-locked to full speed until the hardware is separately validated.
+
 ## Four-wire fans (x8)
 
 Common PC fan connector pinout (VERIFY connector orientation and vendor datasheet):
