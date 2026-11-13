@@ -2,10 +2,11 @@
 
 ## Dashboard interface
 
-The desktop GUI uses six focused pages instead of one large engineering panel:
+The desktop GUI uses seven focused pages instead of one large engineering panel:
 
 - **Огляд**: eight live fan cards, ESP connection, NWinfo local sensors, E1.31, MQTT and PC Power status.
-- **Вентилятори**: sensor/source selection, curves, PWM/RPM and history.
+- **Вентилятори**: temperature-only source selection, curves, PWM/RPM and history.
+- **Датчики**: searchable temperatures and other live CPU/GPU/RAM/SSD/Intel/AMD metrics.
 - **ARGB**: single-zone or all-zone lighting presets; these send only LED
   commands and never overwrite fan curves. Live OpenRGB uses E1.31.
 - **Живлення ПК**: monitored PC state and guarded power/force-off actions.
@@ -38,7 +39,7 @@ driver does not prevent GPU/CPU telemetry.
 
 ### Expanded sensor catalog
 
-In **Сервіс → Датчики обладнання**, the searchable tables are separated into:
+In the dedicated **Датчики** page, the searchable tables are separated into:
 
 - **Температури:** CPU package/core; AMD Zen Tctl/Tdie/Tccd (CCD), core/GFX/L3;
   Intel PCH/chipset, GT/eDRAM and package; GPU temperature; SSD SMART;
