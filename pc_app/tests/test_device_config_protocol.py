@@ -55,7 +55,7 @@ class DeviceConfigurationTests(unittest.TestCase):
                           password="", enabled=True, discovery=True)
         self.assertEqual(
             mqtt_commands(host="", port=1883, username="", password="",
-                          enabled=False, discovery=True, current={}), ["MQTT HA ON"],
+                          enabled=False, discovery=True, current={}), ["MQTT HA ON", "MQTT OFF"],
         )
 
     def test_parses_machine_readable_status(self):
