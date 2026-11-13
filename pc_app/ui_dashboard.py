@@ -8,6 +8,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from PySide6.QtCore import Qt
+from settings_widgets import DesktopSettingsPanel
+from hardware_sensor_ui import HardwareSensorPanel
 from PySide6.QtWidgets import (
     QButtonGroup, QComboBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
     QLabel, QLayout, QPushButton, QRadioButton, QScrollArea, QSplitter,
@@ -481,6 +483,8 @@ class DashboardShell(QWidget):
         ep.addWidget(scan)
         ep.addWidget(self.controller.sensor_status)
         layout.addWidget(endpoint)
+        self.hardware_sensor = HardwareSensorPanel(self.controller)
+        layout.addWidget(self.hardware_sensor)
         self._add_page("sensors", page)
 
     def _create_service(
@@ -508,6 +512,8 @@ class DashboardShell(QWidget):
         layout.addWidget(combined)
         advanced = self._service_group("Діагностика та MQTT / Home Assistant", diagnostic_row)
         layout.addWidget(advanced)
+        self.settings_panel = DesktopSettingsPanel(self.controller)
+        layout.addWidget(self.settings_panel)
 
         layout.addStretch(1)
         self._add_page("service", page)
