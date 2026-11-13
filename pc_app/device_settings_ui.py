@@ -89,7 +89,11 @@ class DeviceSettingsPanel(QWidget):
             QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow
         )
         self.wifi_status = QLabel("Немає даних")
-        self.wifi_status.setWordWrap(True)
+        self.wifi_status.setWordWrap(False)
+        self.wifi_status.setMinimumWidth(0)
+        self.wifi_status.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         wifi_form.addRow("Стан:", self.wifi_status)
         self.wifi_ssid = QLineEdit()
         self.wifi_ssid.setPlaceholderText("Назва мережі, включно з пробілами")
@@ -135,7 +139,11 @@ class DeviceSettingsPanel(QWidget):
             QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow
         )
         self.mqtt_status = QLabel("Немає даних")
-        self.mqtt_status.setWordWrap(True)
+        self.mqtt_status.setWordWrap(False)
+        self.mqtt_status.setMinimumWidth(0)
+        self.mqtt_status.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         mqtt_form.addRow("Стан:", self.mqtt_status)
         self.mqtt_host = QLineEdit()
         self.mqtt_host.setPlaceholderText("Наприклад 192.168.1.15 або homeassistant.local")
