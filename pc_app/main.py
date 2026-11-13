@@ -550,6 +550,7 @@ class FanArgbWindow(QMainWindow):
         if not self.port:
             return
         self.send("PING")
+        self.send("VERSION?")
         self.send("LEDS")
         self.send("STATUS")
         self.send("PC STATUS")
@@ -620,6 +621,8 @@ class FanArgbWindow(QMainWindow):
 
     def handle_line(self, line: str) -> None:
         if not line:
+            return
+        if self.dashboard.diagnostics.handle_line(line):
             return
         status = parse_status(line)
         if status:
