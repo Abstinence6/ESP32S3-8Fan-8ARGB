@@ -1,3 +1,5 @@
+# Serial protocol v3 (921600 baud, ASCII control + binary ARGB)
+
 ## v8 — PC-managed ESP32 settings, USB protocol v5
 
 Windows PC GUI is the supported provisioning interface. It reads stored
@@ -20,9 +22,6 @@ Wire HEX is delimiter-safe but **not encryption**; USB must be trusted and
 unencrypted TCP MQTT remains for trusted LAN only. Power-critical GPIO and
 DC safety interlocks are compile-time/physical and intentionally not
 writable by arbitrary Windows commands. See [PC_CONFIGURATION.md](PC_CONFIGURATION.md).
-
-# Serial protocol v3 (921600 baud, ASCII control + binary ARGB)
-
 All regular commands and responses are single-line ASCII, except for multiple-line status/calibration result streams. ARGB pixel frames use binary packets on the **same** serial connection. Fan channel numbers are **1..8**. Send only one command per line, terminating with `\n`. Other MCU replies may arrive asynchronously while a calibration is running.
 
 ## Commands
