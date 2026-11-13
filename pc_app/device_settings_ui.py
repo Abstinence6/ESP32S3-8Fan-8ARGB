@@ -70,6 +70,7 @@ class DeviceSettingsPanel(QWidget):
         self.tabs = QTabWidget(self)
         self.tabs.setObjectName("esp32ConfigTabs")
         self.tabs.setDocumentMode(True)
+        self.tabs.tabBar().setDrawBase(False)
         self.tabs.tabBar().setExpanding(False)
         root.addWidget(self.tabs)
 
@@ -280,13 +281,27 @@ class DeviceSettingsPanel(QWidget):
                 "esp32SettingsTab", self._tab_keys[index]
             )
         )
+        self.tabs.currentChanged.connect(self._fit_active_tab)
+        self._fit_active_tab()
         self.set_connected(False)
 
     def select_tab(self, key: str) -> bool:
         if key not in self._tab_keys:
             return False
         self.tabs.setCurrentIndex(self._tab_keys.index(key))
+        self._fit_active_tab()
         return True
+
+    def _fit_active_tab(self, *_args) -> None:
+        page = self.tabs.currentWidget()
+        if page is None:
+            return
+        # QTabWidget otherwise keeps the height of the longest hidden form,
+        # leaving a large blank panel beneath short tabs such as Wi-Fi.
+        self.tabs.setMaximumHeight(max(
+            290, page.sizeHint().height() + self.tabs.tabBar().sizeHint().height() + 28
+        ))
+        self.tabs.updateGeometry()
 
     def _refresh_dirty_tabs(self) -> None:
         self.tabs.setTabText(0, "Wi-Fi •" if self._wifi_dirty else "Wi-Fi")
@@ -306,6 +321,11 @@ class DeviceSettingsPanel(QWidget):
             self._mqtt_dirty = True
             self._refresh_dirty_tabs()
 
+    def _mark_ready_if_initial_read(self) -> None:
+        if (self._wifi_known and self._mqtt_known and
+                self.result.text().startswith("ESP32 підключено ·")):
+            self._state_label("✓ Конфігурацію ESP32 зчитано")
+
     def _state_label(self, message: str) -> None:
         self.result.setText(message)
         role = "negative" if message.startswith("⚠") else (
@@ -317,7 +337,9 @@ class DeviceSettingsPanel(QWidget):
 
     def set_connected(self, connected: bool) -> None:
         self.connected = bool(connected)
-        if not connected:
+        if connected:
+            self._state_label("ESP32 підключено · зчитування налаштувань…")
+        else:
             self.ack_timer.stop()
             self._operations.clear()
             self._active = None
@@ -663,6 +685,7 @@ class DeviceSettingsPanel(QWidget):
         self.wifi_config = new
         self._wifi_known = True
         self._update_buttons()
+        self._mark_ready_if_initial_read()
         self.wifi_status.setText(
             ("Підключено · " + str(new["ip"]) if new["connected"] else
              "Збережено, очікує мережу" if new["enabled"] else
@@ -697,6 +720,7 @@ class DeviceSettingsPanel(QWidget):
         self.mqtt_config = new
         self._mqtt_known = True
         self._update_buttons()
+        self._mark_ready_if_initial_read()
         self.mqtt_status.setText(
             ("Підключено до брокера" if new["connected"] else
              "Налаштовано, офлайн" if new["enabled"] else "Вимкнено")

@@ -651,6 +651,7 @@ class DashboardShell(QWidget):
         self.fan_workspace_tabs = QTabWidget()
         self.fan_workspace_tabs.setObjectName("fanWorkspaceTabs")
         self.fan_workspace_tabs.setDocumentMode(True)
+        self.fan_workspace_tabs.tabBar().setDrawBase(False)
 
         curve_page = QWidget()
         curve_layout = QVBoxLayout(curve_page)
@@ -695,6 +696,7 @@ class DashboardShell(QWidget):
         self.argb_workspace_tabs = QTabWidget()
         self.argb_workspace_tabs.setObjectName("argbWorkspaceTabs")
         self.argb_workspace_tabs.setDocumentMode(True)
+        self.argb_workspace_tabs.tabBar().setDrawBase(False)
 
         scenes_page = QWidget()
         scenes_layout = QVBoxLayout(scenes_page)
@@ -863,6 +865,7 @@ class DashboardShell(QWidget):
         self.sensor_workspace_tabs = QTabWidget()
         self.sensor_workspace_tabs.setObjectName("sensorWorkspaceTabs")
         self.sensor_workspace_tabs.setDocumentMode(True)
+        self.sensor_workspace_tabs.tabBar().setDrawBase(False)
 
         system_page = QWidget()
         system_layout = QVBoxLayout(system_page)
@@ -925,6 +928,7 @@ class DashboardShell(QWidget):
         self.service_workspace_tabs = QTabWidget()
         self.service_workspace_tabs.setObjectName("serviceWorkspaceTabs")
         self.service_workspace_tabs.setDocumentMode(True)
+        self.service_workspace_tabs.tabBar().setDrawBase(False)
 
         check_page = QWidget()
         check = QVBoxLayout(check_page)

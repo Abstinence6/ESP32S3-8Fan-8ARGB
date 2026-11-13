@@ -204,6 +204,7 @@ class DashboardSmokeTests(unittest.TestCase):
     def test_esp32_tabs_preserve_safe_readback_and_password_masking(self):
         panel = self.window.dashboard.device_settings
         self.assertEqual(panel.tabs.count(), 4)
+        self.assertFalse(panel.tabs.tabBar().drawBase())
         self.assertTrue(panel.select_tab("mqtt"))
         self.assertFalse(panel.select_tab("unsupported"))
         self.assertFalse(panel.mqtt_host.isEnabled())
@@ -219,6 +220,7 @@ class DashboardSmokeTests(unittest.TestCase):
             "USER_HEX=- AUTH=0 DISCOVERY=1 TEMP_ALLOW=0 TOPIC=esp32fan/demo"
         )
         self.assertTrue(panel.mqtt_host.isEnabled())
+        self.assertIn("зчитано", panel.result.text())
         panel.mqtt_reveal.setChecked(True)
         from PySide6.QtWidgets import QLineEdit
         self.assertEqual(panel.mqtt_password.echoMode(), QLineEdit.EchoMode.Normal)
