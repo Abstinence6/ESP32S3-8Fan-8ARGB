@@ -6,6 +6,7 @@ the firmware/serial/safety behaviour stay in main.py.
 from __future__ import annotations
 
 from collections.abc import Iterable
+import time
 
 from PySide6.QtCore import Qt
 from settings_widgets import DesktopSettingsPanel
@@ -172,6 +173,7 @@ class DashboardShell(QWidget):
         self.is_connected = False
         self.current_pc_state = "unknown"
         self.current_pc_busy = False
+        self.pc_state_updated_at = 0.0
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -647,6 +649,7 @@ class DashboardShell(QWidget):
             labels["source"].setToolTip(source_name)
 
     def update_pc_state(self, status: str) -> None:
+        self.pc_state_updated_at = time.monotonic()
         tokens = status.lower().split()
         self.current_pc_state = tokens[0] if tokens else "unknown"
         self.current_pc_busy = "busy=1" in tokens
