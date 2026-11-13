@@ -49,6 +49,7 @@ class SafetyUpgrades(unittest.TestCase):
         self.assertIsNone(gate.observe(2, fault=True, fresh=True, now=6))
         self.assertIsNone(gate.observe(2, fault=False, fresh=True, now=7))
         self.assertIsNone(gate.observe(2, fault=True, fresh=True, now=8))  # rate limited
+        self.assertIsNone(gate.observe(2, fault=False, fresh=True, now=65))
         self.assertIn("авар", gate.observe(2, fault=True, fresh=True, now=66).lower())
         self.assertIn("температур", gate.observe(2, fault=False, fresh=False, now=67).lower())
 
