@@ -67,10 +67,12 @@ def invoke_uac(script: str) -> None:
         raise OSError("Windows Task Scheduler is only supported on Windows")
     encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
     args = "-NoLogo -NoProfile -NonInteractive -EncodedCommand " + encoded
-    rc = ctypes.windll.shell32.ShellExecuteW(
+    shell = ctypes.windll.shell32
+    shell.ShellExecuteW.restype = ctypes.c_void_p
+    rc = shell.ShellExecuteW(
         None, "runas", "powershell.exe", args, None, 1
     )
-    if rc <= 32:
+    if not rc or int(rc) <= 32:
         raise OSError(f"UAC cancelled or PowerShell launch failed ({rc})")
 
 
