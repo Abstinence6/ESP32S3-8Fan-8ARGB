@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt
 from settings_widgets import DesktopSettingsPanel
 from hardware_sensor_ui import HardwareSensorPanel
 from argb_studio_ui import ArgbStudioPanel
+from maintenance_ui import MaintenancePanel
 from PySide6.QtWidgets import (
     QButtonGroup, QComboBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
     QLabel, QLayout, QPushButton, QRadioButton, QScrollArea, QSplitter,
@@ -517,6 +518,8 @@ class DashboardShell(QWidget):
         layout.addWidget(advanced)
         self.settings_panel = DesktopSettingsPanel(self.controller)
         layout.addWidget(self.settings_panel)
+        self.maintenance_panel = MaintenancePanel(self.controller)
+        layout.addWidget(self.maintenance_panel)
 
         layout.addStretch(1)
         self._add_page("service", page)
