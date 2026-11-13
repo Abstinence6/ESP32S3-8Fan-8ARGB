@@ -21,6 +21,7 @@ try:
     from .profiles import PRESETS
     from .protocol import make_curve_command
     from .serial_owner import SerialOwnerServer
+    from .serial_tx import SerialTransmitter
 except ImportError:  # packaged as a standalone PyInstaller entrypoint
     from monitor import MAX_ALL, resolve_temperature
     from nwinfo_sensors import NwinfoSensorSampler
@@ -29,6 +30,7 @@ except ImportError:  # packaged as a standalone PyInstaller entrypoint
     from profiles import PRESETS
     from protocol import make_curve_command
     from serial_owner import SerialOwnerServer
+    from serial_tx import SerialTransmitter
 
 
 def load_assignments(settings: QSettings) -> list[tuple[str, list[str], dict[str, float], str, bool]]:
@@ -88,6 +90,7 @@ def run_agent() -> int:
     settings = QSettings("FanARGB", "FanARGBControl")
     log = setup_logging()
     output: serial.Serial | None = None
+    tx: SerialTransmitter | None = None
     port_name = str(settings.value("port", ""))
     try:
         owner = SerialOwnerServer(port_name)
@@ -124,6 +127,7 @@ def run_agent() -> int:
                 if port_name:
                     try:
                         output = serial.Serial(port_name, SERIAL_BAUD, timeout=0, write_timeout=0.25)
+                        tx = SerialTransmitter(output)
                         led_counts = None
                         buffer = ""
                         log.info("Connected to %s", port_name)
@@ -132,14 +136,16 @@ def run_agent() -> int:
                     except (serial.SerialException, OSError) as exc:
                         output = None
                         log.warning("Unable to connect %s: %s", port_name, exc)
-            owner.poll(output)
+            owner.poll(tx if tx is not None else output)
             if owner.has_client != client_was_connected:
                 last_frames.clear() # never replay stale RGB across GUI handoff
+                if tx is not None:
+                    tx.clear()
                 client_was_connected = owner.has_client
             if output is not None:
                 try:
                     if query_due and now >= query_due:
-                        output.write(b"PING\nLEDS\nSTATUS\n")
+                        tx.write(b"PING\nLEDS\nSTATUS\n")
                         query_due = 0.0
                     rx = output.read(output.in_waiting or 0)
                     if rx:
@@ -161,7 +167,7 @@ def run_agent() -> int:
                             sample = temp_future.result()
                             if not owner.has_client and sample is not None:
                                 for msg in make_sensor_commands(settings, sample, smooth_filter):
-                                    output.write((msg + "\n").encode("ascii"))
+                                    tx.send_command(msg)
                                 settings.sync()
                                 if str(settings.value("autoProfiles", "false")).lower() in ("true", "1"):
                                     gpu_load = [
@@ -176,9 +182,7 @@ def run_agent() -> int:
                                     )
                                     if desired:
                                         for ch in range(1, 9):
-                                            output.write(
-                                                (make_curve_command(ch, list(PRESETS[desired])) + "\n").encode("ascii")
-                                            )
+                                            tx.send_command(make_curve_command(ch, list(PRESETS[desired])))
                                         auto_profiles.applied(desired, time.monotonic())
                                         log.info("Automatic profile applied: %s", desired)
                         except Exception as exc:
@@ -192,13 +196,17 @@ def run_agent() -> int:
                             rgb = rgb[:led_counts[ch-1] * 3]
                             if len(rgb) < 3: continue
                             packet = encode_rgb_frame(ch, rgb)
-                            if output.write(packet) != len(packet):
-                                raise serial.SerialTimeoutException("short USB RGB write")
+                            tx.queue_rgb(ch, packet)
+                    if tx is not None:
+                        tx.flush_rgb(now)
                 except (serial.SerialException, OSError, ValueError) as exc:
                     log.warning("Serial disconnected: %s", exc)
                     try: output.close()
                     except (OSError, serial.SerialException): pass
                     output = None
+                    if tx is not None:
+                        tx.clear()
+                    tx = None
                     led_counts = None
                     last_frames.clear()
                     next_connect = now + 5.0
