@@ -1,3 +1,5 @@
+# Windows application for ESP32-S3 Fan & ARGB Controller
+
 ## v8 — full ESP32 configuration via PC
 
 From **ESP32** in the Windows app: read the current controller settings,
@@ -9,9 +11,6 @@ Password text is never echoed by ESP32 or persisted on Windows. The
 new page requires ESP32 firmware v8+.
 
 See [setup, persistence and safety](../docs/PC_CONFIGURATION.md).
-
-# Windows application for ESP32-S3 Fan & ARGB Controller
-
 ## v7: native OpenRGB and reliable USB
 
 - **Native OpenRGB (experimental)**: ARGB page → enable SDK server on
