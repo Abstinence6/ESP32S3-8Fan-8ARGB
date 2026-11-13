@@ -1,3 +1,5 @@
+# ESP32-S3 8-Fan / 8-ARGB Controller
+
 ## ESP32-S3 settings are managed from Windows (v8)
 
 Open the **ESP32** page in `FanARGBControl.exe` to read, change, save
@@ -10,9 +12,6 @@ changes require USB and firmware v8+; no Serial Monitor is needed.
 See [PC configuration](docs/PC_CONFIGURATION.md). GPIO/power MOSFET
 hardware and optional DC PWM/DS18B20/PWR_SW compiler flags remain
 hardware-qualified and cannot be changed arbitrarily from the PC.
-
-# ESP32-S3 8-Fan / 8-ARGB Controller
-
 Starter firmware for **8 independent 2/3/4-pin PC fans (3-pin default)** and **8 independent 5 V addressable RGB strips** on an **ESP32-S3**. Built with **PlatformIO, Arduino-ESP32 2.0.17, and Adafruit NeoPixel**.
 
 **Status:** starter/reference code, not yet tested on physical hardware. The sample pin assignment targets ESP32-S3-DevKitC-1 and MUST be checked against your actual ESP32-S3 module and PCB before powering peripherals.
