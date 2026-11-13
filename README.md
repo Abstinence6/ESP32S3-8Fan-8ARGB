@@ -181,6 +181,23 @@ OpenRGB E1.31 Devices manually for local USB bridging or direct ESP Wi-Fi;
 it is not a native OpenRGB profile import or USB auto-discovery.
 See [configuration preset documentation](docs/CONFIG_PRESETS.md).
 
+## v6: Integrated automation, diagnostics, firmware update and DS18B20
+
+The Windows GUI adds ARGB Studio effects, CPU/GPU-specific smart cooling,
+temperature smoothing, Gaming/Work/Night automatic profiles, separate
+hardware sensor health, performance graphs, tray mode, an opt-in **elevated
+Windows logon task via UAC**, read-only fan diagnostics, configuration
+backup/restore and a guided (safe-bench-only) ESP32 firmware updater.
+
+An **optional DS18B20** connected directly to a spare verified ESP32-S3
+GPIO can supply LOCAL or BACKUP temperatures without Windows. It is
+**disabled in the standard binary**, until the physical pin and 3.3 V
+wiring have been verified. The new `HTEMP?` and `HTMODE` commands are
+available in the v6 firmware; the Windows GUI displays their state.
+
+[All v6 features and safety notes](docs/FEATURES_V6.md) ·
+[DS18B20 wiring instructions](docs/HARDWARE_TEMPERATURE.md).
+
 ## Optional PC PWR_SW integration
 
 The ESP32-S3 can optionally control a PC case power switch using a **separate
