@@ -54,10 +54,13 @@ class DesktopSettingsPanel(QGroupBox):
             lambda value: controller.settings.setValue("notifyFanFaults", value))
         layout.addWidget(self.notify_faults)
 
-        layout.addWidget(QLabel(
+        note = QLabel(
             "Автозапуск із правами адміністратора (Windows Task Scheduler). "
             "Потрібне підтвердження UAC під час встановлення; пароль не зберігається."
-        ))
+        )
+        note.setWordWrap(True)
+        note.setMinimumWidth(0)
+        layout.addWidget(note)
         row = QHBoxLayout()
         self.start_mode = QComboBox()
         self.start_mode.addItem("Інтерфейс (GUI)", "gui")
@@ -72,7 +75,9 @@ class DesktopSettingsPanel(QGroupBox):
         layout.addLayout(row)
         state_row = QHBoxLayout()
         self.start_status = QLabel("Статус не перевірено")
-        state_row.addWidget(self.start_status)
+        self.start_status.setWordWrap(True)
+        self.start_status.setMinimumWidth(0)
+        state_row.addWidget(self.start_status, 1)
         check = QPushButton("Перевірити")
         check.clicked.connect(self._refresh)
         state_row.addWidget(check)

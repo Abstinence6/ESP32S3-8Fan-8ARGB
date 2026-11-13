@@ -58,21 +58,24 @@ class MaintenancePanel(QGroupBox):
         restore.clicked.connect(self.import_settings)
         backup_row.addWidget(restore)
         backup_row.addStretch(1)
-        history_button = QPushButton("Експорт історії вентиляторів за 7 днів (CSV)…")
-        history_button.clicked.connect(self.controller.export_history_csv)
-        backup_row.addWidget(history_button)
         layout.addLayout(backup_row)
+        history_button = QPushButton("Експорт історії CSV…")
+        history_button.setToolTip("Експорт історії вентиляторів за 7 днів")
+        history_button.clicked.connect(self.controller.export_history_csv)
+        layout.addWidget(history_button)
 
         flash_row = QHBoxLayout()
         choose = QPushButton("Вибрати firmware.bin…")
         choose.clicked.connect(self.choose_firmware)
         flash_row.addWidget(choose)
         self.status = QLabel("Прошивка не вибрана")
+        self.status.setWordWrap(True)
+        self.status.setMinimumWidth(0)
         flash_row.addWidget(self.status, 1)
+        layout.addLayout(flash_row)
         self.flash_button = QPushButton("Прошити ESP32 через USB…")
         self.flash_button.clicked.connect(self.flash)
-        flash_row.addWidget(self.flash_button)
-        layout.addLayout(flash_row)
+        layout.addWidget(self.flash_button)
         self.progress = QProgressBar()
         self.progress.setVisible(False)
         layout.addWidget(self.progress)
@@ -84,15 +87,19 @@ class MaintenancePanel(QGroupBox):
         )
         info.setWordWrap(True)
         layout.addWidget(info)
-        self.isolated_bench = QCheckBox(
-            "Підтверджую незалежний стенд: ПК вимкнено, вентилятори "
-            "живляться без ESP32, кабель PWR_SW ізольовано"
-        )
+        self.isolated_bench = QCheckBox("Підтверджую незалежний стенд для прошивання")
         self.isolated_bench.setToolTip(
             "Використовуй лише коли датчик стану ПК недоступний. "
             "Позначка не замінює фізичної перевірки живлення."
         )
         layout.addWidget(self.isolated_bench)
+        bench_details = QLabel(
+            "Перед підтвердженням: ПК вимкнено, вентилятори живляться незалежно "
+            "від ESP32, кабель PWR_SW фізично ізольовано."
+        )
+        bench_details.setWordWrap(True)
+        bench_details.setMinimumWidth(0)
+        layout.addWidget(bench_details)
 
     def export_settings(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
