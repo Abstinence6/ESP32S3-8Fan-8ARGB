@@ -1522,6 +1522,14 @@ class FanArgbWindow(QMainWindow):
             self.dashboard.set_bridge_state(True, self.sacn_forwarded)
 
     def closeEvent(self, event) -> None:
+        worker = getattr(self.dashboard.maintenance_panel, "worker", None)
+        if worker is not None and worker.isRunning():
+            QMessageBox.warning(
+                self, "ESP32-S3",
+                "Прошивання триває. Не закривай програму та не відключай USB.",
+            )
+            event.ignore()
+            return
         if (not self._quit_requested and self.tray_icon is not None and
                 self.dashboard.settings_panel.minimize_tray.isChecked()):
             self.hide()
