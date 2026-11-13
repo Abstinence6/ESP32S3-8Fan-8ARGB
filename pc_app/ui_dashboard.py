@@ -540,11 +540,11 @@ class DashboardShell(QWidget):
         for ch in range(1, 9):
             frame = QFrame()
             frame.setObjectName("fanCard")
-            frame.setMinimumHeight(142)
+            frame.setMinimumHeight(132)
             frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             frame.setToolTip(f"Вентилятор {ch} · відкрий налаштування для деталей")
             box = QVBoxLayout(frame)
-            box.setContentsMargins(16, 12, 16, 11)
+            box.setContentsMargins(14, 11, 14, 10)
             box.setSpacing(5)
             heading_row = QHBoxLayout()
             heading_row.addWidget(_label(f"FAN {ch:02d}", "labelTitle"))
@@ -589,7 +589,7 @@ class DashboardShell(QWidget):
         if not hasattr(self, "_fan_grid"):
             return
         available = max(0, self.width() - 252)
-        columns = 4 if available >= 1000 else 3 if available >= 870 else 2
+        columns = 4 if available >= 1000 else 3 if available >= 765 else 2
         if columns != self._fan_grid_columns:
             self._fan_grid_columns = columns
             for frame in self._fan_frames.values():
