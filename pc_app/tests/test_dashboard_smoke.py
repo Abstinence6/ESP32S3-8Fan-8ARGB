@@ -181,6 +181,32 @@ class DashboardSmokeTests(unittest.TestCase):
         )
         self.assertIn("заблоковано", shell.diagnostics.table.item(0, 4).text())
 
+    def test_manual_curve_edits_disable_automatic_profiles(self):
+        box = self.window.dashboard.settings_panel.auto_profiles
+        box.blockSignals(True)
+        box.setChecked(True)
+        box.blockSignals(False)
+        self.window._disable_auto_for_manual_change()
+        self.assertFalse(box.isChecked())
+        self.assertEqual(
+            str(self.window.settings.value("autoProfiles", "")).lower(),
+            "false",
+        )
+
+    def test_short_serial_write_is_not_reported_as_success(self):
+        class ShortSerial:
+            def __init__(self):
+                self.closed = False
+            def write(self, data):
+                return len(data) - 1
+            def close(self):
+                self.closed = True
+        port = ShortSerial()
+        self.window.port = port
+        self.assertFalse(self.window.send("PING"))
+        self.assertTrue(port.closed)
+        self.assertIsNone(self.window.port)
+
     def test_telemetry_updates_overview_and_pc_gates(self):
         self.window.handle_line(
             "CH 3 FAN=55% RPM=1200 TEMP=430 MODE=auto SENSOR=ok TYPE=3 FAULT=0"
