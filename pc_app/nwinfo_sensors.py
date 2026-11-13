@@ -140,7 +140,7 @@ def detect_cpu_vendor() -> str:
         import winreg
         with winreg.OpenKey(
             winreg.HKEY_LOCAL_MACHINE,
-            r"HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0",
+            r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
         ) as key:
             value, _ = winreg.QueryValueEx(key, "VendorIdentifier")
         value = str(value).lower()
