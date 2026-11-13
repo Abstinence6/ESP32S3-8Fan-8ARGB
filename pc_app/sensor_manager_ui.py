@@ -1,6 +1,6 @@
 """Local NWinfo provider controls: no fake sensors, safe stale-data semantics."""
 from __future__ import annotations
-from PySide6.QtWidgets import QCheckBox, QGroupBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QCheckBox, QGroupBox, QHBoxLayout, QGridLayout, QLabel, QPushButton, QVBoxLayout
 
 
 PROVIDERS = {
@@ -26,14 +26,14 @@ class SensorManagerPanel(QGroupBox):
             "Окреме опитування джерел. Проблемні драйвери отримують "
             "збільшені інтервали повторних спроб; дані старші 7 с не керують вентиляторами."
         ))
-        row = QHBoxLayout()
+        row = QGridLayout()
         self.checkboxes = {}
-        for name, label in PROVIDERS.items():
+        for index, (name, label) in enumerate(PROVIDERS.items()):
             checkbox = QCheckBox(label)
             checkbox.setChecked(name in enabled)
             checkbox.setEnabled(name in sampler.permitted_providers)
             checkbox.toggled.connect(self._changed)
-            row.addWidget(checkbox)
+            row.addWidget(checkbox, index // 4, index % 4)
             self.checkboxes[name] = checkbox
         root.addLayout(row)
         second = QHBoxLayout()
