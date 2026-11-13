@@ -35,7 +35,28 @@ def flash_command(port: str, path: str) -> list[str]:
     ]
 
 
-def flash_firmware(port: str, path: str) -> None:
+def flash_preflight(
+    pc_state: str, *, isolated_bench: bool, is_proxy: bool,
+) -> None:
+    """Fail closed if PC is on; unknown/disabled state needs explicit bench check.
+
+    Physical isolation can never be inferred from an unavailable status sensor.
+    """
+    if is_proxy:
+        raise ValueError("Вимкни фоновий агент: він володіє USB COM-портом")
+    if str(pc_state).lower() == "on":
+        raise ValueError("ПК увімкнений: перепрошивання заборонено")
+    if str(pc_state).lower() != "off" and not isolated_bench:
+        raise ValueError(
+            "Немає підтвердження, що ПК вимкнений. Потрібен незалежний "
+            "стенд і явне підтвердження його ізоляції."
+        )
+
+
+def flash_firmware(port: str, path: str, expected_sha256: str | None = None) -> None:
+    digest, _size = inspect_firmware(path)
+    if expected_sha256 is not None and digest != expected_sha256:
+        raise ValueError("Файл прошивки змінився після вибору — запис скасовано")
     import esptool  # bundled dependency in Windows EXE
     args = flash_command(port, path)
     esptool.main(args)

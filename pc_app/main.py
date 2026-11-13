@@ -43,6 +43,7 @@ from config_presets import (RGB_SCENES, FAN_CURVES, commands as preset_commands,
 from ui_dashboard_model import make_scene_commands
 from ui_dashboard import DashboardShell
 from smart_control import SafeTemperatureFilter, AutoProfileSelector
+from tray_monitor import FaultNotificationGate
 
 
 class FanArgbWindow(QMainWindow):
@@ -92,6 +93,7 @@ class FanArgbWindow(QMainWindow):
         self._last_sensor_issue: str | None = None
         self.safe_filter = SafeTemperatureFilter()
         self.auto_selector = AutoProfileSelector()
+        self.fault_gate = FaultNotificationGate()
         self._quit_requested = False
         self._last_hwtemp_line = ""
         self.temperature_future: Future | None = None
@@ -583,6 +585,8 @@ class FanArgbWindow(QMainWindow):
         self.led_counts = None
         self.connect_button.setText("Підключити")
         self.dashboard.set_connected(False)
+        self.fault_gate.reset()
+        self._update_tray_tooltip()
         self.statusBar().showMessage("ESP: відключено — автономний захист через 10 с без температур")
         self.log("ESP відключено")
 
@@ -590,7 +594,12 @@ class FanArgbWindow(QMainWindow):
         if not self.port:
             return False
         try:
-            self.port.write((message + "\n").encode("ascii"))
+            payload = (message + "\n").encode("ascii")
+            sent = self.port.write(payload)
+            if sent != len(payload):
+                raise serial.SerialTimeoutException(
+                    f"Частковий запис до ESP32: {sent}/{len(payload)} байтів"
+                )
             return True
         except (serial.SerialException, OSError) as exc:
             self.log(f"ПОМИЛКА Serial: {exc}")
@@ -631,6 +640,17 @@ class FanArgbWindow(QMainWindow):
         if status:
             self.fan_status[status.channel] = status
             self.dashboard.update_fan(status.channel, status)
+            alert = self.fault_gate.observe(
+                status.channel, fault=status.fault,
+                fresh=status.fresh, now=time.monotonic(),
+            )
+            if (alert and self.tray_icon is not None and
+                    self.dashboard.settings_panel.notify_faults.isChecked()):
+                self.tray_icon.showMessage(
+                    "FanARGB · стан охолодження", alert,
+                    QSystemTrayIcon.MessageIcon.Warning, 6500,
+                )
+            self._update_tray_tooltip()
             row = status.channel - 1
             self.fan_table.item(row, 1).setText(f"{status.pwm}%")
             self.fan_table.item(row, 2).setText(str(status.rpm) if status.rpm_feedback else "—")
@@ -823,6 +843,7 @@ class FanArgbWindow(QMainWindow):
             max(gpu_w) if gpu_w else float("nan"),
         ))
         self._refresh_history()
+        self._update_tray_tooltip()
         self._update_source_boxes()
         self._update_secondary_box()
 
@@ -904,6 +925,26 @@ class FanArgbWindow(QMainWindow):
                                if reason == QSystemTrayIcon.ActivationReason.Trigger else None)
         tray.show()
         self.tray_icon = tray
+
+    def _update_tray_tooltip(self) -> None:
+        if self.tray_icon is None:
+            return
+        connected = "підключено" if self.port else "відключено"
+        recent = len(self.temperatures)
+        problems = sum(1 for fan in self.fan_status.values()
+                       if fan.fault or not fan.fresh)
+        self.tray_icon.setToolTip(
+            f"FanARGB · ESP {connected}\n"
+            f"Температурних датчиків: {recent}\n"
+            f"Проблемні вентилятори: {problems}"
+        )
+
+    def _disable_auto_for_manual_change(self) -> None:
+        """Manual fan-curve edits take precedence over future auto profiles."""
+        box = self.dashboard.settings_panel.auto_profiles
+        if box.isChecked():
+            box.setChecked(False)
+            self.log("Автопрофілі вимкнено: застосовано ручне налаштування кривих")
 
     def _tray_profile(self, profile: str) -> None:
         self.profile_box.setCurrentText(profile)
@@ -1193,6 +1234,7 @@ class FanArgbWindow(QMainWindow):
             QMessageBox.warning(self, "Крива PWM", str(exc))
             return
         if self.send(message):
+            self._disable_auto_for_manual_change()
             self.log(f"> {message.split()[0]} {self.current_fan} — запис у NVS запитано")
         else:
             QMessageBox.warning(self, "ESP", "Підключи ESP32 до збереження кривої")
@@ -1221,6 +1263,7 @@ class FanArgbWindow(QMainWindow):
             f"Змінити всі 8 температурних кривих на {name} та записати в ESP32 NVS?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if confirm != QMessageBox.StandardButton.Yes: return
+        self._disable_auto_for_manual_change()
         for ch, points in enumerate(curves, start=1):
             if not self.send(make_curve_command(ch, points)):
                 QMessageBox.warning(self, "Профіль", f"Не вдалося відправити Fan {ch}")
@@ -1247,6 +1290,7 @@ class FanArgbWindow(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if confirmed != QMessageBox.StandardButton.Yes:
             return
+        self._disable_auto_for_manual_change()
         for line in lines:
             if not self.send(line):
                 QMessageBox.warning(self, "Конфігурація",
