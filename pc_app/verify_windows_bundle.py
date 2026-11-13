@@ -16,7 +16,9 @@ import zlib
 REQUIRED = frozenset({
     "monitor", "sacn_bridge", "protocol", "serial_owner",
     "profiles", "config_presets", "agent", "ui_dashboard", "ui_dashboard_model",
-    "nwinfo_sensors",
+    "nwinfo_sensors", "smart_control", "autostart", "settings_widgets",
+    "hardware_sensor_ui", "argb_effects", "argb_studio_ui",
+    "config_backup", "maintenance_ui", "firmware_update", "esptool",
 })
 MAGIC = b"MEI\x0c\x0b\x0a\x0b\x0e"
 COOKIE = struct.Struct("!8sIIII64s")
