@@ -399,6 +399,19 @@ class DashboardShell(QWidget):
 
         rgb_box.setTitle("Колір, яскравість та OpenRGB")
         layout.addWidget(rgb_box)
+        native_row = QFrame()
+        native_row.setObjectName("quietCard")
+        native_layout = QHBoxLayout(native_row)
+        self.native_checkbox = QCheckBox(
+            "Native OpenRGB SDK · 8 зон · 127.0.0.1:6743"
+        )
+        self.native_checkbox.toggled.connect(self.controller.toggle_native_openrgb)
+        native_layout.addWidget(self.native_checkbox)
+        native_layout.addWidget(_label(
+            "Додай Remote SDK server у OpenRGB: 127.0.0.1, порт 6743",
+            "minor", True,
+        ))
+        layout.addWidget(native_row)
         self.studio = ArgbStudioPanel(self.controller)
         layout.addWidget(self.studio)
         note = QFrame()
