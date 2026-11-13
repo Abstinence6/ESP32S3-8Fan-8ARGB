@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from collections import deque
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget, QTabWidget, QSizePolicy,
+    QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget, QTabWidget, QSizePolicy, QFrame, QStackedWidget,
 )
 
 try:
@@ -79,8 +79,15 @@ class DeviceSettingsPanel(QWidget):
         # Wi-Fi is persisted to ESP32 NVS, not to Windows QSettings.
         wifi_box = QWidget()
         wifi_form = QFormLayout(wifi_box)
-        wifi_form.setContentsMargins(17, 20, 17, 16)
-        wifi_form.setSpacing(12)
+        wifi_form.setContentsMargins(19, 18, 19, 17)
+        wifi_form.setSpacing(11)
+        wifi_form.setHorizontalSpacing(18)
+        wifi_form.setLabelAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        wifi_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow
+        )
         self.wifi_status = QLabel("Немає даних")
         self.wifi_status.setWordWrap(True)
         wifi_form.addRow("Стан:", self.wifi_status)
@@ -110,7 +117,7 @@ class DeviceSettingsPanel(QWidget):
         self.wifi_disable.setProperty("role", "danger")
         self.wifi_disable.clicked.connect(self.disable_wifi)
         wifi_actions.addWidget(self.wifi_disable)
-        wifi_form.addRow("", wifi_actions)
+        # Actions live in one consistent footer, not inside each form.
         self.wifi_ssid.textEdited.connect(self._mark_wifi_dirty)
         self.wifi_password.textEdited.connect(self._mark_wifi_dirty)
         self.wifi_open.toggled.connect(self._toggle_open_wifi)
@@ -118,8 +125,15 @@ class DeviceSettingsPanel(QWidget):
 
         mqtt_box = QWidget()
         mqtt_form = QFormLayout(mqtt_box)
-        mqtt_form.setContentsMargins(17, 20, 17, 16)
-        mqtt_form.setSpacing(12)
+        mqtt_form.setContentsMargins(19, 18, 19, 17)
+        mqtt_form.setSpacing(11)
+        mqtt_form.setHorizontalSpacing(18)
+        mqtt_form.setLabelAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        mqtt_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow
+        )
         self.mqtt_status = QLabel("Немає даних")
         self.mqtt_status.setWordWrap(True)
         mqtt_form.addRow("Стан:", self.mqtt_status)
@@ -161,7 +175,7 @@ class DeviceSettingsPanel(QWidget):
         self.mqtt_reset.setProperty("role", "danger")
         self.mqtt_reset.clicked.connect(self.reset_mqtt)
         mqtt_actions.addWidget(self.mqtt_reset)
-        mqtt_form.addRow("", mqtt_actions)
+        # Actions live in one consistent footer, not inside each form.
         note = QLabel("MQTT працює напряму з ESP32 після налаштування. "
                       "TCP/1883 без TLS — лише довірена локальна мережа. "
                       "Вимкнення Discovery очищує retained-записи після зв’язку з MQTT.")
@@ -179,8 +193,15 @@ class DeviceSettingsPanel(QWidget):
         # Per-zone ARGB hardware settings, fetched from the actual controller.
         rgb_box = QWidget()
         rgb_form = QFormLayout(rgb_box)
-        rgb_form.setContentsMargins(17, 20, 17, 16)
-        rgb_form.setSpacing(12)
+        rgb_form.setContentsMargins(19, 18, 19, 17)
+        rgb_form.setSpacing(11)
+        rgb_form.setHorizontalSpacing(18)
+        rgb_form.setLabelAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        rgb_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow
+        )
         self.argb_status = QLabel("Немає даних")
         rgb_form.addRow("Ліміт струму:", self.argb_status)
         self.rgb_zone = QComboBox()
@@ -205,9 +226,10 @@ class DeviceSettingsPanel(QWidget):
         rgb_form.addRow("Бюджет 5 В, мА:", self.rgb_budget)
         rgb_actions = QHBoxLayout()
         self.rgb_save = QPushButton("Зберегти ARGB")
+        self.rgb_save.setProperty("role", "primary")
         self.rgb_save.clicked.connect(self.save_argb)
         rgb_actions.addWidget(self.rgb_save)
-        rgb_form.addRow("", rgb_actions)
+        # Actions live in one consistent footer, not inside each form.
         rgb_note = QLabel("Кількість LED, напрямок і бюджет зберігаються в NVS. "
                           "Яскравість активна до перезапуску ESP32. "
                           "Бюджет струму — програмна оцінка, не заміна запобіжника.")
@@ -217,8 +239,15 @@ class DeviceSettingsPanel(QWidget):
 
         fan_box = QWidget()
         fan_form = QFormLayout(fan_box)
-        fan_form.setContentsMargins(17, 20, 17, 16)
-        fan_form.setSpacing(12)
+        fan_form.setContentsMargins(19, 18, 19, 17)
+        fan_form.setSpacing(11)
+        fan_form.setHorizontalSpacing(18)
+        fan_form.setLabelAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        fan_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow
+        )
         self.fan_zone = QComboBox()
         for ch in range(1, 9):
             self.fan_zone.addItem(f"Fan {ch}", ch)
@@ -241,12 +270,13 @@ class DeviceSettingsPanel(QWidget):
         fan_form.addRow("Статус:", self.fan_info)
         fan_actions = QHBoxLayout()
         self.fan_save = QPushButton("Зберегти пороги в ESP32")
+        self.fan_save.setProperty("role", "primary")
         self.fan_save.clicked.connect(self.save_fan)
         fan_actions.addWidget(self.fan_save)
         fans_page = QPushButton("Криві, PID та калібрування…")
         fans_page.clicked.connect(lambda: self.controller.dashboard.show_page("fans"))
         fan_actions.addWidget(fans_page)
-        fan_form.addRow("", fan_actions)
+        # Actions live in one consistent footer, not inside each form.
         self.tabs.addTab(fan_box, "TACH / пороги")
 
         links = QHBoxLayout()
@@ -264,6 +294,31 @@ class DeviceSettingsPanel(QWidget):
         )
         limitations.setWordWrap(True)
         root.addWidget(limitations)
+
+        self.action_footer = QFrame()
+        self.action_footer.setObjectName("settingsActionFooter")
+        footer_layout = QVBoxLayout(self.action_footer)
+        footer_layout.setContentsMargins(16, 11, 16, 11)
+        footer_layout.setSpacing(6)
+        footer_layout.addWidget(QLabel("ЗАСТОСУВАТИ НАЛАШТУВАННЯ"))
+        self.action_stack = QStackedWidget()
+        self.action_stack.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
+        )
+        for action_layout in (wifi_actions, mqtt_actions, rgb_actions, fan_actions):
+            pane = QWidget()
+            pane_layout = QHBoxLayout(pane)
+            pane_layout.setContentsMargins(0, 0, 0, 0)
+            pane_layout.setSpacing(10)
+            while action_layout.count():
+                item = action_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    pane_layout.addWidget(widget)
+            pane_layout.addStretch(1)
+            self.action_stack.addWidget(pane)
+        footer_layout.addWidget(self.action_stack)
+        root.addWidget(self.action_footer)
         root.addStretch(1)
         self._action_buttons = (
             self.refresh_button, self.wifi_save, self.wifi_disable,
@@ -285,6 +340,8 @@ class DeviceSettingsPanel(QWidget):
             )
         )
         self.tabs.currentChanged.connect(self._fit_active_tab)
+        self.tabs.currentChanged.connect(self.action_stack.setCurrentIndex)
+        self.action_stack.setCurrentIndex(self.tabs.currentIndex())
         self._fit_active_tab()
         self.set_connected(False)
 
