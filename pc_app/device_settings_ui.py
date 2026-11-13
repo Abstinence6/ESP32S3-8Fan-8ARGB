@@ -12,7 +12,7 @@ from collections import deque
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget, QTabWidget,
+    QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget, QTabWidget, QSizePolicy,
 )
 
 try:
@@ -49,9 +49,10 @@ class DeviceSettingsPanel(QWidget):
         self.ack_timer.setSingleShot(True)
         self.ack_timer.timeout.connect(self._timeout)
 
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(14)
+        root.setSpacing(13)
         self.header = QLabel("Підключи ESP32-S3 через USB, щоб прочитати конфігурацію.")
         self.header.setWordWrap(True)
         root.addWidget(self.header)
@@ -70,6 +71,7 @@ class DeviceSettingsPanel(QWidget):
         self.tabs = QTabWidget(self)
         self.tabs.setObjectName("esp32ConfigTabs")
         self.tabs.setDocumentMode(True)
+        self.tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self.tabs.tabBar().setDrawBase(False)
         self.tabs.tabBar().setExpanding(False)
         root.addWidget(self.tabs)
@@ -262,6 +264,7 @@ class DeviceSettingsPanel(QWidget):
         )
         limitations.setWordWrap(True)
         root.addWidget(limitations)
+        root.addStretch(1)
         self._action_buttons = (
             self.refresh_button, self.wifi_save, self.wifi_disable,
             self.mqtt_save, self.mqtt_reset, self.rgb_save, self.fan_save,
