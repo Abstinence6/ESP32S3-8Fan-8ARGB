@@ -12,6 +12,8 @@ class HardwareSensorPanel(QGroupBox):
         self.controller = controller
         self.available = False
         self.current_modes: dict[int, str] = {}
+        self.current_maps: dict[int, str] = {}
+        self.probes: dict[str, str] = {}
         layout = QVBoxLayout(self)
         self.status = QLabel("Не опитано — датчик вимкнений у стандартній прошивці")
         self.status.setWordWrap(True)
@@ -36,6 +38,18 @@ class HardwareSensorPanel(QGroupBox):
         query.clicked.connect(self.refresh)
         row.addWidget(query)
         layout.addLayout(row)
+        mapping_row = QHBoxLayout()
+        mapping_row.addWidget(QLabel("Датчик (ROM):"))
+        self.probe_box = QComboBox()
+        self.probe_box.addItem("AUTO · лише один DS18B20 на шині", "AUTO")
+        mapping_row.addWidget(self.probe_box, 1)
+        save_map = QPushButton("Прив'язати до вентилятора")
+        save_map.clicked.connect(self._apply_map)
+        mapping_row.addWidget(save_map)
+        rescan = QPushButton("Сканувати 1-Wire")
+        rescan.clicked.connect(self.scan)
+        mapping_row.addWidget(rescan)
+        layout.addLayout(mapping_row)
         layout.addWidget(QLabel(
             "LOCAL працює без Windows; BACKUP активується після 6 с без "
             "температури ПК. При втраті обох джерел PWM повертається до "
@@ -44,12 +58,37 @@ class HardwareSensorPanel(QGroupBox):
 
     def refresh(self) -> None:
         self.controller.send("HTEMP?")
+        self.controller.send("HTLIST?")
         self._query_mode()
+
+    def scan(self) -> None:
+        if not self.available:
+            QMessageBox.warning(self, "DS18B20", "Апаратний датчик вимкнено у прошивці.")
+            return
+        self.controller.send("HTSCAN")
+        self.refresh()
+
+    def _apply_map(self) -> None:
+        channel = self.channel.currentData()
+        address = self.probe_box.currentData()
+        if not self.available or not address or not channel:
+            return
+        if QMessageBox.question(
+            self, "Призначення DS18B20",
+            "Зберегти 64-бітну адресу термодатчика для цього вентилятора? "
+            "При відключенні датчика його значення не буде підмінено іншим.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self.controller.send(f"HTMAP {channel} {address}")
+        self.controller.send(f"HTMAP? {channel}")
 
     def _query_mode(self, *_args) -> None:
         channel = self.channel.currentData()
         if channel:
             self.controller.send(f"HTMODE? {channel}")
+            self.controller.send(f"HTMAP? {channel}")
+            self._select_rom(int(channel))
             saved = self.current_modes.get(int(channel), "PC")
             self.mode.setCurrentIndex(max(0, self.mode.findData(saved)))
 
@@ -69,6 +108,46 @@ class HardwareSensorPanel(QGroupBox):
                 return
         self.controller.send(f"HTMODE {self.channel.currentData()} {mode}")
         self._query_mode()
+
+    def _select_rom(self, channel: int) -> None:
+        address = self.current_maps.get(channel, "AUTO")
+        ix = self.probe_box.findData(address)
+        if ix < 0 and address != "AUTO":
+            self.probe_box.addItem(f"{address} · датчик відсутній", address)
+            ix = self.probe_box.findData(address)
+        self.probe_box.setCurrentIndex(max(0, ix))
+
+    def handle_sensor_line(self, text: str) -> None:
+        if text.startswith("HTSENSOR_END"):
+            self.probe_box.blockSignals(True)
+            selected_ch = int(self.channel.currentData() or 1)
+            self.probe_box.clear()
+            self.probe_box.addItem("AUTO · лише один DS18B20 на шині", "AUTO")
+            for rom, label in sorted(self.probes.items()):
+                self.probe_box.addItem(label, rom)
+            self._select_rom(selected_ch)
+            self.probe_box.blockSignals(False)
+            return
+        match = re.match(r"^\d+ ROM=([0-9A-Fa-f]{16}) VALID=([01])", text.strip())
+        if not match:
+            return
+        rom = match.group(1).upper()
+        fields = dict(x.split("=", 1) for x in text.split() if "=" in x)
+        label = f"{rom} · " + (
+            f"{int(fields.get('TEMP', '0')) / 10:.1f} °C" if match.group(2) == "1"
+            else "немає свіжого значення"
+        )
+        self.probes[rom] = label
+
+    def handle_map(self, text: str) -> None:
+        match = re.fullmatch(r"(\d+) ROM=(AUTO|[0-9A-Fa-f]{16})", text.strip())
+        if not match:
+            return
+        channel = int(match.group(1))
+        if 1 <= channel <= 8:
+            self.current_maps[channel] = match.group(2).upper()
+            if channel == self.channel.currentData():
+                self._select_rom(channel)
 
     def handle_status(self, text: str) -> None:
         flags = dict(x.split("=", 1) for x in text.split() if "=" in x)
