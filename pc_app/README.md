@@ -1,5 +1,23 @@
 # Windows application for ESP32-S3 Fan & ARGB Controller
 
+## v6.1 reliability hardening
+
+- Automatic Gaming/Work/Night profiles **pause** when live GPU utilization
+  is missing. No missing sensor can trigger a time-of-day Silent switch.
+- Any explicitly applied fan curve/profile/configuration disables automatic
+  profile switching so it does not overwrite the user's manual settings.
+- A failed or partial Serial write reports failure instead of claiming a
+  successful curve update.
+- In-app firmware flashing **blocks** if PC state is ON. When PC power state
+  is unknown/disabled/stale, it requires an independently isolated bench,
+  its confirmation checkbox, and a typed `СТЕНД` confirmation. The selected
+  binary is SHA-256 checked again immediately before writing (including in
+  the worker). Firmware flashing still requires a physically fail-ON
+  cooling power stage; do not flash while the PC is powered.
+- The Windows tray displays ESP/device health and, when opted in,
+  deduplicated/rate-limited messages for fan faults and stale temperatures.
+  The alert option is under **Сервіс → Автоматизація Windows**.
+
 ## v6 additions
 
 - Windows **Task Scheduler elevated autostart**, with explicit UAC consent,
