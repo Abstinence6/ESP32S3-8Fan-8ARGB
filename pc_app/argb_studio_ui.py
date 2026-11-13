@@ -116,8 +116,8 @@ class ArgbStudioPanel(QGroupBox):
                 *self.colors, self.brightness.value(), self.speed.value() / 50.0,
             )
             packet = encode_rgb_frame(channel, frame)
-            if self.controller.port.write(packet) != len(packet):
-                raise IOError("Short RGB write")
+            if not self.controller.queue_rgb(channel, packet):
+                raise IOError("ARGB queue rejected frame")
         except (ValueError, OSError) as exc:
             self.stop()
             self.controller.log(f"ARGB Studio: {exc}")
