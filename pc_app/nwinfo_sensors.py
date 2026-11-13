@@ -130,6 +130,27 @@ def parse_nwinfo_metrics(tree: Any) -> list[HardwareMetric]:
         if data is not None:
             visit(provider, data, ())
     return sorted(found.values(), key=lambda m: (m.kind, m.name.casefold()))
+
+
+def detect_cpu_vendor() -> str:
+    """Read Windows' CPU identity without spawning another sensor process."""
+    if os.name != "nt":
+        return "unknown"
+    try:
+        import winreg
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0",
+        ) as key:
+            value, _ = winreg.QueryValueEx(key, "VendorIdentifier")
+        value = str(value).lower()
+        if "intel" in value:
+            return "intel"
+        if "amd" in value:
+            return "amd"
+    except (OSError, ImportError):
+        pass
+    return "unknown"
 _NUMBER = re.compile(r"^[+]?(?:\d+(?:[.,]\d*)?|[.,]\d+)(?:\s*°?\s*[cC])?$")
 
 
@@ -298,9 +319,15 @@ class NwinfoSensorSampler:
     _retry_delay = 8.0
 
     def __init__(self, executor=None):
+        vendor = detect_cpu_vendor()
+        self._active_providers = tuple(
+            p for p in _PROVIDERS
+            if (p != "INTEL" or vendor != "amd")
+            and (p != "ZEN" or vendor != "intel")
+        )
         self._owns_executor = executor is None
         self._executor = executor if executor is not None else ThreadPoolExecutor(
-            max_workers=len(_PROVIDERS), thread_name_prefix="NWinfoProvider"
+            max_workers=len(self._active_providers), thread_name_prefix="NWinfoProvider"
         )
         self._inflight: dict[str, Future] = {}
         self._next_scan: dict[str, float] = {}
@@ -322,10 +349,14 @@ class NwinfoSensorSampler:
         now = time.monotonic() if now is None else now
         self._last_poll_at = now
         if not self._initialized:
+            offsets = {
+                "GPU": 0.0, "CPU": 0.0, "DIMM": 2.0,
+                "INTEL": 3.0, "ZEN": 4.0,
+                "SMART": 5.0, "DISK": 6.0,
+            }
             self._next_scan = {
-                "GPU": now, "CPU": now, "DIMM": now + 2.0,
-                "INTEL": now + 3.0, "ZEN": now + 4.0,
-                "SMART": now + 5.0, "DISK": now + 6.0,
+                provider: now + offsets[provider]
+                for provider in self._active_providers
             }
             self._initialized = True
 
@@ -357,7 +388,7 @@ class NwinfoSensorSampler:
                 self.problems[provider] = str(exc)
                 self._next_scan[provider] = now + self._retry_delay
 
-        for provider in ("GPU", "CPU", "SMART", "DIMM", "INTEL", "ZEN", "DISK"):
+        for provider in self._active_providers:
             if provider not in self._inflight and now >= self._next_scan[provider]:
                 self._inflight[provider] = self._executor.submit(
                     fetch_temperatures,
