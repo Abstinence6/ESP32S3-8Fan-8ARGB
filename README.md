@@ -1,3 +1,16 @@
+## ESP32-S3 settings are managed from Windows (v8)
+
+Open the **ESP32** page in `FanARGBControl.exe` to read, change, save
+and verify Wi-Fi (including SSIDs/passwords with spaces), MQTT broker/login,
+Home Assistant Discovery, 8 ARGB strips, and the fan's TACH/thermal limits.
+The controller, not Windows, stores persistent hardware settings in NVS.
+Secret fields are masked and do not appear in logs. All configuration
+changes require USB and firmware v8+; no Serial Monitor is needed.
+
+See [PC configuration](docs/PC_CONFIGURATION.md). GPIO/power MOSFET
+hardware and optional DC PWM/DS18B20/PWR_SW compiler flags remain
+hardware-qualified and cannot be changed arbitrarily from the PC.
+
 # ESP32-S3 8-Fan / 8-ARGB Controller
 
 Starter firmware for **8 independent 2/3/4-pin PC fans (3-pin default)** and **8 independent 5 V addressable RGB strips** on an **ESP32-S3**. Built with **PlatformIO, Arduino-ESP32 2.0.17, and Adafruit NeoPixel**.
