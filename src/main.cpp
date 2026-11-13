@@ -6,14 +6,16 @@
 #include "NetworkRgbBridge.h"
 #include "MqttBridge.h"
 #include "PcPowerController.h"
+#include "HardwareTemperature.h"
 
 FanController fans;
 ArgbController leds;
 CoolingController cooling(fans, Serial);
 NetworkRgbBridge wifiRgb(leds);
 PcPowerController pcPower;
+HardwareTemperature hardwareTemp;
 MqttBridge mqtt(cooling, fans, leds, wifiRgb, &pcPower);
-SerialConsole console(Serial, fans, leds, cooling, &wifiRgb, &mqtt, &pcPower);
+SerialConsole console(Serial, fans, leds, cooling, &wifiRgb, &mqtt, &pcPower, &hardwareTemp);
 
 void setup() {
 #if !ARDUINO_USB_CDC_ON_BOOT
@@ -38,6 +40,7 @@ void setup() {
         while (true) delay(1000);
     }
     pcPower.begin();
+    if (!hardwareTemp.begin()) Serial.println(F("WARN: hardware DS18B20 NVS unavailable"));
     wifiRgb.begin();
     if (!mqtt.begin()) Serial.println(F("WARN: MQTT NVS unavailable"));
     console.begin();
@@ -47,6 +50,7 @@ void loop() {
     console.poll();
     const uint32_t now = millis();
     fans.update(now);
+    hardwareTemp.update(now, cooling);
     cooling.update(now);
     pcPower.update(now);
     wifiRgb.update(now);
