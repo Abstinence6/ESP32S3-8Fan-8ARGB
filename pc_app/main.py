@@ -567,6 +567,9 @@ class FanArgbWindow(QMainWindow):
         self.send("PC STATUS")
         self.send("MQTT?")
         self.send("HTEMP?")
+        self.send("HTLIST?")
+        for ch in range(1, 9):
+            self.send(f"HTMAP? {ch}")
         for ch in range(1, 9):
             self.send(f"HTMODE? {ch}")
         for ch in range(1, 9):
@@ -704,6 +707,15 @@ class FanArgbWindow(QMainWindow):
                 )
             except (ValueError, KeyError):
                 self.log("Невалідна відповідь VERSION?")
+            return
+        if line.startswith("HTSENSOR_END"):
+            self.dashboard.hardware_sensor.handle_sensor_line(line)
+            return
+        if line.startswith("HTSENSOR "):
+            self.dashboard.hardware_sensor.handle_sensor_line(line[9:])
+            return
+        if line.startswith("HTMAP "):
+            self.dashboard.hardware_sensor.handle_map(line[6:])
             return
         if line.startswith("HTEMP "):
             self._last_hwtemp_line = line
