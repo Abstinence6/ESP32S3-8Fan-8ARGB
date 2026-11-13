@@ -19,7 +19,7 @@ public:
                ArgbController& leds, NetworkRgbBridge& network, PcPowerController* pc = nullptr);
     bool begin();
     void update(uint32_t nowMs);
-    bool setBroker(const char* host, uint16_t port);
+    bool setBroker(const char* host, uint16_t port, bool enable = true);
     bool setCredentials(const char* username, const char* password);
     bool setEnabled(bool enabled);
     bool setDiscovery(bool enabled);
