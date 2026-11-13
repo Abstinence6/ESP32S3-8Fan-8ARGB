@@ -85,6 +85,9 @@ class FanArgbWindow(QMainWindow):
                 self.sensor_groups[ch] = []
         self.led_counts: list[int] | None = None  # do not stream until ESP confirms sizes
         self.sensor_sampler = NwinfoSensorSampler()
+        saved_providers = str(self.settings.value("nwinfoProviders", ""))
+        if saved_providers:
+            self.sensor_sampler.set_enabled(set(saved_providers.split(",")))
         self.temperature_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="NWinfoResults")
         self._last_sensor_issue: str | None = None
         self.safe_filter = SafeTemperatureFilter()
