@@ -196,7 +196,7 @@ class OpenRGBNativeServer:
                         while len(buffer) >= HEADER.size:
                             magic, dev, cmd, size = HEADER.unpack_from(buffer)
                             if magic != MAGIC or size > MAX_BODY:
-                                return
+                                raise ValueError("Malformed OpenRGB SDK packet")
                             if len(buffer) < HEADER.size + size:
                                 break
                             payload = bytes(buffer[HEADER.size:HEADER.size + size])
