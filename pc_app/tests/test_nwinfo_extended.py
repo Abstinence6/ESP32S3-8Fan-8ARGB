@@ -84,7 +84,8 @@ class MoreSensorsTests(unittest.TestCase):
                 f.set_result(ns.SensorBatch([]))
                 return f
         executor = ImmediateExecutor()
-        sampler = ns.NwinfoSensorSampler(executor=executor)
+        with patch.object(ns, "detect_cpu_vendor", return_value="unknown"):
+            sampler = ns.NwinfoSensorSampler(executor=executor)
         sampler.poll(now=10)
         self.assertIn(("GPU",), executor.calls)
         self.assertIn(("CPU",), executor.calls)
@@ -93,6 +94,14 @@ class MoreSensorsTests(unittest.TestCase):
         for name in ("DIMM", "INTEL", "ZEN", "DISK"):
             self.assertIn((name,), executor.calls)
         sampler.close()
+
+    def test_vendor_specific_probes_avoid_other_platform(self):
+        for vendor, excluded in (("intel", "ZEN"), ("amd", "INTEL")):
+            with self.subTest(vendor=vendor), patch.object(ns, "detect_cpu_vendor", return_value=vendor):
+                sampler = ns.NwinfoSensorSampler(executor=object())
+                self.assertNotIn(excluded, sampler._active_providers)
+                self.assertIn("GPU", sampler._active_providers)
+                sampler.close()
 
     def test_metrics_expire_independently_of_temperature(self):
         from pc_app.monitor import TemperatureSensor
