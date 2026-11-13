@@ -180,10 +180,73 @@ void SerialConsole::handleLine(char* line) {
     }
     if (strcmp(command, "VERSION?") == 0) {
         if (!noMore()) return error();
-        serial_.print(F("FW VERSION=6 SERIAL=4 DC_READY="));
+        serial_.print(F("FW VERSION=7 SERIAL=4 DC_READY="));
         serial_.print(board::kDcSupplyPwmValidated ? 1 : 0);
         serial_.print(F(" DS18B20="));
-        serial_.println(hw_ && hw_->enabled() ? 1 : 0);
+        serial_.print(hw_ && hw_->enabled() ? 1 : 0);
+        serial_.print(F(" SENSORS="));
+        serial_.println(hw_ ? hw_->sensorCount() : 0);
+        return;
+    }
+    if (strcmp(command, "HTSCAN") == 0) {
+        if (!noMore()) return error();
+        if (!hw_ || !hw_->enabled() || !hw_->rescan()) {
+            serial_.println(F("ERR DS18B20 scan unavailable"));
+            return;
+        }
+        serial_.print(F("OK HTSCAN COUNT="));
+        serial_.println(hw_->sensorCount());
+        return;
+    }
+    if (strcmp(command, "HTLIST?") == 0) {
+        if (!noMore()) return error();
+        if (!hw_ || !hw_->enabled()) {
+            serial_.println(F("HTSENSOR_END COUNT=0"));
+            return;
+        }
+        const uint32_t now = millis();
+        for (uint8_t i = 0; i < hw_->sensorCount(); ++i) {
+            char rom[17];
+            uint16_t temp = 0;
+            uint32_t age = 0;
+            bool valid = false;
+            if (!hw_->sensorInfo(i, rom, temp, valid, age, now)) continue;
+            serial_.print(F("HTSENSOR "));
+            serial_.print(i + 1);
+            serial_.print(F(" ROM=")); serial_.print(rom);
+            serial_.print(F(" VALID=")); serial_.print(valid ? 1 : 0);
+            if (valid) {
+                serial_.print(F(" TEMP=")); serial_.print(temp);
+                serial_.print(F(" AGE_MS=")); serial_.print(age);
+            }
+            serial_.println("");
+        }
+        serial_.print(F("HTSENSOR_END COUNT="));
+        serial_.println(hw_->sensorCount());
+        return;
+    }
+    if (!strcmp(command, "HTMAP") || !strcmp(command, "HTMAP?")) {
+        if (!hw_) return error();
+        const bool query = !strcmp(command, "HTMAP?");
+        uint8_t ch = 0;
+        if (!parseByte(next(), board::kChannelCount, ch) || ch == 0) return error();
+        if (query) {
+            if (!noMore()) return error();
+            char rom[17];
+            if (!hw_->mappedAddress(ch - 1, rom)) return error();
+            serial_.print(F("HTMAP ")); serial_.print(ch);
+            serial_.print(F(" ROM=")); serial_.println(rom);
+            return;
+        }
+        char* address = next();
+        if (!address || !noMore()) return error();
+        for (char* p = address; *p; ++p)
+            *p = static_cast<char>(toupper(static_cast<unsigned char>(*p)));
+        if (!hw_->setAddress(ch - 1, address)) {
+            serial_.println(F("ERR invalid/unavailable DS18B20 ROM or NVS failure"));
+            return;
+        }
+        serial_.println(F("OK HTMAP"));
         return;
     }
     if (strcmp(command, "HTEMP?") == 0) {
@@ -573,7 +636,8 @@ void SerialConsole::handleLine(char* line) {
 void SerialConsole::printHelp() {
     serial_.println(F("Channels: 1..8, temperatures: deci-Celsius, e.g. 455 = 45.5 C"));
     serial_.println(F("PING | STATUS | HEALTH [ch] | SELFTEST [CANCEL] | HELP | LEDS | PC STATUS|ON|OFF|FORCE"));
-    serial_.println(F("VERSION? | HTEMP? | HTMODE? <ch> | HTMODE <ch> PC|LOCAL|BACKUP"));
+    serial_.println(F("VERSION? | HTTEMP? (legacy: HTEMP?) | HTLIST? | HTSCAN | HTMAP? <ch> | HTMAP <ch> AUTO|ROMHEX"));
+    serial_.println(F("HTMODE? <ch> | HTMODE <ch> PC|LOCAL|BACKUP"));
     serial_.println(F("MQTT? | MQTT HOST <broker> <port> | MQTT AUTH <user> <pass> | MQTT ON|OFF"));
     serial_.println(F("TEMP <ch> <0..1250> | AUTO <ch> | ALLAUTO"));
     serial_.println(F("FAN <ch> <0..100> | ALLFAN <0..100> (manual override)"));
