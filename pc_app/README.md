@@ -263,3 +263,29 @@ analysis, calibration, profiles, firmware maintenance and Windows options.
 The ESP32 configuration form has a maximum width to avoid excessively long
 inputs. Visual controls were reorganized without changing USB, PWM, MQTT or
 fan safety logic. CI now captures compact 1080 px and desktop 1510 px layouts.
+
+## UI v3 — Layout & Consistency
+
+The Windows application retains all original serial commands, safety checks
+and saved settings. Three workflows now use the same layout scale and reading
+order:
+
+- **Fans:** the five-point PWM/temperature graph stays visible alongside a
+  compact panel with selected fan RPM, PWM, temperature, mode and safety state.
+  Existing curve-save/readback, PID, dual-curve and target-RPM controls are
+  placed in adjacent labeled groups, not stretched underneath the plot.
+- **ARGB:** the effects tab shows eight schematic zones with a highlighted
+  selection, a concise scene form and four original quick commands. Selecting
+  a schematic zone does **not** send a light command; pressing Apply or a quick
+  action does. The schematic does not pretend to read physical LED colors.
+  E1.31 bridge and OpenRGB connection settings live together under OpenRGB;
+  the Studio retains its own tab.
+- **ESP32 configuration:** Wi-Fi/MQTT/ARGB/TACH forms use consistent spacing,
+  with a single bottom action area that contains the current tab's Save/Reset
+  actions. Larger windows show a contextual guide beside the settings; the
+  guide hides automatically at 1080px to keep every input readable.
+
+Native Windows CI includes tests for fan selection/telemetry, ARGB channel
+highlighting, all four settings action-footers, 1080/1510px layout clipping
+and saves real Qt preview screenshots for visual review. The preview's
+status bar explicitly states that the measurements are demo data.

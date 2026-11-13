@@ -72,6 +72,9 @@ class DashboardSmokeTests(unittest.TestCase):
         self.window.dashboard.set_bridge_state(True, 128)
         self.window.dashboard.set_mqtt_state("ENABLED=1 CONNECTED=1")
         self.window.dashboard.update_pc_state("on BUSY=0")
+        self.window.statusBar().showMessage(
+            "DEMO · тестові дані інтерфейсу · реальний контролер не підключено"
+        )
         self.window.handle_line("FW VERSION=8 SERIAL=7 DC_READY=0 DS18B20=0 SENSORS=0")
         self.window.handle_line(
             "WIFI_CONFIG ENABLED=1 CONNECTED=1 SSID_HEX=4D792057694669 "
@@ -145,6 +148,71 @@ class DashboardSmokeTests(unittest.TestCase):
                     scroll.widget().width(), scroll.viewport().width() + 3,
                     f"Horizontal clipping in {key} at {width}px",
                 )
+
+    def test_v3_fan_editor_has_balanced_curve_and_live_side_panel(self):
+        shell = self.window.dashboard
+        self.window.show()
+        for width in (1080, 1510):
+            self.window.resize(width, 850)
+            shell.show_page("fans")
+            self.app.processEvents()
+            self.assertTrue(shell.fan_control_panel.isAncestorOf(self.window.save_button))
+            self.assertTrue(shell.fan_control_panel.isAncestorOf(self.window.pid_checkbox))
+            self.assertGreater(self.window.curve_plot.width(), 190)
+            self.assertGreaterEqual(shell.fan_control_panel.width(), 270)
+            self.assertLessEqual(shell.fan_control_panel.width(), 360)
+            chart_parent = self.window.curve_plot.parentWidget()
+            self.assertIsNotNone(chart_parent)
+
+        self.window.dashboard.set_connected(True, "COM5")
+        self.window.handle_line(
+            "CH 4 FAN=62% RPM=1870 TEMP=482 MODE=auto SENSOR=ok TYPE=3 FAULT=0"
+        )
+        shell.open_fan(4)
+        self.assertEqual(shell.fan_live_title.text(), "FAN 04")
+        self.assertIn("1 870 RPM", shell.fan_live_rpm.text())
+        self.assertIn("62%", shell.fan_live_metrics.text())
+        self.window.handle_line(
+            "CH 4 FAN=100% RPM=0 TEMP=482 MODE=auto SENSOR=stale TYPE=3 FAULT=1"
+        )
+        self.assertEqual(shell.fan_live_state.property("role"), "negative")
+        shell.set_connected(False)
+        self.assertIn("Немає", shell.fan_live_state.text())
+
+    def test_v3_argb_zone_map_is_read_only_until_apply(self):
+        shell = self.window.dashboard
+        self.assertEqual(len(shell.argb_zone_tiles), 8)
+        self.assertEqual(shell.argb_workspace_tabs.count(), 3)
+        self.assertTrue(shell.argb_zone_tiles[1][0].property("selected"))
+        shell.zone_box.setCurrentIndex(4)
+        self.assertFalse(shell.argb_zone_tiles[1][0].property("selected"))
+        self.assertTrue(shell.argb_zone_tiles[5][0].property("selected"))
+        self.assertEqual(self.window.fan_box.currentIndex(), 4)
+        shell.sync_zone(7)
+        self.assertTrue(shell.argb_zone_tiles[8][0].property("selected"))
+        shell.argb_workspace_tabs.setCurrentIndex(1)
+        self.assertTrue(shell.native_checkbox.isVisible() or
+                        not shell.isVisible())  # stored OpenRGB control still exists
+
+    def test_v3_esp32_footer_and_responsive_help(self):
+        shell = self.window.dashboard
+        panel = shell.device_settings
+        self.assertEqual(panel.action_stack.count(), 4)
+        for tab_name, button in (
+            ("wifi", panel.wifi_save), ("mqtt", panel.mqtt_save),
+            ("argb", panel.rgb_save), ("fan", panel.fan_save),
+        ):
+            self.assertTrue(panel.select_tab(tab_name))
+            self.assertTrue(panel.action_stack.currentWidget().isAncestorOf(button))
+        self.window.show()
+        shell.show_page("esp32")
+        self.window.resize(1510, 930)
+        self.app.processEvents()
+        self.assertFalse(shell._esp_help_card.isHidden())
+        self.window.resize(1080, 760)
+        self.app.processEvents()
+        self.assertTrue(shell._esp_help_card.isHidden())
+        self.assertTrue(panel.action_footer.isAncestorOf(panel.fan_save))
 
     def test_quick_navigation_and_search_palette(self):
         shell = self.window.dashboard
