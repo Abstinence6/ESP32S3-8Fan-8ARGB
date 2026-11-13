@@ -10,6 +10,7 @@ from collections.abc import Iterable
 from PySide6.QtCore import Qt
 from settings_widgets import DesktopSettingsPanel
 from hardware_sensor_ui import HardwareSensorPanel
+from argb_studio_ui import ArgbStudioPanel
 from PySide6.QtWidgets import (
     QButtonGroup, QComboBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
     QLabel, QLayout, QPushButton, QRadioButton, QScrollArea, QSplitter,
@@ -393,6 +394,8 @@ class DashboardShell(QWidget):
 
         rgb_box.setTitle("Колір, яскравість та OpenRGB")
         layout.addWidget(rgb_box)
+        self.studio = ArgbStudioPanel(self.controller)
+        layout.addWidget(self.studio)
         note = QFrame()
         note.setObjectName("quietCard")
         foot = QVBoxLayout(note)
