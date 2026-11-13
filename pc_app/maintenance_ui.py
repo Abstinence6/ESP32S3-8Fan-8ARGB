@@ -136,6 +136,8 @@ class MaintenancePanel(QGroupBox):
         )
         if not path:
             return
+        self.firmware_path = ""
+        self.selected_sha256 = ""
         try:
             digest, length = inspect_firmware(path)
         except (OSError, ValueError) as exc:
@@ -155,7 +157,7 @@ class MaintenancePanel(QGroupBox):
         state = str(getattr(dashboard, "current_pc_state", "unknown"))
         last_seen = float(getattr(dashboard, "pc_state_updated_at", 0.0))
         # A stale "off" is not evidence that the machine is still off.
-        if time.monotonic() - last_seen > 15:
+        if state == "off" and time.monotonic() - last_seen > 15:
             state = "unknown"
         isolated = self.isolated_bench.isChecked()
         try:
