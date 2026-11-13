@@ -17,12 +17,15 @@ public:
     bool setRainbow(uint8_t channel);
     bool setPixels(uint8_t channel, const uint8_t* rgb, uint16_t count);
     bool configureStrip(uint8_t channel, uint16_t pixels, bool reversed);
+    // Update count/reversal and global power budget in one NVS record.
+    bool configureStripAndBudget(uint8_t channel, uint16_t pixels, bool reversed, uint16_t budgetMa);
     bool isReversed(uint8_t channel) const;
     uint16_t pixelCount(uint8_t channel) const;
     bool setBrightness(uint8_t channel, uint8_t brightness);
     bool setPowerBudget(uint16_t milliamps);
     uint16_t powerBudget() const { return powerLimitMa_; }
     uint32_t estimatedFullCurrent() const;
+    uint32_t estimatedLimitedCurrent() const;
     Mode getMode(uint8_t channel) const;
     uint8_t getBrightness(uint8_t channel) const;
     void update(uint32_t nowMs);
@@ -37,7 +40,6 @@ private:
         uint32_t crc;
     };
     static uint32_t checksum(const Config& config);
-    bool persist();
     void render();
     void drawSolid(uint8_t channel);
     void markDirty(uint8_t channel);

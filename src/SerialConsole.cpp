@@ -17,7 +17,9 @@ void SerialConsole::begin() {
 void SerialConsole::poll() {
     // Corrupt/partial packets cannot lock out normal fan and temperature commands.
     if (rx_ != RxState::Text && millis() - rgbLastByteMs_ > 300U) resetBinary();
-    while (serial_.available() > 0) {
+    // Do not let sustained RGB traffic starve the main cooling loop.
+    uint16_t rxBudget = 1024;
+    while (rxBudget-- && serial_.available() > 0) {
         handleByte(static_cast<uint8_t>(serial_.read()));
     }
     if (selfTestActive_ && static_cast<uint32_t>(millis() - selfTestStartMs_) >= 5000U)
@@ -181,7 +183,7 @@ void SerialConsole::handleLine(char* line) {
     }
     if (strcmp(command, "VERSION?") == 0) {
         if (!noMore()) return error();
-        serial_.print(F("FW VERSION=8 SERIAL=5 DC_READY="));
+        serial_.print(F("FW VERSION=8 SERIAL=6 DC_READY="));
         serial_.print(board::kDcSupplyPwmValidated ? 1 : 0);
         serial_.print(F(" DS18B20="));
         serial_.print(hw_ && hw_->enabled() ? 1 : 0);
@@ -517,6 +519,20 @@ void SerialConsole::handleLine(char* line) {
         }
         return error();
     }
+    if (!strcmp(command, "ARGBCFG")) {
+        uint8_t ch = 0, reversed = 0, brightness = 0;
+        uint16_t count = 0, budget = 0;
+        if (!parseByte(next(), board::kChannelCount, ch) || ch == 0 ||
+            !parseU16(next(), board::kMaxArgbPixelsPerFrame, count) || count == 0 ||
+            !parseByte(next(), 1, reversed) ||
+            !parseU16(next(), 20000, budget) || budget < 100 ||
+            !parseByte(next(), 255, brightness) || !noMore()) return error();
+        if (!leds_.configureStripAndBudget(ch - 1, count, reversed != 0, budget) ||
+            !leds_.setBrightness(ch - 1, brightness)) {
+            serial_.println(F("ERR ARGB config NVS")); return;
+        }
+        serial_.println(F("OK ARGBCFG_SAVED")); return;
+    }
     if (!strcmp(command, "STRIP") || !strcmp(command,"REVERSE")) {
         uint8_t ch = 0; uint16_t val = 0;
         if (!parseByte(next(),board::kChannelCount,ch) || !ch ||
@@ -549,7 +565,8 @@ void SerialConsole::handleLine(char* line) {
     if (!strcmp(command,"ARGBSTATUS")) {
         if (!noMore()) return error();
         serial_.print(F("ARGBSTATUS LIMIT_MA=")); serial_.print(leds_.powerBudget());
-        serial_.print(F(" REQUESTED_MA=")); serial_.println(leds_.estimatedFullCurrent());
+        serial_.print(F(" REQUESTED_MA=")); serial_.print(leds_.estimatedFullCurrent());
+    serial_.print(F(" LIMITED_MA=")); serial_.println(leds_.estimatedLimitedCurrent());
         return;
     }
     if (strcmp(command, "TYPE") == 0 || strcmp(command, "TYPE?") == 0) {
@@ -583,6 +600,18 @@ void SerialConsole::handleLine(char* line) {
             serial_.println(F("ERR RPM needs calibration")); return;
         }
         serial_.println(F("OK RPM")); return;
+    }
+    if (strcmp(command, "FANCFG") == 0) {
+        uint8_t ch = 0, ppr = 0, critical = 0;
+        uint16_t stall = 0;
+        if (!parseByte(next(), board::kChannelCount, ch) || ch == 0 ||
+            !parseByte(next(), 12, ppr) || ppr == 0 ||
+            !parseByte(next(), 120, critical) || critical < 40 ||
+            !parseU16(next(), 3000, stall) || !noMore()) return error();
+        if (!cooling_.setFanThresholds(ch - 1, ppr, critical, stall)) {
+            serial_.println(F("ERR FANCFG NVS")); return;
+        }
+        serial_.println(F("OK FANCFG_SAVED")); return;
     }
     if (strcmp(command, "PID") == 0 || strcmp(command, "DUAL") == 0 ||
         strcmp(command, "PPR") == 0 || strcmp(command, "CRIT") == 0 ||
@@ -704,12 +733,14 @@ void SerialConsole::printHelp() {
     serial_.println(F("TEMP2 / CURVE2 / CURVE2? for second thermal source; DUAL <ch> 0|1"));
     serial_.println(F("PID <ch> 0|1 | RPM <ch> <rpm> (requires calibration)"));
     serial_.println(F("PPR <ch> 1..12 | CRIT <ch> 40..120 | STALL <ch> 0..3000"));
+    serial_.println(F("FANCFG <ch> <ppr> <criticalC> <stallRpm> (one NVS record)"));
     serial_.println(F("TYPE? <ch> | TYPE <ch> 2|3 (no auto detection)"));
     serial_.println(F("CONFIG <ch> | FAULTS | CLEARFAULT <ch> | CLEARHISTORY"));
     serial_.println(F("LED <ch> <R> <G> <B> | ALLLED <R> <G> <B>"));
     serial_.println(F("OFF <ch> | ALLOFF | RAINBOW <ch> | BRIGHT <ch> <0..255>"));
     serial_.println(F("WIFI CONFIG? | WIFI SETHEX <ssidHex> <pskHex|KEEP|-> | WIFI OFF"));
     serial_.println(F("STRIPCFG? <ch> | STRIP <ch> 1..170 | REVERSE <ch> 0|1 | RGBBUDGET <100..20000> | ARGBSTATUS"));
+    serial_.println(F("ARGBCFG <ch> <count> <reverse> <budgetMa> <brightness> (one NVS record)"));
     serial_.println(F("Binary ARGB: A5 5A ch countLE16 RGB... crc16LE (CCITT-FALSE)"));
 }
 

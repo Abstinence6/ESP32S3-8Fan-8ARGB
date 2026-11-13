@@ -778,7 +778,7 @@ class FanArgbWindow(QMainWindow):
                     + f" · DC PWM {'дозволено' if fields.get('DC_READY') == '1' else 'заблоковано'}"
                     + f" · DS18B20 {'так' if fields.get('DS18B20') == '1' else 'ні'}"
                 )
-                self.dashboard.device_settings.set_version(version)
+                self.dashboard.device_settings.set_version(version, int(fields.get("SERIAL", 5)))
             except (ValueError, KeyError):
                 self.log("Невалідна відповідь VERSION?")
             return

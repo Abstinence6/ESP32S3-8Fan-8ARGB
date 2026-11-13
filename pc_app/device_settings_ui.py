@@ -26,6 +26,7 @@ class DeviceSettingsPanel(QWidget):
         super().__init__()
         self.controller = controller
         self.version = 0
+        self.serial_version = 5
         self.connected = False
         self.wifi_config: dict[str, object] = {}
         self.mqtt_config: dict[str, object] = {}
@@ -37,6 +38,9 @@ class DeviceSettingsPanel(QWidget):
         self._rgb_known = False
         self._fan_known = False
         self._argb_verified: set[str] = set()
+        self._strip_snapshot: dict[int, dict[str, object]] = {}
+        self._fan_snapshot: dict[int, dict[str, int]] = {}
+        self._budget_current: int | None = None
         self._operations: deque[tuple[str, str]] = deque()
         self._active: tuple[str, str] | None = None
         self._verify: str | None = None
@@ -251,6 +255,10 @@ class DeviceSettingsPanel(QWidget):
             self._active = None
             self._verify = None
             self.version = 0
+            self.serial_version = 5
+            self._strip_snapshot.clear()
+            self._fan_snapshot.clear()
+            self._budget_current = None
             self.wifi_config.clear()
             self.mqtt_config.clear()
             self._wifi_dirty = False
@@ -263,8 +271,9 @@ class DeviceSettingsPanel(QWidget):
             self.mqtt_status.setText("ESP32 не підключено")
         self._update_buttons()
 
-    def set_version(self, version: int) -> None:
+    def set_version(self, version: int, serial_version: int = 5) -> None:
         self.version = version
+        self.serial_version = serial_version
         self.header.setText(
             f"ESP32 firmware v{version} · конфігурація через USB · NVS"
             if version >= 8 else
@@ -451,15 +460,31 @@ class DeviceSettingsPanel(QWidget):
 
     def save_argb(self) -> None:
         ch = self.rgb_zone.currentData()
-        self._start([
-            (f"STRIP {ch} {self.rgb_count.value()}", "OK STRIP_SAVED"),
-            (f"REVERSE {ch} {1 if self.rgb_reverse.isChecked() else 0}", "OK STRIP_SAVED"),
-            (f"RGBBUDGET {self.rgb_budget.value()}", "OK BUDGET_SAVED"),
-            (f"BRIGHT {ch} {self.rgb_brightness.value()}", "OK"),
-        ], "argb", {
-            "channel": ch, "leds": self.rgb_count.value(),
-            "reverse": self.rgb_reverse.isChecked(),
-            "budget": self.rgb_budget.value(),
+        count = self.rgb_count.value()
+        reverse = self.rgb_reverse.isChecked()
+        budget = self.rgb_budget.value()
+        bright = self.rgb_brightness.value()
+        previous = self._strip_snapshot.get(ch, {})
+        geometry_changed = (previous.get("leds") != count or
+                            previous.get("reverse") != reverse)
+        brightness_changed = previous.get("brightness") != bright
+        budget_changed = self._budget_current != budget
+        if self.serial_version >= 6 and (geometry_changed or brightness_changed or budget_changed):
+            ops = [(f"ARGBCFG {ch} {count} {int(reverse)} {budget} {bright}",
+                    "OK ARGBCFG_SAVED")]
+        else:
+            ops = []
+            if previous.get("leds") != count:
+                ops.append((f"STRIP {ch} {count}", "OK STRIP_SAVED"))
+            if previous.get("reverse") != reverse:
+                ops.append((f"REVERSE {ch} {int(reverse)}", "OK STRIP_SAVED"))
+            if budget_changed:
+                ops.append((f"RGBBUDGET {budget}", "OK BUDGET_SAVED"))
+            if brightness_changed:
+                ops.append((f"BRIGHT {ch} {bright}", "OK"))
+        self._start(ops, "argb", {
+            "channel": ch, "leds": count, "reverse": reverse,
+            "budget": budget, "brightness": bright,
         })
 
     def save_fan(self) -> None:
@@ -472,12 +497,26 @@ class DeviceSettingsPanel(QWidget):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         ) != QMessageBox.StandardButton.Yes:
             return
-        self._start([
-            (f"PPR {ch} {self.fan_ppr.value()}", "OK CONFIG"),
-            (f"CRIT {ch} {self.fan_critical.value()}", "OK CONFIG"),
-            (f"STALL {ch} {self.fan_stall.value()}", "OK CONFIG"),
-        ], "fan", {"channel": ch, "ppr": self.fan_ppr.value(),
-                   "crit": self.fan_critical.value(), "stall": self.fan_stall.value()})
+        ppr = self.fan_ppr.value()
+        critical = self.fan_critical.value()
+        stall = self.fan_stall.value()
+        previous = self._fan_snapshot.get(ch, {})
+        if self.serial_version >= 6:
+            operations = [] if (previous.get("ppr") == ppr and
+                                previous.get("crit") == critical and
+                                previous.get("stall") == stall) else [
+                (f"FANCFG {ch} {ppr} {critical} {stall}", "OK FANCFG_SAVED")
+            ]
+        else:
+            operations = []
+            for key, command, value in (
+                ("ppr", "PPR", ppr), ("crit", "CRIT", critical),
+                ("stall", "STALL", stall),
+            ):
+                if previous.get(key) != value:
+                    operations.append((f"{command} {ch} {value}", "OK CONFIG"))
+        self._start(operations, "fan",
+                    {"channel": ch, "ppr": ppr, "crit": critical, "stall": stall})
 
     def handle_line(self, line: str) -> bool:
         if line.startswith("WIFI_CONFIG "):
@@ -572,6 +611,7 @@ class DeviceSettingsPanel(QWidget):
             brightness = int(data["BRIGHT"])
         except (ValueError, KeyError):
             return
+        self._strip_snapshot[ch] = {"leds": pixels, "reverse": reverse, "brightness": brightness}
         if ch == self.rgb_zone.currentData():
             self._rgb_known = True
             self._update_buttons()
@@ -580,7 +620,8 @@ class DeviceSettingsPanel(QWidget):
             self.rgb_brightness.setValue(brightness)
         if self._verify == "pending_argb" and ch == self._expected.get("channel"):
             if (pixels != self._expected.get("leds") or
-                    reverse != self._expected.get("reverse")):
+                    reverse != self._expected.get("reverse") or
+                    brightness != self._expected.get("brightness")):
                 self._complete(False)
             else:
                 self._argb_verified.add("strip")
@@ -593,8 +634,13 @@ class DeviceSettingsPanel(QWidget):
             requested = int(data["REQUESTED_MA"])
         except (ValueError, KeyError):
             return
+        self._budget_current = budget
         self.rgb_budget.setValue(budget)
-        self.argb_status.setText(f"{budget} мА · поточна оцінка {requested} мА")
+        limited = data.get("LIMITED_MA")
+        self.argb_status.setText(
+            f"{budget} мА · запит {requested} мА" +
+            (f" · після обмеження {limited} мА" if limited is not None else "")
+        )
         if self._verify == "pending_argb":
             if budget != self._expected.get("budget"):
                 self._complete(False)
@@ -615,6 +661,7 @@ class DeviceSettingsPanel(QWidget):
             stall = int(data["STALL"])
         except (ValueError, KeyError):
             return
+        self._fan_snapshot[ch] = {"ppr": ppr, "crit": crit, "stall": stall}
         if ch == self.fan_zone.currentData():
             self._fan_known = True
             self._update_buttons()

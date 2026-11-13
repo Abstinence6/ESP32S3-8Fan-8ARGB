@@ -48,6 +48,7 @@ public:
     bool setCriticalTemperature(uint8_t ch, uint8_t tempC);
     uint8_t criticalTemperature(uint8_t ch) const;
     bool setStallThreshold(uint8_t ch, uint16_t rpm);
+    bool setFanThresholds(uint8_t ch, uint8_t ppr, uint8_t criticalC, uint16_t stallRpm);
     uint16_t stallThreshold(uint8_t ch) const;
     bool faulted(uint8_t ch) const;
     bool clearFault(uint8_t ch);

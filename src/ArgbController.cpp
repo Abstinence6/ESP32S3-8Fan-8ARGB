@@ -17,18 +17,6 @@ uint32_t ArgbController::checksum(const Config& config) {
     }
     return hash;
 }
-bool ArgbController::persist() {
-    Config config = {};
-    config.magic = kArgbMagic;
-    config.budgetMa = powerLimitMa_;
-    for (uint8_t i = 0; i < board::kChannelCount; ++i) {
-        config.counts[i] = strips_[i].numPixels();
-        config.reversed[i] = reversed_[i];
-    }
-    config.crc = checksum(config);
-    return storage_.putBytes("config", &config, sizeof(config)) == sizeof(config);
-}
-
 bool ArgbController::begin() {
     if (!storage_.begin("argb-v4", false)) return false;
     Config config = {};
@@ -67,17 +55,31 @@ uint32_t ArgbController::estimatedFullCurrent() const {
     }
     return total;
 }
-void ArgbController::render() {
-    uint32_t baseline = 0, requestedColor = 0;
+uint32_t ArgbController::estimatedLimitedCurrent() const {
+    // Estimate only; this is not a measurement or a substitute for a fuse.
+    uint32_t baseline = 0;
+    uint64_t weightedColor = 0;
     for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
         const uint16_t count = strips_[ch].numPixels();
         baseline += count;
         for (uint16_t i = 0; i < count * 3U; ++i)
-            requestedColor += static_cast<uint32_t>(frame_[ch][i]) * brightness_[ch] * 20U;
+            weightedColor += static_cast<uint64_t>(frame_[ch][i]) * brightness_[ch] * 20U;
+    }
+    return baseline + static_cast<uint32_t>(weightedColor * lastScale_ /
+        (255ULL * 255ULL * 255ULL));
+}
+void ArgbController::render() {
+    uint32_t baseline = 0;
+    uint64_t requestedColor = 0;
+    for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
+        const uint16_t count = strips_[ch].numPixels();
+        baseline += count;
+        for (uint16_t i = 0; i < count * 3U; ++i)
+            requestedColor += static_cast<uint64_t>(frame_[ch][i]) * brightness_[ch] * 20U;
     }
     const uint32_t allowance = powerLimitMa_ > baseline ? powerLimitMa_ - baseline : 0;
     // RequestedColor is in units of mA * 255 * 255 (RGB channels assume 20 mA max).
-    const uint64_t desired = static_cast<uint64_t>(requestedColor);
+    const uint64_t desired = requestedColor;
     const uint64_t maxColor = static_cast<uint64_t>(allowance) * 255U * 255U;
     const uint16_t scale = desired > maxColor && desired
         ? static_cast<uint16_t>(maxColor * 255U / desired) : 255;
@@ -148,28 +150,46 @@ bool ArgbController::setPixels(uint8_t ch, const uint8_t* rgb, uint16_t count) {
     return true;
 }
 bool ArgbController::configureStrip(uint8_t ch, uint16_t count, bool reversed) {
-    if (ch >= board::kChannelCount || count == 0 || count > board::kMaxArgbPixelsPerFrame) return false;
-    const uint16_t oldCount = strips_[ch].numPixels();
-    const bool oldReverse = reversed_[ch];
-    strips_[ch].updateLength(count);
-    reversed_[ch] = reversed;
-    memset(frame_[ch], 0, sizeof(frame_[ch]));
-    modes_[ch] = Mode::Off;
-    markDirty(ch);
-    // LED output deferred to update() so fan control/serial input get priority.
-    if (persist()) return true;
-    strips_[ch].updateLength(oldCount);
-    reversed_[ch] = oldReverse;
-    return false;
+    if (ch >= board::kChannelCount) return false;
+    return configureStripAndBudget(ch, count, reversed, powerLimitMa_);
+}
+bool ArgbController::configureStripAndBudget(uint8_t ch, uint16_t count,
+                                             bool reversed, uint16_t budgetMa) {
+    if (ch >= board::kChannelCount || count == 0 ||
+        count > board::kMaxArgbPixelsPerFrame ||
+        budgetMa < 100 || budgetMa > 20000) return false;
+
+    const bool geometryChanged = strips_[ch].numPixels() != count ||
+                                 reversed_[ch] != reversed;
+    const bool budgetChanged = powerLimitMa_ != budgetMa;
+    if (!geometryChanged && !budgetChanged) return true; // preserve scene; no flash wear
+
+    Config config = {};
+    config.magic = kArgbMagic;
+    config.budgetMa = budgetMa;
+    for (uint8_t i = 0; i < board::kChannelCount; ++i) {
+        config.counts[i] = (i == ch) ? count : strips_[i].numPixels();
+        config.reversed[i] = (i == ch) ? reversed : reversed_[i];
+    }
+    config.crc = checksum(config);
+    if (storage_.putBytes("config", &config, sizeof(config)) != sizeof(config))
+        return false; // never alter RAM settings on a failed NVS commit
+
+    if (geometryChanged) {
+        strips_[ch].updateLength(count);
+        reversed_[ch] = reversed;
+        memset(frame_[ch], 0, sizeof(frame_[ch]));
+        modes_[ch] = Mode::Off;
+        markDirty(ch);
+    }
+    if (budgetChanged) {
+        powerLimitMa_ = budgetMa;
+        for (uint8_t i = 0; i < board::kChannelCount; ++i) markDirty(i);
+    }
+    return true;
 }
 bool ArgbController::setPowerBudget(uint16_t ma) {
-    if (ma < 100 || ma > 20000) return false;
-    const uint16_t previous = powerLimitMa_;
-    powerLimitMa_ = ma;
-    if (!persist()) { powerLimitMa_ = previous; return false; }
-    for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) markDirty(ch);
-    // LED output deferred to update() so fan control/serial input get priority.
-    return true;
+    return configureStripAndBudget(0, strips_[0].numPixels(), reversed_[0], ma);
 }
 bool ArgbController::isReversed(uint8_t ch) const { return ch < board::kChannelCount && reversed_[ch]; }
 uint16_t ArgbController::pixelCount(uint8_t ch) const { return ch < board::kChannelCount ? strips_[ch].numPixels() : 0; }

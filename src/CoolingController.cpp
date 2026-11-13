@@ -601,6 +601,20 @@ bool CoolingController::setCriticalTemperature(uint8_t ch, uint8_t t) {
     StoredFan value = saved_[ch]; value.criticalC = t; return writeFan(ch, value);
 }
 uint8_t CoolingController::criticalTemperature(uint8_t ch) const { return ch < board::kChannelCount ? saved_[ch].criticalC : 0; }
+bool CoolingController::setFanThresholds(uint8_t ch, uint8_t ppr,
+                                          uint8_t criticalC, uint16_t stallRpm) {
+    if (ch >= board::kChannelCount || ppr < 1 || ppr > 12 ||
+        criticalC < 40 || criticalC > 120 || stallRpm > 3000) return false;
+    if (saved_[ch].ppr == ppr && saved_[ch].criticalC == criticalC &&
+        saved_[ch].stallRpm == stallRpm) return true;
+    StoredFan value = saved_[ch];
+    value.ppr = ppr;
+    value.criticalC = criticalC;
+    value.stallRpm = stallRpm;
+    if (!writeFan(ch, value)) return false;
+    fans_.setPulsesPerRevolution(ch, ppr);
+    return true;
+}
 bool CoolingController::setStallThreshold(uint8_t ch, uint16_t rpm) {
     if (ch >= board::kChannelCount || rpm > 3000) return false;
     StoredFan value = saved_[ch]; value.stallRpm = rpm; return writeFan(ch, value);
