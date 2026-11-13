@@ -1,4 +1,5 @@
 #include "NetworkRgbBridge.h"
+#include "ConfigWire.h"
 #include <string.h>
 #include <initializer_list>
 
@@ -88,6 +89,20 @@ bool NetworkRgbBridge::configure(const char* ssid, const char* password) {
     (void)ssid; (void)password; return false;
 #endif
 }
+bool NetworkRgbBridge::reconnectExisting(const char* ssid) {
+#if defined(ARDUINO_ARCH_ESP32)
+    // Never keep credentials for a different network without proof that the
+    // new SSID uses the old PSK.
+    if (!enabled_ || !ssid || strcmp(ssid, ssid_) != 0) return false;
+    if (listening_) { sacn_.stop(); ddp_.stop(); listening_ = false; }
+    WiFi.disconnect();
+    connect();
+    return true;
+#else
+    (void)ssid;
+    return false;
+#endif
+}
 bool NetworkRgbBridge::disable() {
 #if defined(ARDUINO_ARCH_ESP32)
     const uint8_t empty[kSettingsSize] = {};
@@ -108,6 +123,21 @@ bool NetworkRgbBridge::connected() const {
 #else
     return false;
 #endif
+}
+void NetworkRgbBridge::printConfig(Stream& out) const {
+    out.print(F("WIFI_CONFIG ENABLED=")); out.print(enabled_ ? 1 : 0);
+    out.print(F(" CONNECTED=")); out.print(connected() ? 1 : 0);
+    out.print(F(" SSID_HEX="));
+    configwire::printHex(out, ssid_);
+    out.print(F(" PASSWORD_SET=")); out.print(password_[0] ? 1 : 0);
+    out.print(F(" IP="));
+#if defined(ARDUINO_ARCH_ESP32)
+    if (connected()) out.print(WiFi.localIP().toString().c_str());
+    else out.print(F("-"));
+#else
+    out.print(F("-"));
+#endif
+    out.println("");
 }
 void NetworkRgbBridge::printStatus(Stream& out) const {
     out.print(F("WIFI "));

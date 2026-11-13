@@ -1,5 +1,6 @@
 #include "SerialConsole.h"
 #include "MqttBridge.h"
+#include "ConfigWire.h"
 
 #include <ctype.h>
 #include <stdlib.h>
@@ -10,7 +11,7 @@ SerialConsole::SerialConsole(Stream& serial, FanController& fans, ArgbController
     : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling), wifi_(wifi), mqtt_(mqtt), pc_(pc), hw_(hw) {}
 
 void SerialConsole::begin() {
-    serial_.println(F("8Fan/8ARGB ready | protocol v4 | type HELP"));
+    serial_.println(F("8Fan/8ARGB ready | protocol v5 | type HELP"));
 }
 
 void SerialConsole::poll() {
@@ -145,7 +146,7 @@ void SerialConsole::handleLine(char* line) {
 
     if (strcmp(command, "PING") == 0) {
         if (!noMore()) return error();
-        serial_.println(F("PONG 4"));
+        serial_.println(F("PONG 5"));
         return;
     }
     if (strcmp(command, "HELP") == 0) {
@@ -180,7 +181,7 @@ void SerialConsole::handleLine(char* line) {
     }
     if (strcmp(command, "VERSION?") == 0) {
         if (!noMore()) return error();
-        serial_.print(F("FW VERSION=7 SERIAL=4 DC_READY="));
+        serial_.print(F("FW VERSION=8 SERIAL=5 DC_READY="));
         serial_.print(board::kDcSupplyPwmValidated ? 1 : 0);
         serial_.print(F(" DS18B20="));
         serial_.print(hw_ && hw_->enabled() ? 1 : 0);
@@ -429,11 +430,27 @@ void SerialConsole::handleLine(char* line) {
         }
         char* op = next();
         if (!op) return error();
-        for (char* c = op; *c; ++c) *c = static_cast<char>(toupper(static_cast<unsigned char>(*c)));
-        if (!strcmp(op, "HOST")) {
+        for (char* p = op; *p; ++p) *p = static_cast<char>(toupper(static_cast<unsigned char>(*p)));
+        if (!strcmp(op, "CONFIG?")) {
+            if (!noMore()) return error();
+            mqtt_->printConfig(serial_); return;
+        }
+        if (!strcmp(op, "BROKER") || !strcmp(op, "HOST")) {
             char* host = next(); uint16_t port = 0;
             if (!host || !parseU16(next(), 65535, port) || !port || !noMore()) return error();
-            if (!mqtt_->setBroker(host, port)) { serial_.println(F("ERR MQTT host")); return; }
+            // BROKER only stores the broker. Legacy HOST enables MQTT for old clients.
+            if (!mqtt_->setBroker(host, port, !strcmp(op, "HOST"))) {
+                serial_.println(F("ERR MQTT host")); return;
+            }
+        } else if (!strcmp(op, "AUTHHEX")) {
+            const char* userHex = next(); const char* passwordHex = next();
+            if (!userHex || !passwordHex || !noMore()) return error();
+            char user[32] = {}, password[64] = {};
+            if (!configwire::decode(userHex, user, sizeof(user), true) ||
+                !configwire::decode(passwordHex, password, sizeof(password), true) ||
+                (!user[0] && password[0]) || !mqtt_->setCredentials(user, password)) {
+                serial_.println(F("ERR MQTT credentials")); return;
+            }
         } else if (!strcmp(op, "AUTH")) {
             char* user = next(); char* pass = next();
             if (!user) return error();
@@ -442,6 +459,16 @@ void SerialConsole::handleLine(char* line) {
             } else {
                 if (!pass || !noMore()) return error();
                 if (!mqtt_->setCredentials(user, pass)) { serial_.println(F("ERR MQTT auth")); return; }
+            }
+        } else if (!strcmp(op, "HA")) {
+            char* state = next();
+            if (!state || !noMore() || (strcmp(state, "ON") && strcmp(state, "OFF"))) return error();
+            if (!mqtt_->setDiscovery(!strcmp(state, "ON"))) {
+                serial_.println(F("ERR MQTT discovery storage")); return;
+            }
+        } else if (!strcmp(op, "CLEAR")) {
+            if (!noMore() || !mqtt_->resetSettings()) {
+                serial_.println(F("ERR MQTT reset")); return;
             }
         } else if ((!strcmp(op, "ON") || !strcmp(op, "OFF")) && noMore()) {
             if (!mqtt_->setEnabled(!strcmp(op, "ON"))) { serial_.println(F("ERR MQTT config")); return; }
@@ -452,7 +479,11 @@ void SerialConsole::handleLine(char* line) {
         if (!wifi_) { serial_.println(F("ERR wifi not available")); return; }
         char* op = next();
         if (!op) return error();
-        for (char* c=op; *c; ++c) *c=static_cast<char>(toupper(static_cast<unsigned char>(*c)));
+        for (char* p=op; *p; ++p) *p=static_cast<char>(toupper(static_cast<unsigned char>(*p)));
+        if (!strcmp(op, "CONFIG?")) {
+            if (!noMore()) return error();
+            wifi_->printConfig(serial_); return;
+        }
         if (!strcmp(op,"STATUS")) {
             if (!noMore()) return error();
             wifi_->printStatus(serial_); return;
@@ -460,6 +491,22 @@ void SerialConsole::handleLine(char* line) {
         if (!strcmp(op,"OFF")) {
             if (!noMore() || !wifi_->disable()) { serial_.println(F("ERR WIFI storage")); return; }
             serial_.println(F("OK WIFI_OFF")); return;
+        }
+        if (!strcmp(op,"SETHEX")) {
+            const char* ssidHex = next(); const char* passwordHex = next();
+            if (!ssidHex || !passwordHex || !noMore()) return error();
+            char ssid[33] = {}, password[65] = {};
+            if (!configwire::decode(ssidHex, ssid, sizeof(ssid))) {
+                serial_.println(F("ERR WIFI ssid")); return;
+            }
+            bool success = false;
+            if (!strcmp(passwordHex, "KEEP")) {
+                success = wifi_->reconnectExisting(ssid);
+            } else if (configwire::decode(passwordHex, password, sizeof(password), true)) {
+                success = wifi_->configure(ssid, password);
+            }
+            if (!success) { serial_.println(F("ERR WIFI config")); return; }
+            serial_.println(F("OK WIFI_SET")); return;
         }
         if (!strcmp(op,"SET")) {
             char* ssid = next(); char* password = next();
@@ -481,6 +528,17 @@ void SerialConsole::handleLine(char* line) {
             ok = leds_.configureStrip(ch-1,leds_.pixelCount(ch-1),val != 0);
         if (!ok) { serial_.println(F("ERR STRIP config")); return; }
         serial_.println(F("OK STRIP_SAVED")); return;
+    }
+    if (!strcmp(command, "STRIPCFG?")) {
+        uint8_t channel = 0;
+        if (!parseByte(next(), board::kChannelCount, channel) ||
+            channel == 0 || !noMore()) return error();
+        const uint8_t ch = channel - 1;
+        serial_.print(F("STRIPCFG CH=")); serial_.print(channel);
+        serial_.print(F(" LEDS=")); serial_.print(leds_.pixelCount(ch));
+        serial_.print(F(" REVERSE=")); serial_.print(leds_.isReversed(ch) ? 1 : 0);
+        serial_.print(F(" BRIGHT=")); serial_.println(leds_.getBrightness(ch));
+        return;
     }
     if (!strcmp(command, "RGBBUDGET")) {
         uint16_t milliamps = 0;
@@ -638,7 +696,7 @@ void SerialConsole::printHelp() {
     serial_.println(F("PING | STATUS | HEALTH [ch] | SELFTEST [CANCEL] | HELP | LEDS | PC STATUS|ON|OFF|FORCE"));
     serial_.println(F("VERSION? | HTEMP? | HTLIST? | HTSCAN | HTMAP? <ch> | HTMAP <ch> AUTO|ROMHEX"));
     serial_.println(F("HTMODE? <ch> | HTMODE <ch> PC|LOCAL|BACKUP"));
-    serial_.println(F("MQTT? | MQTT HOST <broker> <port> | MQTT AUTH <user> <pass> | MQTT ON|OFF"));
+    serial_.println(F("MQTT CONFIG? | MQTT BROKER <host> <port> | MQTT AUTHHEX <userHex|-> <passHex|-> | MQTT HA ON|OFF | MQTT ON|OFF | MQTT CLEAR"));
     serial_.println(F("TEMP <ch> <0..1250> | AUTO <ch> | ALLAUTO"));
     serial_.println(F("FAN <ch> <0..100> | ALLFAN <0..100> (manual override)"));
     serial_.println(F("CURVE? <ch> | CURVE <ch> <T1> <PWM1> ... <T5> <PWM5>"));
@@ -650,8 +708,8 @@ void SerialConsole::printHelp() {
     serial_.println(F("CONFIG <ch> | FAULTS | CLEARFAULT <ch> | CLEARHISTORY"));
     serial_.println(F("LED <ch> <R> <G> <B> | ALLLED <R> <G> <B>"));
     serial_.println(F("OFF <ch> | ALLOFF | RAINBOW <ch> | BRIGHT <ch> <0..255>"));
-    serial_.println(F("WIFI SET <ssid> <pass> | WIFI STATUS | WIFI OFF (no spaces in SSID/pass)"));
-    serial_.println(F("STRIP <ch> 1..170 | REVERSE <ch> 0|1 | RGBBUDGET <100..20000> | ARGBSTATUS"));
+    serial_.println(F("WIFI CONFIG? | WIFI SETHEX <ssidHex> <pskHex|KEEP|-> | WIFI OFF"));
+    serial_.println(F("STRIPCFG? <ch> | STRIP <ch> 1..170 | REVERSE <ch> 0|1 | RGBBUDGET <100..20000> | ARGBSTATUS"));
     serial_.println(F("Binary ARGB: A5 5A ch countLE16 RGB... crc16LE (CCITT-FALSE)"));
 }
 

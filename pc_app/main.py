@@ -627,6 +627,7 @@ class FanArgbWindow(QMainWindow):
             self.send("PC STATUS")
             self.send("MQTT?")
             self.send("HTEMP?")
+            self.dashboard.device_settings.refresh_online()
 
     def disconnect(self, manual: bool = False) -> None:
         if manual:
@@ -688,7 +689,10 @@ class FanArgbWindow(QMainWindow):
     def send_raw(self) -> None:
         raw = self.raw_input.text().strip()
         if raw and self.send(raw):
-            self.log("> " + raw)
+            secret_command = raw.upper().startswith((
+                "WIFI SET", "MQTT AUTH", "MQTT AUTHHEX",
+            ))
+            self.log("> [приховано налаштування доступу]" if secret_command else "> " + raw)
             self.raw_input.clear()
 
     def poll_serial(self) -> None:
@@ -712,6 +716,8 @@ class FanArgbWindow(QMainWindow):
 
     def handle_line(self, line: str) -> None:
         if not line:
+            return
+        if self.dashboard.device_settings.handle_line(line):
             return
         if self.dashboard.diagnostics.handle_line(line):
             return
@@ -768,10 +774,11 @@ class FanArgbWindow(QMainWindow):
                 version = int(fields["VERSION"])
                 self.dashboard.firmware_status.setText(
                     f"ESP32 firmware v{version} · "
-                    + ("сумісна" if version >= 6 else "старіша; оновлення рекомендовано")
+                    + ("сумісна" if version >= 8 else "оновлення потрібне для налаштувань ESP32")
                     + f" · DC PWM {'дозволено' if fields.get('DC_READY') == '1' else 'заблоковано'}"
                     + f" · DS18B20 {'так' if fields.get('DS18B20') == '1' else 'ні'}"
                 )
+                self.dashboard.device_settings.set_version(version)
             except (ValueError, KeyError):
                 self.log("Невалідна відповідь VERSION?")
             return
@@ -799,6 +806,8 @@ class FanArgbWindow(QMainWindow):
             self.dashboard.set_mqtt_state(line[5:])
             return
         if line.startswith("TYPE ") or line.startswith("CONFIG "):
+            if line.startswith("CONFIG "):
+                self.dashboard.device_settings.on_fan_config(line)
             parts = line.split()
             if len(parts) >= 3:
                 try:
@@ -1586,40 +1595,13 @@ class FanArgbWindow(QMainWindow):
         if ok: self.send(f"RGBBUDGET {ma}")
 
     def configure_mqtt(self) -> None:
-        if not self.port:
-            QMessageBox.warning(self, "MQTT", "Спочатку підключи ESP32-S3")
-            return
-        host, ok = QInputDialog.getText(self, "MQTT", "IP/hostname брокера:")
-        if not ok or not host.strip(): return
-        port, ok = QInputDialog.getInt(self, "MQTT", "Порт:", 1883, 1, 65535)
-        if not ok: return
-        user, ok = QInputDialog.getText(self, "MQTT", "Користувач (порожній = без авторизації):")
-        if not ok: return
-        password = ""
-        if user:
-            password, ok = QInputDialog.getText(self, "MQTT", "Пароль:", QLineEdit.EchoMode.Password)
-            if not ok: return
-        self.send(f"MQTT HOST {host.strip()} {port}")
-        if user:
-            self.send(f"MQTT AUTH {user} {password}")
-        else:
-            self.send("MQTT AUTH CLEAR")
-        self.send("MQTT ON")
-        self.send("MQTT?")
-        QMessageBox.information(self, "MQTT", "Брокер збережено. ESP32 має бути підключено до Wi-Fi.\n"
-                                 "Home Assistant Discovery активується після з'єднання з брокером.")
+        # Single source of truth: read/apply/verify the actual ESP32 config.
+        self.dashboard.show_page("esp32")
+        self.dashboard.device_settings.mqtt_host.setFocus()
 
     def configure_wifi(self) -> None:
-        ssid, ok = QInputDialog.getText(self, "Wi-Fi на ESP32", "SSID (без пробілів):")
-        if not ok or not ssid: return
-        password, ok = QInputDialog.getText(self, "Wi-Fi на ESP32", "Пароль (без пробілів):",
-                                              QLineEdit.EchoMode.Password)
-        if not ok: return
-        if " " in ssid or " " in password:
-            QMessageBox.warning(self, "Wi-Fi", "Цей протокол не підтримує пробіли у SSID/паролі")
-            return
-        # Do not log the password, and do not include it in GUI history.
-        self.send(f"WIFI SET {ssid} {password}")
+        self.dashboard.show_page("esp32")
+        self.dashboard.device_settings.wifi_ssid.setFocus()
 
     def toggle_native_openrgb(self, enabled: bool) -> None:
         if not enabled:

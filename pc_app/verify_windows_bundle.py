@@ -20,7 +20,7 @@ REQUIRED = frozenset({
     "hardware_sensor_ui", "argb_effects", "argb_studio_ui",
     "config_backup", "maintenance_ui", "firmware_update", "esptool",
     "tray_monitor", "serial_tx", "port_recovery", "tach_health",
-    "telemetry_store", "openrgb_native",
+    "telemetry_store", "openrgb_native", "device_config_protocol", "device_settings_ui",
     "diagnostics", "diagnostics_ui", "sensor_manager_ui",
 })
 MAGIC = b"MEI\x0c\x0b\x0a\x0b\x0e"

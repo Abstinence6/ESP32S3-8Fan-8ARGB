@@ -16,7 +16,10 @@ public:
     bool begin();
     void update(uint32_t nowMs);
     bool configure(const char* ssid, const char* password);
+    // Keep existing PSK only for the same SSID. Never expose stored PSK.
+    bool reconnectExisting(const char* ssid);
     bool disable();
+    void printConfig(Stream& out) const;
     bool configured() const { return enabled_; }
     bool connected() const;
     void printStatus(Stream& out) const;

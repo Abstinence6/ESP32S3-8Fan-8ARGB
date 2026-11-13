@@ -13,6 +13,7 @@ from settings_widgets import DesktopSettingsPanel
 from hardware_sensor_ui import HardwareSensorPanel
 from argb_studio_ui import ArgbStudioPanel
 from maintenance_ui import MaintenancePanel
+from device_settings_ui import DeviceSettingsPanel
 from diagnostics_ui import DiagnosticPanel
 from sensor_manager_ui import SensorManagerPanel
 from PySide6.QtWidgets import (
@@ -28,6 +29,7 @@ PAGES = (
     ("sensors", "◉  Датчики", "Датчики обладнання", "Температура, частоти, споживання, оберти"),
     ("argb", "✦  ARGB", "Підсвітка", "Сцени для восьми незалежних зон та OpenRGB"),
     ("pc", "⏻  Живлення ПК", "Живлення ПК", "Керування кнопкою PWR_SW з перевіркою стану"),
+    ("esp32", "⚙  ESP32", "Конфігурація контролера", "Wi-Fi, MQTT, Home Assistant, ARGB та TACH"),
     ("service", "⚙  Сервіс", "Додаткові налаштування", "Калібрування, конфігурація та діагностика"),
     ("logs", "☷  Логи", "Журнал подій", "Повідомлення контролера та ручні команди"),
 )
@@ -76,12 +78,16 @@ QPushButton[role="nav"]:checked {
     background: #203a55; color: #a9defb; font-weight: 700;
     border-left: 3px solid #4ca7dc;
 }
-QComboBox, QLineEdit {
+QComboBox, QLineEdit, QSpinBox {
     background: #141d2a; color: #eef4fc; border: 1px solid #394a61;
     border-radius: 7px; padding: 7px 9px; min-height: 23px;
     selection-background-color: #256b94;
 }
-QComboBox:hover, QLineEdit:focus { border-color: #58a5d3; }
+QComboBox:hover, QLineEdit:focus, QSpinBox:focus { border-color: #58a5d3; }
+QSpinBox::up-button, QSpinBox::down-button {
+    background: #29364a; border: 1px solid #394d65; width: 18px;
+}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: #34465e; }
 QComboBox QAbstractItemView { background: #1d2939; color: #eef4fc; selection-background-color: #315a80; }
 QTableWidget, QTextEdit, QListWidget {
     background: #141d2a; alternate-background-color: #1c2737;
@@ -193,6 +199,7 @@ class DashboardShell(QWidget):
         self._create_sensors(sensors_box)
         self._create_argb(rgb_box, scenes)
         self._create_pc(pc_box)
+        self._create_device_settings()
         self._create_service(
             calibration_box, hardware_rgb, config_files,
             preset_row, diagnostic_row,
@@ -510,6 +517,16 @@ class DashboardShell(QWidget):
         layout.addWidget(self.sensor_manager)
         self._add_page("sensors", page)
 
+    def _create_device_settings(self) -> None:
+        page, layout = self._content(
+            "Налаштування ESP32-S3",
+            "Усі змінювані параметри зчитуються й записуються через USB до NVS "
+            "контролера. Паролі не зберігаються на ПК.",
+        )
+        self.device_settings = DeviceSettingsPanel(self.controller)
+        layout.addWidget(self.device_settings)
+        self._add_page("esp32", page)
+
     def _create_service(
         self, calibration_box, hardware_rgb, config_files,
         preset_row, diagnostic_row,
@@ -609,6 +626,7 @@ class DashboardShell(QWidget):
                 labels["metrics"].setText("— %  ·  — °C")
                 labels["state"].setText("Немає даних")
         self._update_pc_buttons()
+        self.device_settings.set_connected(connected)
         self.connection_text.style().unpolish(self.connection_text)
         self.connection_text.style().polish(self.connection_text)
 

@@ -55,7 +55,7 @@ int main() {
         assert(leds.getMode(ch) == ArgbController::Mode::Off);
     }
     Serial.out.clear();
-    Serial.send(std::string(220, 'A') + "\nFAN 2 60\n");
+    Serial.send(std::string(300, 'A') + "\nFAN 2 60\n");
     console.poll();
     assert(Serial.out.find("ERR line too long") != std::string::npos);
     assert(fans.getPercent(1) == 60);
@@ -133,7 +133,7 @@ int main() {
     console.poll();
     assert(Serial.out.find("OK CURVE_SAVED") != std::string::npos);
     assert(Serial.out.find("CURVE 1 20 30 30 40 45 60 60 80 75 100") != std::string::npos);
-    assert(Serial.out.find("PONG 4") != std::string::npos);
+    assert(Serial.out.find("PONG 5") != std::string::npos);
 
     // A calibration sweep logs 21 PWM/RPM samples, then saves them to NVS.
     Serial.out.clear();
