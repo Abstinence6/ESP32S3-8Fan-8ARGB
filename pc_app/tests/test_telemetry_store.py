@@ -1,4 +1,5 @@
 import csv
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -21,7 +22,7 @@ class TelemetryStoreTests(unittest.TestCase):
                          fresh=False, fault=True, ts=106)
             t.record_alert("TACH", "Lost fan tach", ts=106)
             t.close()
-            with sqlite3.connect(db) as conn:
+            with closing(sqlite3.connect(db)) as conn:
                 rows = conn.execute("SELECT rpm, temp_c, fresh FROM fan_samples").fetchall()
                 self.assertEqual(rows, [(1234, 52.0, 1), (0, None, 0)])
                 alerts = conn.execute("SELECT category FROM alerts").fetchall()
