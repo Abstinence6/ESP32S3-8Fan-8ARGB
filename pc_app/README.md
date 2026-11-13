@@ -1,5 +1,25 @@
 # Windows application for ESP32-S3 Fan & ARGB Controller
 
+## v7: native OpenRGB and reliable USB
+
+- **Native OpenRGB (experimental)**: ARGB page → enable SDK server on
+  `127.0.0.1:6743` after connecting ESP and reading strip counts. Add this
+  host/port as a Remote SDK server in OpenRGB. One virtual device exposes
+  8 linear zones, no E1.31 bridge. E1.31, native SDK and ARGB Studio do not
+  run concurrently. Tested with SDK socket client; not real OpenRGB hardware.
+- GUI and headless agent now serialize USB packets with ASCII priority and
+  last-frame-per-zone ARGB coalescing. The existing RGB binary CRC is retained.
+- Automatic USB reconnect matches a saved unique USB serial/VID/PID (or
+  exact COM path+VID/PID); manual disconnect and flashing disable reconnect.
+- Up to 8 DS18B20 1-Wire sensors with CRC-checked ROM mapping per fan
+  (optional firmware only; disabled in default hardware build).
+- Passive TACH anomalies, SQLite WAL history with 30-day retention and
+  recent CSV export from Service.
+- ESP32-S3 firmware image chip ID, segment bounds, XOR and SHA checks.
+
+Instructions: [v7 guide](../docs/FEATURES_V7.md) and
+[hardware safety](../docs/V7_HARDWARE_SAFETY.md).
+
 ## v6.1 reliability hardening
 
 - Automatic Gaming/Work/Night profiles **pause** when live GPU utilization
