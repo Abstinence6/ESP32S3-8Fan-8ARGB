@@ -1,3 +1,26 @@
+## v8 — PC-managed ESP32 settings, USB protocol v5
+
+Windows PC GUI is the supported provisioning interface. It reads stored
+Wi-Fi/MQTT/ARGB config, writes validated changes and waits for firmware
+acknowledgement plus readback. No secret is included in status output.
+
+- `WIFI CONFIG?`: `WIFI_CONFIG ENABLED=<0|1> CONNECTED=<0|1> SSID_HEX=<hex|-> PASSWORD_SET=<0|1> IP=<ip|->`.
+- `WIFI SETHEX <ssidHex> <passwordHex|KEEP|->`: UTF-8 bytes encoded in HEX.
+  `KEEP` only for same SSID; `-` is an explicitly open Wi-Fi network.
+- `MQTT CONFIG?`: `MQTT_CONFIG ENABLED=... CONNECTED=... HOST_HEX=... PORT=... USER_HEX=... AUTH=... DISCOVERY=... TOPIC=...`.
+- `MQTT BROKER <host> <port>` saves broker without implicitly enabling MQTT.
+  `MQTT AUTHHEX <userHex|-> <passwordHex|->` saves credentials.
+  `MQTT HA ON|OFF` persists Home Assistant Discovery selection.
+  `MQTT ON|OFF` and `MQTT CLEAR` explicitly activate or erase the broker.
+- `STRIPCFG? <1..8>`: returns `STRIPCFG CH=1 LEDS=... REVERSE=... BRIGHT=...`.
+  Existing `CONFIG <ch>`, `ARGBSTATUS`, `HTLIST?`, `HTMAP?` and
+  `HTMODE?` provide the remaining editable settings.
+
+Wire HEX is delimiter-safe but **not encryption**; USB must be trusted and
+unencrypted TCP MQTT remains for trusted LAN only. Power-critical GPIO and
+DC safety interlocks are compile-time/physical and intentionally not
+writable by arbitrary Windows commands. See [PC_CONFIGURATION.md](PC_CONFIGURATION.md).
+
 # Serial protocol v3 (921600 baud, ASCII control + binary ARGB)
 
 All regular commands and responses are single-line ASCII, except for multiple-line status/calibration result streams. ARGB pixel frames use binary packets on the **same** serial connection. Fan channel numbers are **1..8**. Send only one command per line, terminating with `\n`. Other MCU replies may arrive asynchronously while a calibration is running.
