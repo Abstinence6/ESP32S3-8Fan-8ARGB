@@ -55,7 +55,7 @@ int main() {
         assert(leds.getMode(ch) == ArgbController::Mode::Off);
     }
     Serial.out.clear();
-    Serial.send(std::string(220, 'A') + "\nFAN 2 60\n");
+    Serial.send(std::string(300, 'A') + "\nFAN 2 60\n");
     console.poll();
     assert(Serial.out.find("ERR line too long") != std::string::npos);
     assert(fans.getPercent(1) == 60);
