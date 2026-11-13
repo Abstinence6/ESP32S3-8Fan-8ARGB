@@ -190,7 +190,9 @@ class NwinfoSensorSampler:
     *before* the ESP's 10-second temperature watchdog.
     """
 
-    _timeout = {"GPU": 6.0, "CPU": 7.0, "SMART": 4.0}
+    # A CPU ring-0 driver may take well over four seconds on first use.
+    # All timeouts are per provider; a hung CPU never blocks a fast GPU.
+    _timeout = {"GPU": 8.0, "CPU": 15.0, "SMART": 5.0}
     _frequency = {"GPU": 2.0, "CPU": 2.0, "SMART": 3.0}
     _max_age = 7.0
     _retry_delay = 8.0
