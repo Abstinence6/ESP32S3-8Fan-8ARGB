@@ -202,7 +202,9 @@ class DashboardSmokeTests(unittest.TestCase):
             def close(self):
                 self.closed = True
         port = ShortSerial()
+        from serial_tx import SerialTransmitter
         self.window.port = port
+        self.window.tx = SerialTransmitter(port)
         self.assertFalse(self.window.send("PING"))
         self.assertTrue(port.closed)
         self.assertIsNone(self.window.port)
