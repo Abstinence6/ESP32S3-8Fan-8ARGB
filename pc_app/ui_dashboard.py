@@ -632,21 +632,21 @@ class DashboardShell(QWidget):
     def _create_fans(self, table_box, choose_row, curve_box, history_box) -> None:
         page, layout = self._content(
             "Вентилятори",
-            "Налаштовуй вибраний канал. Загальний список та графіки винесені в окремі вкладки.",
+            "Крива ліворуч, керування і поточний стан вибраного каналу праворуч.",
         )
-        controls = QFrame()
-        controls.setObjectName("quietCard")
-        bar = QHBoxLayout(controls)
-        bar.setContentsMargins(16, 12, 16, 12)
+        toolbar = QFrame()
+        toolbar.setObjectName("quietCard")
+        bar = QHBoxLayout(toolbar)
+        bar.setContentsMargins(16, 11, 16, 11)
         bar.setSpacing(10)
         _move_controls(choose_row, bar)
-        for label in controls.findChildren(QLabel):
+        for label in toolbar.findChildren(QLabel):
             if label.text().startswith("Редагувати криву"):
                 label.setText("Канал")
-        self.controller.fan_box.setMinimumWidth(155)
-        self.controller.fan_box.setMaximumWidth(220)
-        self.controller.type_box.setMaximumWidth(210)
-        layout.addWidget(controls)
+        self.controller.fan_box.setMinimumWidth(150)
+        self.controller.fan_box.setMaximumWidth(235)
+        self.controller.type_box.setMaximumWidth(220)
+        layout.addWidget(toolbar)
 
         self.fan_workspace_tabs = QTabWidget()
         self.fan_workspace_tabs.setObjectName("fanWorkspaceTabs")
@@ -656,19 +656,94 @@ class DashboardShell(QWidget):
         curve_page = QWidget()
         curve_layout = QVBoxLayout(curve_page)
         curve_layout.setContentsMargins(0, 12, 0, 0)
-        curve_layout.setSpacing(10)
-        curve_box.setTitle("Температурна крива")
-        curve_box.setMinimumHeight(440)
-        self.controller.curve_plot.setMinimumHeight(250)
-        curve_layout.addWidget(curve_box)
+        curve_layout.setSpacing(12)
+
+        # Retain all original Qt widgets and signals. Only move their layouts
+        # from below the enormous chart into a readable adjacent editor.
+        original_layout = curve_box.layout()
+        curve_actions = original_layout.takeAt(1).layout()
+        regulation_actions = original_layout.takeAt(1).layout()
+        if curve_actions is None or regulation_actions is None:
+            raise RuntimeError("Fan editor controls were not found")
+        curve_box.setTitle("Крива PWM · температура")
+        curve_box.setMinimumHeight(370)
+        self.controller.curve_plot.setMinimumHeight(300)
+        curve_box.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+
+        self.fan_live_card = QFrame()
+        self.fan_live_card.setObjectName("quietCard")
+        live = QVBoxLayout(self.fan_live_card)
+        live.setContentsMargins(17, 14, 17, 14)
+        live.setSpacing(6)
+        live.addWidget(_label("ПОТОЧНИЙ КАНАЛ", "sectionLabel"))
+        self.fan_live_title = _label("FAN 01", "labelTitle")
+        live.addWidget(self.fan_live_title)
+        self.fan_live_rpm = _label("— RPM", "bigNumber")
+        live.addWidget(self.fan_live_rpm)
+        self.fan_live_metrics = _label("PWM — %   ·   — °C", "minor")
+        live.addWidget(self.fan_live_metrics)
+        self.fan_live_state = _label("Очікуємо дані контролера", "minor", True)
+        live.addWidget(self.fan_live_state)
+        self.fan_live_card.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
+        )
+
+        editor = QFrame()
+        editor.setObjectName("quietCard")
+        editor_layout = QVBoxLayout(editor)
+        editor_layout.setContentsMargins(17, 14, 17, 14)
+        editor_layout.setSpacing(8)
+        editor_layout.addWidget(_label("РЕДАГУВАННЯ КРИВОЇ", "sectionLabel"))
+        _move_controls(curve_actions, editor_layout)
+        editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+
+        tuning = QFrame()
+        tuning.setObjectName("quietCard")
+        tuning_layout = QVBoxLayout(tuning)
+        tuning_layout.setContentsMargins(17, 14, 17, 14)
+        tuning_layout.setSpacing(8)
+        tuning_layout.addWidget(_label("РЕЖИМ РЕГУЛЮВАННЯ", "sectionLabel"))
+        _move_controls(regulation_actions, tuning_layout)
+        tuning.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+
+        self.fan_control_panel = QWidget()
+        side = QVBoxLayout(self.fan_control_panel)
+        side.setContentsMargins(0, 0, 0, 0)
+        side.setSpacing(10)
+        side.addWidget(self.fan_live_card)
+        side.addWidget(editor)
+        side.addWidget(tuning)
+        side.addStretch(1)
+        self.fan_control_panel.setMinimumWidth(270)
+        self.fan_control_panel.setMaximumWidth(360)
+        self.fan_control_panel.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+        )
+
+        split = QGridLayout()
+        split.setContentsMargins(0, 0, 0, 0)
+        split.setHorizontalSpacing(13)
+        split.setVerticalSpacing(13)
+        split.addWidget(curve_box, 0, 0)
+        split.addWidget(self.fan_control_panel, 0, 1)
+        split.setColumnStretch(0, 7)
+        split.setColumnStretch(1, 4)
+        curve_layout.addLayout(split)
+        curve_layout.addWidget(_label(
+            "Крива змінюється перетягуванням точок. Вона записується в ESP32 "
+            "тільки після натискання «Зберегти». Обмеження силового DC PWM не змінюються.",
+            "minor", True,
+        ))
         curve_layout.addStretch(1)
-        self.fan_workspace_tabs.addTab(curve_page, "Крива та PID")
+        self.fan_workspace_tabs.addTab(curve_page, "Крива й керування")
 
         list_page = QWidget()
         list_layout = QVBoxLayout(list_page)
         list_layout.setContentsMargins(0, 12, 0, 0)
         list_layout.setSpacing(10)
-        table_box.setTitle("Вісім каналів · RPM, PWM та джерела")
+        table_box.setTitle("8 каналів · PWM, RPM та джерела температури")
         table_box.setMinimumHeight(400)
         self.controller.fan_table.setMaximumHeight(16777215)
         list_layout.addWidget(table_box)
@@ -686,7 +761,42 @@ class DashboardShell(QWidget):
 
         layout.addWidget(self.fan_workspace_tabs, 1)
         layout.addStretch(1)
+        self.controller.fan_box.currentIndexChanged.connect(
+            lambda _index: self._refresh_fan_detail()
+        )
+        self._refresh_fan_detail()
         self._add_page("fans", page)
+
+    def _refresh_fan_detail(self) -> None:
+        channel = self.controller.fan_box.currentData()
+        if channel is None:
+            return
+        self.fan_live_title.setText(f"FAN {channel:02d}")
+        status = self._fan_statuses.get(channel)
+        if not self.is_connected or status is None:
+            self.fan_live_rpm.setText("— RPM")
+            self.fan_live_metrics.setText("PWM — %   ·   — °C")
+            self.fan_live_state.setText("Немає актуальної телеметрії")
+            self.fan_live_state.setProperty("role", "minor")
+        else:
+            self.fan_live_rpm.setText(
+                f"{status.rpm:,} RPM".replace(",", " ") if status.rpm_feedback else "— RPM"
+            )
+            temp = f"{status.deci_c / 10:.1f} °C" if status.fresh else "— °C"
+            self.fan_live_metrics.setText(f"PWM {status.pwm}%   ·   {temp}")
+            if status.fault:
+                message, role = "Аварія вентилятора · перевір TACH", "negative"
+            elif not status.fresh:
+                message, role = "Немає температури · захисне охолодження", "caution"
+            else:
+                message, role = (
+                    "Автоматичне регулювання" if status.mode.lower() == "auto"
+                    else "Ручне керування"
+                ), "positive"
+            self.fan_live_state.setText(message)
+            self.fan_live_state.setProperty("role", role)
+        self.fan_live_state.style().unpolish(self.fan_live_state)
+        self.fan_live_state.style().polish(self.fan_live_state)
 
     def _create_argb(self, rgb_box, scenes: Iterable[str]) -> None:
         page, layout = self._content(
@@ -1059,6 +1169,7 @@ class DashboardShell(QWidget):
                 labels["state"].style().unpolish(labels["state"])
                 labels["state"].style().polish(labels["state"])
         self._update_cooling_health()
+        self._refresh_fan_detail()
         self._update_pc_buttons()
         self.device_settings.set_connected(connected)
         self.connection_text.style().unpolish(self.connection_text)
@@ -1108,6 +1219,8 @@ class DashboardShell(QWidget):
         state.style().unpolish(state)
         state.style().polish(state)
         self._update_cooling_health()
+        if channel == self.controller.fan_box.currentData():
+            self._refresh_fan_detail()
 
     def set_fan_source(self, channel: int, source_name: str) -> None:
         labels = self.fan_cards.get(channel)
