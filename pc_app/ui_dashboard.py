@@ -140,7 +140,6 @@ QTabBar::tab:hover { background: #243a4a; }
 QTabBar::tab:selected { background: #22515c; color: #f6ffff; font-weight: 650; }
 QDialog { background: #121d2b; }
 """
-"""
 
 
 def _move_controls(source: QLayout, destination: QLayout) -> None:
