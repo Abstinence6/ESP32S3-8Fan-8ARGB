@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
     QLabel, QLayout, QPushButton, QRadioButton, QScrollArea, QSplitter,
     QStackedWidget, QVBoxLayout, QWidget, QDialog, QLineEdit, QListWidget,
-    QListWidgetItem,
+    QListWidgetItem, QSizePolicy, QTabWidget,
 )
 
 
@@ -38,119 +38,108 @@ PAGES = (
 
 # Restrained slate/teal design system. All information remains real hardware data.
 STYLE = """
+/* Quiet, consistent surfaces; typography comes from the system Qt font,
+   avoiding broken glyph fallback in offscreen Windows screenshots. */
 QMainWindow, QWidget#dashboardRoot, QScrollArea, QScrollArea > QWidget > QWidget {
-    background: #0d141d; color: #e8edf4;
+    background: #0c111a; color: #e8edf4;
 }
-QWidget { color: #e8edf4; font-family: "Segoe UI"; font-size: 10pt; }
-QFrame#sidebar { background: #121d28; border-right: 1px solid #263646; }
-QFrame#topbar { background: #111a25; border-bottom: 1px solid #263646; }
-QFrame#summaryCard, QFrame#fanCard, QFrame#quietCard {
-    background: #172332; border: 1px solid #2b3d4f; border-radius: 12px;
+QWidget { color: #e8edf4; font-size: 10pt; }
+QFrame#sidebar { background: #101924; border-right: 1px solid #253240; }
+QFrame#topbar { background: #101823; border-bottom: 1px solid #253240; }
+QFrame#metricsStrip, QFrame#fanCard, QFrame#quietCard, QFrame#systemBanner {
+    background: #141f2c; border: 1px solid #293a4b; border-radius: 11px;
 }
-QFrame#fanCard:hover { border-color: #5b8792; background: #192939; }
-QFrame#systemBanner {
-    background: #152c33; border: 1px solid #37616a; border-radius: 14px;
-}
-QFrame#systemBanner[state="warning"] {
-    background: #30291e; border-color: #80673c;
-}
-QFrame#systemBanner[state="critical"] {
-    background: #35222a; border-color: #995b69;
-}
-QFrame#systemBanner[state="idle"] {
-    background: #1a2532; border-color: #415263;
-}
-QLabel[role="brand"] { font-size: 19pt; font-weight: 700; color: #f4f9fb; }
-QLabel[role="pageTitle"] { font-size: 20pt; font-weight: 700; color: #f4f8fc; }
-QLabel[role="bannerTitle"] { font-size: 18pt; font-weight: 700; color: #eef8fa; }
-QLabel[role="bigNumber"] { font-size: 20pt; font-weight: 700; color: #f4f9fc; }
-QLabel[role="minor"] { font-size: 9pt; color: #a9bacb; }
-QLabel[role="sectionLabel"] { font-size: 9pt; font-weight: 650; color: #849aaf; }
-QLabel[role="labelTitle"] { font-size: 10pt; font-weight: 650; color: #edf4f9; }
-QLabel[role="positive"] { color: #79d7b6; font-weight: 650; }
-QLabel[role="caution"] { color: #f1c47a; font-weight: 650; }
-QLabel[role="negative"] { color: #ff9ba8; font-weight: 650; }
+QFrame#metricSlot { background: transparent; border: none; }
+QFrame#fanCard:hover { border-color: #4e8e91; background: #192836; }
+QFrame#systemBanner { background: #102a30; border-color: #2e6a69; }
+QFrame#systemBanner[state="warning"] { background: #292518; border-color: #8b7441; }
+QFrame#systemBanner[state="critical"] { background: #30202a; border-color: #a75b69; }
+QFrame#systemBanner[state="idle"] { background: #18212d; border-color: #3c4c5d; }
+QLabel[role="brand"] { color: #ecf6f7; font-size: 17pt; font-weight: 750; }
+QLabel[role="pageTitle"] { color: #f3f6fa; font-size: 18pt; font-weight: 700; }
+QLabel[role="bannerTitle"] { color: #f1f8f8; font-size: 16pt; font-weight: 700; }
+QLabel[role="bigNumber"] { color: #f6fafc; font-size: 20pt; font-weight: 700; }
+QLabel[role="minor"] { color: #a1b1c2; font-size: 9pt; }
+QLabel[role="sectionLabel"] { color: #849baa; font-size: 9pt; font-weight: 650; }
+QLabel[role="labelTitle"] { color: #eaf0f5; font-size: 10pt; font-weight: 650; }
+QLabel[role="positive"] { color: #70d2b3; font-weight: 600; }
+QLabel[role="caution"] { color: #e6bd77; font-weight: 600; }
+QLabel[role="negative"] { color: #ee969f; font-weight: 600; }
+QLabel[role="metricValue"] { color: #eaf4f8; font-size: 12pt; font-weight: 650; }
 QGroupBox {
-    background: #172332; border: 1px solid #2b3d4f; border-radius: 12px;
-    margin-top: 18px; padding-top: 13px; font-weight: 650;
+    background: #141f2c; border: 1px solid #293a4b;
+    border-radius: 11px; margin-top: 19px; padding-top: 12px; font-weight: 650;
 }
 QGroupBox::title {
-    subcontrol-origin: margin; left: 16px; top: 1px; padding: 0 5px;
-    color: #e4eef5;
+    subcontrol-origin: margin; left: 15px; top: 1px; padding: 0 5px;
+    color: #e6edf2;
 }
 QPushButton {
-    background: #253648; color: #e9f1f6; border: 1px solid #3b5266;
-    border-radius: 8px; padding: 7px 12px; min-height: 23px;
+    background: #253546; color: #e7eef4; border: 1px solid #364a5c;
+    border-radius: 7px; padding: 6px 11px; min-height: 25px;
 }
-QPushButton:hover { background: #32495d; border-color: #6a91a3; }
-QPushButton:pressed { background: #20313e; }
-QPushButton:focus { border-color: #74ced1; }
-QPushButton:disabled {
-    background: #202b36; color: #8b9ba9; border-color: #313e4b;
-}
+QPushButton:hover { background: #30485a; border-color: #5e8b98; }
+QPushButton:pressed { background: #1e2b38; }
+QPushButton:focus { border: 1px solid #75d2cd; }
+QPushButton:disabled { background: #1c2834; color: #8394a2; border-color: #2a3845; }
 QPushButton[role="primary"] {
-    background: #147a80; border-color: #299da1; color: #ffffff; font-weight: 650;
+    background: #137e83; border-color: #178d91; color: #f5ffff; font-weight: 650;
 }
-QPushButton[role="primary"]:hover { background: #228d94; }
+QPushButton[role="primary"]:hover { background: #209096; }
 QPushButton[role="danger"] {
-    background: #512e39; border-color: #925560; color: #ffd8dd;
+    background: #4b2d37; border-color: #80515e; color: #f9d8dd;
 }
-QPushButton[role="danger"]:hover { background: #70414d; }
+QPushButton[role="ghost"] {
+    background: transparent; color: #8dd5d3; border: none;
+    text-align: left; padding: 3px 0; min-height: 20px;
+}
+QPushButton[role="ghost"]:hover { color: #c6fcf9; background: transparent; }
 QPushButton[role="nav"] {
-    background: transparent; border: 1px solid transparent;
-    border-radius: 8px; padding: 10px 13px;
-    text-align: left; font-weight: 500; color: #b6c7d5;
+    background: transparent; border: none; border-radius: 7px;
+    text-align: left; color: #aab9c6; padding: 8px 12px;
 }
-QPushButton[role="nav"]:hover { background: #203242; color: #ffffff; }
+QPushButton[role="nav"]:hover { color: #f2f9fa; background: #1d303d; }
 QPushButton[role="nav"]:checked {
-    background: #19404b; color: #c2f5f0; font-weight: 700;
-    border-left: 3px solid #6bd3d0;
+    background: #183a42; color: #c0f4f0; border-left: 3px solid #63ccc4;
+    font-weight: 650;
 }
 QComboBox, QLineEdit, QSpinBox {
-    background: #111e2b; color: #eaf2f8; border: 1px solid #3a5165;
-    border-radius: 8px; padding: 6px 9px; min-height: 23px;
-    selection-background-color: #296d75;
+    background: #111d2a; color: #eef4f8; border: 1px solid #394d5e;
+    border-radius: 7px; padding: 5px 9px; min-height: 25px;
+    selection-background-color: #236572;
 }
-QComboBox:focus, QLineEdit:focus, QSpinBox:focus {
-    border-color: #70d0d2;
-}
+QComboBox:focus, QLineEdit:focus, QSpinBox:focus { border-color: #6ccecc; }
 QComboBox QAbstractItemView {
-    background: #1c2c3b; color: #eaf2f8;
-    selection-background-color: #235966;
+    background: #1a2b3b; color: #eaf2f8; selection-background-color: #205a66;
 }
 QSpinBox::up-button, QSpinBox::down-button {
-    background: #26394b; border: 1px solid #3e5366; width: 17px;
+    background: #263848; border: 1px solid #3b4e5f; width: 17px;
 }
 QTableWidget, QTextEdit, QListWidget {
-    background: #111e2b; alternate-background-color: #1a2938;
-    color: #eaf2f8; gridline-color: #273b4f;
-    border: 1px solid #304457; border-radius: 8px;
-    selection-background-color: #245b67;
+    background: #101b28; alternate-background-color: #192838;
+    color: #e8f0f6; gridline-color: #273949;
+    border: 1px solid #2c3d4d; border-radius: 7px;
+    selection-background-color: #225b65;
 }
 QHeaderView::section {
-    background: #1f3041; color: #cbdce8; padding: 8px;
-    border: 0; border-right: 1px solid #33485b;
+    background: #1b2b3a; color: #c8d8e4; padding: 8px;
+    border: 0; border-right: 1px solid #304455;
 }
-QCheckBox, QRadioButton { spacing: 8px; }
-QStatusBar {
-    background: #111a25; color: #aebfce; border-top: 1px solid #283848;
-}
-QScrollBar:vertical { background: #121f2d; width: 11px; border: 0; }
-QScrollBar::handle:vertical {
-    background: #476176; border-radius: 5px; min-height: 28px;
-}
+QCheckBox, QRadioButton { spacing: 7px; }
+QStatusBar { background: #101823; color: #9eafbd; border-top: 1px solid #263543; }
+QScrollBar:vertical { background: #111c29; width: 10px; border: 0; }
+QScrollBar::handle:vertical { background: #486275; border-radius: 5px; min-height: 28px; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-QSplitter::handle { background: #243646; width: 5px; }
-QTabWidget::pane {
-    border: 1px solid #304457; border-radius: 9px; background: #172332;
-}
+QSplitter::handle { background: #273846; width: 5px; }
+QTabWidget::pane { border: 0; background: transparent; top: -1px; }
 QTabBar::tab {
-    padding: 10px 16px; border-radius: 7px 7px 0 0;
-    background: #1c2a39; color: #afc4d2;
+    padding: 10px 15px; margin-right: 5px; border-radius: 7px;
+    background: #192634; color: #aebdca;
 }
-QTabBar::tab:hover { background: #274151; }
-QTabBar::tab:selected { background: #216270; color: #ffffff; font-weight: 650; }
-QDialog { background: #14202e; }
+QTabBar::tab:hover { background: #243a4a; }
+QTabBar::tab:selected { background: #22515c; color: #f6ffff; font-weight: 650; }
+QDialog { background: #121d2b; }
+"""
 """
 
 
@@ -168,13 +157,16 @@ def _label(text: str, role: str = "minor", wrap: bool = False) -> QLabel:
     widget = QLabel(text)
     widget.setProperty("role", role)
     widget.setWordWrap(wrap)
+    if wrap:
+        widget.setMinimumWidth(0)
+        widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
     return widget
 
 
 def _page_header(title: str, subtitle: str) -> QWidget:
     frame = QWidget()
     layout = QVBoxLayout(frame)
-    layout.setContentsMargins(0, 0, 0, 15)
+    layout.setContentsMargins(0, 0, 0, 13)
     layout.setSpacing(4)
     layout.addWidget(_label(title, "pageTitle"))
     layout.addWidget(_label(subtitle, "minor", True))
@@ -185,7 +177,7 @@ def _wrap_scroll(page: QWidget) -> QScrollArea:
     scroller = QScrollArea()
     scroller.setWidgetResizable(True)
     scroller.setFrameShape(QFrame.Shape.NoFrame)
-    scroller.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    scroller.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     scroller.setWidget(page)
     return scroller
 
@@ -344,13 +336,13 @@ class DashboardShell(QWidget):
     def _sidebar(self) -> QWidget:
         panel = QFrame()
         panel.setObjectName("sidebar")
-        panel.setFixedWidth(202)
+        panel.setFixedWidth(190)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(15, 25, 15, 19)
-        layout.setSpacing(5)
+        layout.setContentsMargins(13, 20, 13, 16)
+        layout.setSpacing(3)
         layout.addWidget(_label("FanARGB", "brand"))
-        layout.addWidget(_label("COOLING  /  LIGHTING", "sectionLabel"))
-        layout.addSpacing(21)
+        layout.addWidget(_label("8 FAN  /  8 ARGB", "sectionLabel"))
+        layout.addSpacing(14)
         sections = {
             "overview": "РОБОЧИЙ ПРОСТІР",
             "pc": "КОНТРОЛЕР",
@@ -358,12 +350,12 @@ class DashboardShell(QWidget):
         }
         for index, (key, caption, title, _subtitle) in enumerate(PAGES, 1):
             if key in sections:
-                layout.addSpacing(15 if key != "overview" else 2)
+                layout.addSpacing(12 if key != "overview" else 3)
                 layout.addWidget(_label(sections[key], "sectionLabel"))
             button = QPushButton(caption)
             button.setProperty("role", "nav")
             button.setCheckable(True)
-            button.setMinimumHeight(41)
+            button.setMinimumHeight(39)
             button.setToolTip(f"{title}  ·  Ctrl+{index}")
             button.setAccessibleName(title)
             button.clicked.connect(
@@ -380,18 +372,18 @@ class DashboardShell(QWidget):
         panel = QFrame()
         panel.setObjectName("topbar")
         layout = QHBoxLayout(panel)
-        layout.setContentsMargins(23, 11, 23, 11)
-        layout.setSpacing(9)
+        layout.setContentsMargins(22, 10, 22, 10)
+        layout.setSpacing(8)
         self.connection_text = _label("●  Не підключено", "caution")
         self.connection_text.setToolTip("ESP32-S3 через USB. При втраті температур діє fail-safe.")
         layout.addWidget(self.connection_text)
         layout.addStretch(1)
-        search = QPushButton("Перейти…  Ctrl+K")
+        search = QPushButton("Пошук  Ctrl+K")
         search.setToolTip("Знайти розділ, вентилятор або сторінку налаштувань")
         search.clicked.connect(self.open_command_palette)
         layout.addWidget(search)
-        self.controller.port_box.setMinimumWidth(130)
-        self.controller.port_box.setMaximumWidth(225)
+        self.controller.port_box.setMinimumWidth(117)
+        self.controller.port_box.setMaximumWidth(185)
         self.controller.port_box.setToolTip("Оберіть фізичний порт ESP32-S3")
         layout.addWidget(self.controller.port_box)
         refresh_ports.setText("Оновити")
@@ -408,74 +400,89 @@ class DashboardShell(QWidget):
     def _content(title: str, subtitle: str) -> tuple[QWidget, QVBoxLayout]:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(25, 22, 27, 30)
-        layout.setSpacing(17)
+        layout.setContentsMargins(27, 21, 27, 26)
+        layout.setSpacing(14)
         layout.addWidget(_page_header(title, subtitle))
         return page, layout
 
     @staticmethod
     def _summary_card(title: str, initial: str, subtitle: str) -> tuple[QWidget, QLabel]:
-        card = QFrame()
-        card.setObjectName("summaryCard")
-        lay = QVBoxLayout(card)
-        lay.setContentsMargins(17, 14, 17, 15)
-        lay.setSpacing(8)
-        lay.addWidget(_label(title, "minor"))
-        value = _label(initial, "labelTitle", True)
+        slot = QFrame()
+        slot.setObjectName("metricSlot")
+        lay = QVBoxLayout(slot)
+        lay.setContentsMargins(11, 11, 11, 11)
+        lay.setSpacing(5)
+        lay.addWidget(_label(title.upper(), "sectionLabel"))
+        value = _label(initial, "metricValue", True)
         lay.addWidget(value)
-        lay.addWidget(_label(subtitle, "minor"))
-        return card, value
+        lay.addWidget(_label(subtitle, "minor", True))
+        slot.setMinimumHeight(88)
+        slot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        return slot, value
 
     def _create_overview(self) -> None:
         page, layout = self._content(
-            "Огляд",
-            "Стан охолодження в реальному часі. Для редагування відкрий потрібний вентилятор.",
+            "Огляд системи",
+            "Вісім незалежних каналів охолодження · поточні показники з ESP32-S3.",
         )
         banner = QFrame()
         banner.setObjectName("systemBanner")
         banner.setProperty("state", "idle")
+        banner.setMinimumHeight(92)
         self.system_banner = banner
         info = QHBoxLayout(banner)
-        info.setContentsMargins(23, 17, 23, 18)
-        info.setSpacing(17)
+        info.setContentsMargins(19, 14, 19, 14)
+        info.setSpacing(14)
         left = QVBoxLayout()
-        left.setSpacing(5)
-        self.health_title = _label("Контролер не підключено", "bannerTitle")
+        left.setSpacing(4)
+        left.addWidget(_label("ЗАГАЛЬНИЙ СТАН", "sectionLabel"))
+        self.health_title = _label("Контролер не підключено", "bannerTitle", True)
         self.health_description = _label(
-            "Вибери USB/COM-порт і підключи ESP32 для перегляду стану.", "minor", True
+            "Обери COM-порт у верхній панелі, щоб переглянути охолодження.",
+            "minor", True,
         )
         left.addWidget(self.health_title)
         left.addWidget(self.health_description)
         info.addLayout(left, 1)
         right = QVBoxLayout()
-        right.setSpacing(5)
-        right.addWidget(_label("КОНТРОЛЕР", "sectionLabel"))
+        right.setSpacing(4)
+        right.addWidget(_label("ESP32-S3", "sectionLabel"))
         self.summary_esp = _label("Не підключено", "labelTitle", True)
         self.summary_esp.setAlignment(Qt.AlignmentFlag.AlignRight)
         right.addWidget(self.summary_esp)
-        info.addLayout(right)
+        info.addLayout(right, 0)
         layout.addWidget(banner)
 
+        telemetry = QFrame()
+        telemetry.setObjectName("metricsStrip")
+        strip_layout = QVBoxLayout(telemetry)
+        strip_layout.setContentsMargins(9, 4, 9, 4)
+        strip_layout.setSpacing(0)
         summary = QGridLayout()
-        summary.setHorizontalSpacing(11)
-        summary.setVerticalSpacing(11)
-        for card_index, (key, title, hint) in enumerate((
-            ("temp", "Датчики", "Температури ПК · NWinfo"),
-            ("rgb", "Підсвітка", "ARGB / OpenRGB"),
+        summary.setHorizontalSpacing(8)
+        summary.setVerticalSpacing(1)
+        self._summary_grid = summary
+        self._summary_cards: list[QWidget] = []
+        self._summary_grid_columns = 0
+        for key, title, hint in (
+            ("temp", "Датчики", "NWinfo · температури ПК"),
+            ("rgb", "ARGB", "OpenRGB · 8 каналів"),
             ("mqtt", "MQTT", "Home Assistant"),
-            ("pc", "Живлення ПК", "PWR_SW"),
-        )):
+            ("pc", "Живлення ПК", "Контроль PWR_SW"),
+        ):
             card, value = self._summary_card(title, "—", hint)
+            self._summary_cards.append(card)
             setattr(self, f"summary_{key}", value)
-            summary.addWidget(card, 0, card_index)
-            summary.setColumnStretch(card_index, 1)
-        layout.addLayout(summary)
+        strip_layout.addLayout(summary)
+        layout.addWidget(telemetry)
 
         heading = QHBoxLayout()
-        heading.addWidget(_label("8 вентиляторів", "labelTitle"))
+        heading.setSpacing(12)
+        heading.addWidget(_label("ВЕНТИЛЯТОРИ", "sectionLabel"))
+        heading.addWidget(_label("01–08", "minor"))
         heading.addStretch(1)
-        details = QCheckBox("Показати джерела")
-        details.setToolTip("Показати під кожним вентилятором джерело температури")
+        details = QCheckBox("Джерела температур")
+        details.setToolTip("Показувати джерело температури під RPM")
         self.show_sources = details
         details.setChecked(
             str(self.controller.settings.value("showFanSources", "false")).lower()
@@ -483,10 +490,11 @@ class DashboardShell(QWidget):
         )
         details.toggled.connect(self._toggle_sources)
         heading.addWidget(details)
-        shortcut = QPushButton("Усі налаштування")
+        shortcut = QPushButton("Усі канали")
         shortcut.clicked.connect(lambda: self.show_page("fans"))
         heading.addWidget(shortcut)
         layout.addLayout(heading)
+
         grid = QGridLayout()
         grid.setHorizontalSpacing(11)
         grid.setVerticalSpacing(11)
@@ -494,42 +502,42 @@ class DashboardShell(QWidget):
         for ch in range(1, 9):
             frame = QFrame()
             frame.setObjectName("fanCard")
+            frame.setMinimumHeight(142)
+            frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             frame.setToolTip(f"Вентилятор {ch} · відкрий налаштування для деталей")
             box = QVBoxLayout(frame)
-            box.setContentsMargins(16, 13, 16, 13)
-            box.setSpacing(7)
-            title = QHBoxLayout()
-            title.addWidget(_label(f"FAN {ch:02d}", "labelTitle"))
-            title.addStretch(1)
+            box.setContentsMargins(16, 12, 16, 11)
+            box.setSpacing(5)
+            heading_row = QHBoxLayout()
+            heading_row.addWidget(_label(f"FAN {ch:02d}", "labelTitle"))
+            heading_row.addStretch(1)
             state = _label("Очікування", "minor")
-            title.addWidget(state)
-            box.addLayout(title)
-            rpm = _label("— RPM", "bigNumber")
+            heading_row.addWidget(state)
+            box.addLayout(heading_row)
+            rpm = _label("— RPM", "bigNumber", True)
             box.addWidget(rpm)
-            metrics = _label("— %  ·  — °C", "minor")
+            metrics = _label("— %   ·   — °C", "minor", True)
             box.addWidget(metrics)
             source = _label("Джерело: не вибрано", "minor", True)
             source.setVisible(details.isChecked())
             source.setToolTip("Джерело температури цього вентилятора")
             box.addWidget(source)
-            action = QPushButton("Відкрити налаштування")
-            action.setToolTip(f"Редагувати криву, TACH і PWM вентилятора {ch}")
-            action.clicked.connect(
-                lambda checked=False, channel=ch: self.open_fan(channel)
-            )
+            action = QPushButton("Налаштувати")
+            action.setProperty("role", "ghost")
+            action.setToolTip(f"Крива, TACH і PWM вентилятора {ch}")
+            action.clicked.connect(lambda _=False, channel=ch: self.open_fan(channel))
             box.addWidget(action)
             self._fan_frames[ch] = frame
             self.fan_cards[ch] = {
                 "rpm": rpm, "metrics": metrics, "source": source, "state": state,
             }
         layout.addLayout(grid)
-        safety = _label(
-            "Без актуальної температури контролер перемикається на захисне охолодження. "
-            "Робота силового ключа при скиданні ESP32 потребує апаратної перевірки.",
+        info_text = _label(
+            "За втрати актуальної температури прошивка переходить у fail-safe. "
+            "Гарантоване живлення вентиляторів під час reset залежить від схеми ключів.",
             "minor", True,
         )
-        safety.setToolTip("Програмний fail-safe не гарантує живлення вентилятора при знеструмленні MCU")
-        layout.addWidget(safety)
+        layout.addWidget(info_text)
         layout.addStretch(1)
         self._add_page("overview", page)
         self._reflow_fan_cards()
@@ -542,18 +550,25 @@ class DashboardShell(QWidget):
     def _reflow_fan_cards(self) -> None:
         if not hasattr(self, "_fan_grid"):
             return
-        # Width includes the 202px sidebar and 50px workspace margins.
-        available = max(0, self.width() - 260)
-        columns = 4 if available >= 1080 else 3 if available >= 680 else 2
-        if columns == self._fan_grid_columns:
-            return
-        self._fan_grid_columns = columns
-        for frame in self._fan_frames.values():
-            self._fan_grid.removeWidget(frame)
-        for ch, frame in self._fan_frames.items():
-            self._fan_grid.addWidget(frame, (ch - 1) // columns, (ch - 1) % columns)
-        for col in range(4):
-            self._fan_grid.setColumnStretch(col, 1 if col < columns else 0)
+        available = max(0, self.width() - 252)
+        columns = 4 if available >= 1000 else 3 if available >= 770 else 2
+        if columns != self._fan_grid_columns:
+            self._fan_grid_columns = columns
+            for frame in self._fan_frames.values():
+                self._fan_grid.removeWidget(frame)
+            for ch, frame in self._fan_frames.items():
+                self._fan_grid.addWidget(frame, (ch - 1) // columns, (ch - 1) % columns)
+            for col in range(4):
+                self._fan_grid.setColumnStretch(col, 1 if col < columns else 0)
+        metrics_columns = 4 if available >= 850 else 2
+        if metrics_columns != self._summary_grid_columns:
+            self._summary_grid_columns = metrics_columns
+            for card in self._summary_cards:
+                self._summary_grid.removeWidget(card)
+            for index, card in enumerate(self._summary_cards):
+                self._summary_grid.addWidget(card, index // metrics_columns, index % metrics_columns)
+            for col in range(4):
+                self._summary_grid.setColumnStretch(col, 1 if col < metrics_columns else 0)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
