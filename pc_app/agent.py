@@ -14,12 +14,12 @@ from concurrent.futures import ThreadPoolExecutor, Future
 
 try:
     from .monitor import MAX_ALL, resolve_temperature
-    from .nwinfo_sensors import fetch_temperatures
+    from .nwinfo_sensors import NwinfoSensorSampler
     from .protocol import make_temperature_command
     from .serial_owner import SerialOwnerServer
 except ImportError:  # packaged as a standalone PyInstaller entrypoint
     from monitor import MAX_ALL, resolve_temperature
-    from nwinfo_sensors import fetch_temperatures
+    from nwinfo_sensors import NwinfoSensorSampler
     from protocol import make_temperature_command
     from serial_owner import SerialOwnerServer
 
@@ -90,6 +90,7 @@ def run_agent() -> int:
         return 2
     temp_future: Future | None = None
     temp_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="SensorAgent")
+    sensor_sampler = NwinfoSensorSampler()
     next_connect = 0.0
     query_due = 0.0
     client_was_connected = False
@@ -135,11 +136,12 @@ def run_agent() -> int:
                                 if all(1 <= n <= 170 for n in vals): led_counts = vals
                     if not owner.has_client and now >= next_temps and temp_future is None:
                         next_temps = now + 2.0
-                        temp_future = temp_executor.submit(fetch_temperatures, 4.0)
+                        temp_future = temp_executor.submit(sensor_sampler.poll)
                     if temp_future is not None and temp_future.done():
                         try:
-                            if not owner.has_client:
-                                for msg in make_sensor_commands(settings, temp_future.result()):
+                            sample = temp_future.result()
+                            if not owner.has_client and sample is not None:
+                                for msg in make_sensor_commands(settings, sample):
                                     output.write((msg + "\n").encode("ascii"))
                         except Exception as exc:
                             log.warning("Sensor read failed; ESP thermal watchdog stays active: %s", exc)
@@ -172,5 +174,6 @@ def run_agent() -> int:
         owner.close()
         listener.stop()
         temp_executor.shutdown(wait=False, cancel_futures=True)
+        sensor_sampler.close()
         if output is not None:
             output.close()
