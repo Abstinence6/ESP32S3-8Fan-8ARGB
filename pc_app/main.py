@@ -642,6 +642,19 @@ class FanArgbWindow(QMainWindow):
                 + (f" · {status.detected_type}-pin" if status.detected_type in (2, 3) else "")
             )
             return
+        if line.startswith("FW VERSION="):
+            fields = dict(x.split("=", 1) for x in line.split() if "=" in x)
+            try:
+                version = int(fields["VERSION"])
+                self.dashboard.firmware_status.setText(
+                    f"ESP32 firmware v{version} · "
+                    + ("сумісна" if version >= 6 else "старіша; оновлення рекомендовано")
+                    + f" · DC PWM {'дозволено' if fields.get('DC_READY') == '1' else 'заблоковано'}"
+                    + f" · DS18B20 {'так' if fields.get('DS18B20') == '1' else 'ні'}"
+                )
+            except (ValueError, KeyError):
+                self.log("Невалідна відповідь VERSION?")
+            return
         if line.startswith("HTEMP "):
             self._last_hwtemp_line = line
             self.dashboard.hardware_sensor.handle_status(line)
