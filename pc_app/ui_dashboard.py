@@ -613,88 +613,158 @@ class DashboardShell(QWidget):
     def _create_fans(self, table_box, choose_row, curve_box, history_box) -> None:
         page, layout = self._content(
             "Вентилятори",
-            "Спочатку вибери канал, потім редагуй криву й режим керування.",
+            "Налаштовуй вибраний канал. Загальний список та графіки винесені в окремі вкладки.",
         )
-        # A vertical editor avoids clipped curve buttons and horizontal scrolling
-        # on standard 1366px and 1080px displays.
-        table_box.setTitle("8 каналів · швидкість, RPM та джерело температури")
-        table_box.setMinimumHeight(380)
-        layout.addWidget(table_box)
-        row_holder = QFrame()
-        row_holder.setObjectName("quietCard")
-        row_layout = QHBoxLayout(row_holder)
-        row_layout.setContentsMargins(15, 11, 15, 11)
-        row_layout.setSpacing(10)
-        _move_controls(choose_row, row_layout)
-        layout.addWidget(row_holder)
-        curve_box.setTitle("Крива PWM · перетягни п'ять точок")
-        curve_box.setMinimumHeight(430)
-        layout.addWidget(curve_box)
+        controls = QFrame()
+        controls.setObjectName("quietCard")
+        bar = QHBoxLayout(controls)
+        bar.setContentsMargins(16, 12, 16, 12)
+        bar.setSpacing(10)
+        _move_controls(choose_row, bar)
+        for label in controls.findChildren(QLabel):
+            if label.text().startswith("Редагувати криву"):
+                label.setText("Канал")
+        self.controller.fan_box.setMinimumWidth(155)
+        self.controller.fan_box.setMaximumWidth(220)
+        self.controller.type_box.setMaximumWidth(210)
+        layout.addWidget(controls)
+
+        self.fan_workspace_tabs = QTabWidget()
+        self.fan_workspace_tabs.setObjectName("fanWorkspaceTabs")
+        self.fan_workspace_tabs.setDocumentMode(True)
+
+        curve_page = QWidget()
+        curve_layout = QVBoxLayout(curve_page)
+        curve_layout.setContentsMargins(0, 12, 0, 0)
+        curve_layout.setSpacing(10)
+        curve_box.setTitle("Температурна крива")
+        curve_box.setMinimumHeight(440)
+        self.controller.curve_plot.setMinimumHeight(250)
+        curve_layout.addWidget(curve_box)
+        curve_layout.addStretch(1)
+        self.fan_workspace_tabs.addTab(curve_page, "Крива та PID")
+
+        list_page = QWidget()
+        list_layout = QVBoxLayout(list_page)
+        list_layout.setContentsMargins(0, 12, 0, 0)
+        list_layout.setSpacing(10)
+        table_box.setTitle("Вісім каналів · RPM, PWM та джерела")
+        table_box.setMinimumHeight(400)
+        self.controller.fan_table.setMaximumHeight(16777215)
+        list_layout.addWidget(table_box)
+        list_layout.addStretch(1)
+        self.fan_workspace_tabs.addTab(list_page, "Усі канали")
+
+        history_page = QWidget()
+        history_layout = QVBoxLayout(history_page)
+        history_layout.setContentsMargins(0, 12, 0, 0)
         history_box.setTitle("Історія вибраного вентилятора")
-        layout.addWidget(history_box)
+        history_box.setMinimumHeight(390)
+        history_layout.addWidget(history_box)
+        history_layout.addStretch(1)
+        self.fan_workspace_tabs.addTab(history_page, "Графіки")
+
+        layout.addWidget(self.fan_workspace_tabs, 1)
         layout.addStretch(1)
         self._add_page("fans", page)
 
     def _create_argb(self, rgb_box, scenes: Iterable[str]) -> None:
         page, layout = self._content(
-            "ARGB-підсвітка",
-            "Швидкі світлові сцени не змінюють профілі вентиляторів або їхню безпеку.",
+            "ARGB",
+            "Ефекти, інтеграція OpenRGB і редактор сцен — без змішування з охолодженням.",
         )
+        self.argb_workspace_tabs = QTabWidget()
+        self.argb_workspace_tabs.setObjectName("argbWorkspaceTabs")
+        self.argb_workspace_tabs.setDocumentMode(True)
+
+        scenes_page = QWidget()
+        scenes_layout = QVBoxLayout(scenes_page)
+        scenes_layout.setContentsMargins(0, 12, 0, 0)
+        scenes_layout.setSpacing(12)
+
         select = QFrame()
         select.setObjectName("quietCard")
-        bar = QHBoxLayout(select)
-        bar.setContentsMargins(17, 14, 17, 14)
-        bar.addWidget(_label("Зона:", "labelTitle"))
+        bar = QVBoxLayout(select)
+        bar.setContentsMargins(17, 13, 17, 13)
+        bar.setSpacing(11)
+        fields = QHBoxLayout()
+        fields.setSpacing(12)
+        fields.addWidget(_label("Канал", "labelTitle"))
         self.zone_box = QComboBox()
+        self.zone_box.setMinimumWidth(110)
         for ch in range(1, 9):
             self.zone_box.addItem(f"ARGB {ch}", ch)
         self.zone_box.currentIndexChanged.connect(self._zone_changed)
-        bar.addWidget(self.zone_box)
-        bar.addSpacing(12)
-        bar.addWidget(_label("Сцена:", "labelTitle"))
+        fields.addWidget(self.zone_box)
+        fields.addSpacing(12)
+        fields.addWidget(_label("Ефект", "labelTitle"))
         self.scene_box = QComboBox()
         self.scene_box.addItems(list(scenes))
-        self.scene_box.setMinimumWidth(145)
-        bar.addWidget(self.scene_box)
-        self.scope_one = QRadioButton("Ця зона")
-        self.scope_all = QRadioButton("Усі 8")
+        self.scene_box.setMinimumWidth(170)
+        fields.addWidget(self.scene_box, 1)
+        bar.addLayout(fields)
+        actions = QHBoxLayout()
+        self.scope_one = QRadioButton("Лише ця зона")
+        self.scope_all = QRadioButton("Усі 8 зон")
         self.scope_one.setChecked(True)
-        bar.addWidget(self.scope_one)
-        bar.addWidget(self.scope_all)
-        bar.addStretch(1)
-        apply_button = QPushButton("Застосувати сцену")
+        actions.addWidget(self.scope_one)
+        actions.addWidget(self.scope_all)
+        actions.addStretch(1)
+        apply_button = QPushButton("Застосувати")
         apply_button.setProperty("role", "primary")
         apply_button.clicked.connect(self._apply_scene)
-        bar.addWidget(apply_button)
-        layout.addWidget(select)
+        actions.addWidget(apply_button)
+        bar.addLayout(actions)
+        scenes_layout.addWidget(select)
 
-        rgb_box.setTitle("Колір, яскравість та OpenRGB")
-        layout.addWidget(rgb_box)
+        rgb_box.setTitle("Ручне керування кольором")
+        for label in rgb_box.findChildren(QLabel):
+            label.setWordWrap(True)
+            label.setMinimumWidth(0)
+        scenes_layout.addWidget(rgb_box)
+        scenes_layout.addStretch(1)
+        self.argb_workspace_tabs.addTab(scenes_page, "Ефекти")
+
+        openrgb_page = QWidget()
+        openrgb_layout = QVBoxLayout(openrgb_page)
+        openrgb_layout.setContentsMargins(0, 12, 0, 0)
+        openrgb_layout.setSpacing(12)
         native_row = QFrame()
         native_row.setObjectName("quietCard")
-        native_layout = QHBoxLayout(native_row)
-        self.native_checkbox = QCheckBox(
-            "Native OpenRGB SDK · 8 зон · 127.0.0.1:6743"
-        )
+        native_layout = QVBoxLayout(native_row)
+        native_layout.setContentsMargins(17, 13, 17, 13)
+        native_layout.setSpacing(7)
+        self.native_checkbox = QCheckBox("Native OpenRGB SDK · 8 зон")
         self.native_checkbox.toggled.connect(self.controller.toggle_native_openrgb)
         native_layout.addWidget(self.native_checkbox)
         native_layout.addWidget(_label(
-            "Додай Remote SDK server у OpenRGB: 127.0.0.1, порт 6743",
+            "Локальний OpenRGB SDK: 127.0.0.1, порт 6743. "
+            "Додай Remote SDK server у налаштуваннях OpenRGB.",
             "minor", True,
         ))
-        layout.addWidget(native_row)
-        self.studio = ArgbStudioPanel(self.controller)
-        layout.addWidget(self.studio)
+        openrgb_layout.addWidget(native_row)
         note = QFrame()
         note.setObjectName("quietCard")
         foot = QVBoxLayout(note)
         foot.setContentsMargins(17, 13, 17, 13)
         foot.addWidget(_label(
-            "OpenRGB → E1.31 Devices → 127.0.0.1, Universes 1–8 "
-            "(для USB-моста). Прямий Wi-Fi E1.31 налаштовується окремо.",
+            "USB-місцева передача OpenRGB через E1.31: 127.0.0.1, Universes 1–8. "
+            "Прямий Wi-Fi E1.31/DDP налаштовується у вкладці ESP32.",
             "minor", True,
         ))
-        layout.addWidget(note)
+        openrgb_layout.addWidget(note)
+        openrgb_layout.addStretch(1)
+        self.argb_workspace_tabs.addTab(openrgb_page, "OpenRGB")
+
+        studio_page = QWidget()
+        studio_layout = QVBoxLayout(studio_page)
+        studio_layout.setContentsMargins(0, 12, 0, 0)
+        self.studio = ArgbStudioPanel(self.controller)
+        studio_layout.addWidget(self.studio)
+        studio_layout.addStretch(1)
+        self.argb_workspace_tabs.addTab(studio_page, "Студія")
+
+        layout.addWidget(self.argb_workspace_tabs, 1)
         layout.addStretch(1)
         self._add_page("argb", page)
 
@@ -748,37 +818,70 @@ class DashboardShell(QWidget):
         group = QGroupBox(title)
         box = QVBoxLayout(group)
         box.setContentsMargins(15, 23, 15, 12)
+        box.setSpacing(10)
         for row in rows:
-            target = QHBoxLayout()
-            target.setSpacing(8)
-            _move_controls(row, target)
-            box.addLayout(target)
+            grid = QGridLayout()
+            grid.setSpacing(9)
+            column = 0
+            while row.count():
+                item = row.takeAt(0)
+                widget = item.widget()
+                if widget is None:
+                    continue
+                widget.setMinimumWidth(0)
+                grid.addWidget(widget, column // 2, column % 2)
+                column += 1
+            grid.setColumnStretch(0, 1)
+            grid.setColumnStretch(1, 1)
+            box.addLayout(grid)
         return group
 
     def _create_sensors(self, sensors_box) -> None:
         page, layout = self._content(
-            "Датчики обладнання",
-            "Усі доступні дані NWinfo. Температури можна використовувати для кривих; "
-            "інші параметри наведено лише для моніторингу.",
+            "Датчики",
+            "Температури NWinfo, фізичні DS18B20 та джерела для кривих вентиляторів.",
         )
-        sensors_box.setTitle("Температури та інші показники")
-        sensors_box.setMinimumHeight(460)
-        layout.addWidget(sensors_box, 1)
-        endpoint = QGroupBox("Локальне опитування NWinfo")
+        self.sensor_workspace_tabs = QTabWidget()
+        self.sensor_workspace_tabs.setObjectName("sensorWorkspaceTabs")
+        self.sensor_workspace_tabs.setDocumentMode(True)
+
+        system_page = QWidget()
+        system_layout = QVBoxLayout(system_page)
+        system_layout.setContentsMargins(0, 12, 0, 0)
+        system_layout.setSpacing(10)
+        sensors_box.setTitle("Сенсори Windows · NWinfo")
+        sensors_box.setMinimumHeight(440)
+        system_layout.addWidget(sensors_box)
+        endpoint = QFrame()
+        endpoint.setObjectName("quietCard")
         ep = QHBoxLayout(endpoint)
-        ep.setContentsMargins(16, 20, 16, 12)
-        ep.addWidget(_label(
-            "CPU · GPU · RAM · SSD · Intel / AMD · без LHM", "minor"
-        ), 1)
-        scan = QPushButton("Оновити датчики")
+        ep.setContentsMargins(15, 12, 15, 12)
+        ep.addWidget(_label("CPU · GPU · SSD · RAM", "minor"), 1)
+        scan = QPushButton("Оновити")
         scan.clicked.connect(self.controller.refresh_temperatures)
         ep.addWidget(scan)
         ep.addWidget(self.controller.sensor_status)
-        layout.addWidget(endpoint)
+        system_layout.addWidget(endpoint)
+        system_layout.addStretch(1)
+        self.sensor_workspace_tabs.addTab(system_page, "Датчики ПК")
+
+        hw_page = QWidget()
+        hw_layout = QVBoxLayout(hw_page)
+        hw_layout.setContentsMargins(0, 12, 0, 0)
         self.hardware_sensor = HardwareSensorPanel(self.controller)
-        layout.addWidget(self.hardware_sensor)
+        hw_layout.addWidget(self.hardware_sensor)
+        hw_layout.addStretch(1)
+        self.sensor_workspace_tabs.addTab(hw_page, "DS18B20")
+
+        source_page = QWidget()
+        source_layout = QVBoxLayout(source_page)
+        source_layout.setContentsMargins(0, 12, 0, 0)
         self.sensor_manager = SensorManagerPanel(self.controller)
-        layout.addWidget(self.sensor_manager)
+        source_layout.addWidget(self.sensor_manager)
+        source_layout.addStretch(1)
+        self.sensor_workspace_tabs.addTab(source_page, "Джерела")
+        layout.addWidget(self.sensor_workspace_tabs, 1)
+        layout.addStretch(1)
         self._add_page("sensors", page)
 
     def _create_device_settings(self) -> None:
@@ -788,7 +891,8 @@ class DashboardShell(QWidget):
             "контролера. Паролі не зберігаються на ПК.",
         )
         self.device_settings = DeviceSettingsPanel(self.controller)
-        layout.addWidget(self.device_settings)
+        self.device_settings.setMaximumWidth(925)
+        layout.addWidget(self.device_settings, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self._add_page("esp32", page)
 
     def _create_service(
@@ -796,35 +900,72 @@ class DashboardShell(QWidget):
         preset_row, diagnostic_row,
     ) -> None:
         page, layout = self._content(
-            "Сервіс і розширені налаштування",
-            "Параметри, які зазвичай не потрібно змінювати щодня.",
+            "Сервіс",
+            "Калібрування, перевірка, профілі й оновлення — кожен сценарій окремо.",
         )
+        self.service_workspace_tabs = QTabWidget()
+        self.service_workspace_tabs.setObjectName("serviceWorkspaceTabs")
+        self.service_workspace_tabs.setDocumentMode(True)
+
+        check_page = QWidget()
+        check = QVBoxLayout(check_page)
+        check.setContentsMargins(0, 12, 0, 0)
+        check.setSpacing(10)
+        self.firmware_status = _label("Прошивка: версію ще не прочитано", "minor", True)
+        check.addWidget(self.firmware_status)
+        actions = self._service_group("Команди діагностики", diagnostic_row)
+        check.addWidget(actions)
+        self.diagnostics = DiagnosticPanel(self.controller)
+        check.addWidget(self.diagnostics)
+        check.addStretch(1)
+        self.service_workspace_tabs.addTab(check_page, "Діагностика")
+
+        cal_page = QWidget()
+        cal = QVBoxLayout(cal_page)
+        cal.setContentsMargins(0, 12, 0, 0)
+        cal.setSpacing(12)
         warning = QFrame()
         warning.setObjectName("quietCard")
         wl = QVBoxLayout(warning)
-        wl.setContentsMargins(17, 13, 17, 13)
+        wl.setContentsMargins(16, 12, 16, 12)
         wl.addWidget(_label(
-            "Калібрування та запис профілів змінюють стан ESP32. "
-            "Перед зміною типу вентилятора перевір фізичне підключення.",
+            "Калібрування змінює швидкість вентилятора. Проводь його лише "
+            "за перевіреного силового керування та без ризику перегріву.",
             "minor", True,
         ))
-        layout.addWidget(warning)
-        self.firmware_status = _label("Прошивка: версію ще не прочитано", "minor")
-        layout.addWidget(self.firmware_status)
-        layout.addWidget(calibration_box)
-        network = self._service_group("Налаштування ARGB, Wi-Fi та живлення стрічок", hardware_rgb)
-        layout.addWidget(network)
-        combined = self._service_group("Профіль усієї системи · 8 вентиляторів + ARGB", preset_row, config_files)
-        layout.addWidget(combined)
-        advanced = self._service_group("Діагностика та MQTT / Home Assistant", diagnostic_row)
-        layout.addWidget(advanced)
-        self.diagnostics = DiagnosticPanel(self.controller)
-        layout.addWidget(self.diagnostics)
-        self.settings_panel = DesktopSettingsPanel(self.controller)
-        layout.addWidget(self.settings_panel)
-        self.maintenance_panel = MaintenancePanel(self.controller)
-        layout.addWidget(self.maintenance_panel)
+        cal.addWidget(warning)
+        cal.addWidget(calibration_box)
+        cal.addWidget(self._service_group("Налаштування ARGB на ESP32", hardware_rgb))
+        cal.addStretch(1)
+        self.service_workspace_tabs.addTab(cal_page, "Калібрування")
 
+        profiles_page = QWidget()
+        profiles = QVBoxLayout(profiles_page)
+        profiles.setContentsMargins(0, 12, 0, 0)
+        profiles.setSpacing(12)
+        profiles.addWidget(self._service_group(
+            "Профіль системи · вентилятори та підсвітка", preset_row, config_files
+        ))
+        profiles.addStretch(1)
+        self.service_workspace_tabs.addTab(profiles_page, "Профілі")
+
+        update_page = QWidget()
+        update = QVBoxLayout(update_page)
+        update.setContentsMargins(0, 12, 0, 0)
+        self.maintenance_panel = MaintenancePanel(self.controller)
+        update.addWidget(self.maintenance_panel)
+        update.addStretch(1)
+        self.service_workspace_tabs.addTab(update_page, "Прошивка / копії")
+
+        desktop_page = QWidget()
+        desktop = QVBoxLayout(desktop_page)
+        desktop.setContentsMargins(0, 12, 0, 0)
+        self.settings_panel = DesktopSettingsPanel(self.controller)
+        desktop.addWidget(self.settings_panel)
+        desktop.addStretch(1)
+        self.service_workspace_tabs.addTab(desktop_page, "Windows")
+
+        layout.addWidget(self.service_workspace_tabs, 1)
         layout.addStretch(1)
         self._add_page("service", page)
 
