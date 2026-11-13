@@ -16,9 +16,9 @@ from PySide6.QtWidgets import (
 )
 
 try:
-    from .device_config_protocol import decode_value, fields, wifi_command, mqtt_commands
+    from .device_config_protocol import decode_value, fields, wifi_command, mqtt_commands, mqtt_transaction_commands
 except ImportError:
-    from device_config_protocol import decode_value, fields, wifi_command, mqtt_commands
+    from device_config_protocol import decode_value, fields, wifi_command, mqtt_commands, mqtt_transaction_commands
 
 
 class DeviceSettingsPanel(QWidget):
@@ -382,6 +382,8 @@ class DeviceSettingsPanel(QWidget):
         self._fail("ESP32 не відповів на запис. Перевір COM-порт і перечитай налаштування.")
 
     def _fail(self, message: str) -> None:
+        if self._verify == "mqtt" and self.serial_version >= 7 and self.connected:
+            self.controller.send("MQTT TX CANCEL")
         self.ack_timer.stop()
         self._active = None
         self._operations.clear()
@@ -430,7 +432,8 @@ class DeviceSettingsPanel(QWidget):
     def save_mqtt(self) -> None:
         username = self.mqtt_user.text()
         try:
-            commands = mqtt_commands(
+            builder = mqtt_transaction_commands if self.serial_version >= 7 else mqtt_commands
+            commands = builder(
                 host=self.mqtt_host.text(), port=self.mqtt_port.value(),
                 username=username, password=self.mqtt_password.text(),
                 enabled=self.mqtt_enabled.isChecked(),
@@ -450,7 +453,8 @@ class DeviceSettingsPanel(QWidget):
             "allow_temperatures": self.mqtt_temperature.isChecked(),
         }
         self.mqtt_password.clear()
-        self._start([(cmd, "OK MQTT_SAVED") for cmd in commands], "mqtt", expected)
+        ack = "OK MQTT_TX" if self.serial_version >= 7 else "OK MQTT_SAVED"
+        self._start([(cmd, ack) for cmd in commands], "mqtt", expected)
 
     def reset_mqtt(self) -> None:
         if QMessageBox.question(
@@ -460,8 +464,14 @@ class DeviceSettingsPanel(QWidget):
         ) != QMessageBox.StandardButton.Yes:
             return
         self.mqtt_password.clear()
-        self._start([("MQTT CLEAR", "OK MQTT_SAVED")], "mqtt",
-                    {"host": "", "username": "", "enabled": False, "port": 1883})
+        operations = (
+            [("MQTT TX START", "OK MQTT_TX"), ("MQTT TX CLEAR", "OK MQTT_TX"),
+             ("MQTT TX COMMIT", "OK MQTT_TX")]
+            if self.serial_version >= 7 else [("MQTT CLEAR", "OK MQTT_SAVED")]
+        )
+        self._start(operations, "mqtt",
+                    {"host": "", "username": "", "enabled": False, "port": 1883,
+                     "allow_temperatures": False, "discovery": True})
 
     def save_argb(self) -> None:
         ch = self.rgb_zone.currentData()

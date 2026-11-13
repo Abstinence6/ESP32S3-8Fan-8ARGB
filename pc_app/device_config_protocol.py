@@ -100,3 +100,26 @@ def mqtt_commands(*, host: str, port: int, username: str, password: str,
     if enabled != previous.get("enabled"):
         commands.append(f"MQTT {'ON' if enabled else 'OFF'}")
     return commands
+
+def mqtt_transaction_commands(*, host: str, port: int, username: str, password: str,
+                              enabled: bool, discovery: bool, allow_temperatures: bool,
+                              current: dict[str, object] | None = None) -> list[str]:
+    """Build a v7 serial transaction. No intermediate command writes ESP NVS."""
+    legacy = mqtt_commands(
+        host=host, port=port, username=username, password=password,
+        enabled=enabled, discovery=discovery,
+        allow_temperatures=allow_temperatures, current=current,
+    )
+    if not legacy:
+        return []
+    ops = ["MQTT TX START"]
+    for command in legacy:
+        if command.startswith("MQTT BROKER "):
+            ops.append(command.replace("MQTT BROKER ", "MQTT TX BROKER ", 1))
+        elif command.startswith("MQTT AUTHHEX "):
+            ops.append(command.replace("MQTT AUTHHEX ", "MQTT TX AUTHHEX ", 1))
+        elif command == "MQTT AUTH CLEAR":
+            ops.append("MQTT TX AUTHHEX - -")
+    ops.append(f"MQTT TX FLAGS {int(enabled)} {int(discovery)} {int(allow_temperatures)}")
+    ops.append("MQTT TX COMMIT")
+    return ops

@@ -77,3 +77,32 @@ topic prefix. Fan power modes are not forceable through discovery.
 sensor publisher; incorrect telemetry can reduce the requested fan speed,
 so configure ACLs appropriately. If temperature updates stop for 10 s,
 firmware demands 100% power. Software cannot guarantee fail-ON on MCU reset.
+
+## v8.2: transactional provisioning
+
+The Windows app uses serial protocol v7 when available. `MQTT TX START`
+copies the live broker, credentials and options to RAM. `MQTT TX BROKER`,
+`MQTT TX AUTHHEX` and `MQTT TX FLAGS <enabled> <discovery> <temperature>`
+edit only this temporary copy. `MQTT TX COMMIT` validates and writes a
+single CRC-protected `config_v2` NVS record; `MQTT TX CANCEL` discards
+uncommitted secrets. Staging expires after 30 seconds. Any storage failure
+keeps the previous live settings and makes COMMIT retryable.
+
+Example (all values are illustrative and auth is hex, not plaintext):
+
+```text
+MQTT TX START
+MQTT TX BROKER 192.168.1.30 1883
+MQTT TX FLAGS 1 1 0
+MQTT TX COMMIT
+MQTT CONFIG?
+```
+
+Legacy v8 MQTT commands remain supported, but are not cross-field atomic.
+An existing v8 NVS configuration is imported without a boot-time flash
+write. From the first successful settings change onward, v8.2 uses
+`config_v2`, and a corrupt new record disables MQTT instead of silently
+reactivating older credentials. Downgrading to old firmware may read its
+older, stale NVS settings. `STORAGE_OK=0` in `MQTT CONFIG?` flags a failed
+write or corrupted saved record. Neither the USB protocol nor TCP/1883
+provides transport encryption.

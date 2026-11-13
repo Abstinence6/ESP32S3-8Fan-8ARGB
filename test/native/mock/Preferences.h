@@ -20,11 +20,17 @@ public:
         return found->second.size();
     }
     size_t putBytes(const char* key, const void* src, size_t size) {
+        if (failNext()) { failNext() = false; return 0; }
         const auto* b = static_cast<const uint8_t*>(src);
         values()[prefix_ + "/" + key] = std::vector<uint8_t>(b, b + size);
+        ++writes();
         return size;
     }
+    static size_t writeCount() { return writes(); }
+    static void failNextWrite() { failNext() = true; }
 private:
+    static size_t& writes() { static size_t count = 0; return count; }
+    static bool& failNext() { static bool flag = false; return flag; }
     static std::map<std::string, std::vector<uint8_t>>& values() {
         static std::map<std::string, std::vector<uint8_t>> memory;
         return memory;

@@ -690,7 +690,7 @@ class FanArgbWindow(QMainWindow):
         raw = self.raw_input.text().strip()
         if raw and self.send(raw):
             secret_command = raw.upper().startswith((
-                "WIFI SET", "MQTT AUTH", "MQTT AUTHHEX",
+                "WIFI SET", "MQTT AUTH", "MQTT AUTHHEX", "MQTT TX AUTHHEX",
             ))
             self.log("> [приховано налаштування доступу]" if secret_command else "> " + raw)
             self.raw_input.clear()

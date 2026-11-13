@@ -54,5 +54,43 @@ int main() {
     assert(lights.getMode(1) == ArgbController::Mode::Solid);
     assert(!afterReboot.applyCommand((base+"/light/2/rgb/set").c_str(), "256,0,14", 1200));
     assert(afterReboot.applyCommand((base+"/light/2/set").c_str(), "OFF", 1200));
+    // Stage multiple MQTT changes without mutating NVS or the active broker.
+    const size_t beforeTxWrites = Preferences::writeCount();
+    assert(afterReboot.txBegin());
+    assert(afterReboot.txSetBroker("new.local", 2883));
+    assert(afterReboot.txSetCredentials("operator", "another-password"));
+    assert(afterReboot.txSetOptions(true, false, false));
+    assert(Preferences::writeCount() == beforeTxWrites);
+    MqttBridge stillOld(cooling, fans, lights, network);
+    assert(stillOld.begin());
+    Serial.out.clear();
+    stillOld.printConfig(Serial);
+    assert(Serial.out.find("HOST_HEX=3132372E302E302E31") != std::string::npos);
+    Preferences::failNextWrite();
+    assert(!afterReboot.txCommit());
+    assert(Preferences::writeCount() == beforeTxWrites);
+    Serial.out.clear();
+    afterReboot.printConfig(Serial);
+    assert(Serial.out.find("HOST_HEX=3132372E302E302E31") != std::string::npos);
+    assert(afterReboot.txCommit());
+    assert(Preferences::writeCount() == beforeTxWrites + 1);
+    MqttBridge persisted(cooling, fans, lights, network);
+    assert(persisted.begin());
+    Serial.out.clear();
+    persisted.printConfig(Serial);
+    assert(Serial.out.find("HOST_HEX=6E65772E6C6F63616C") != std::string::npos);
+    assert(Serial.out.find("PORT=2883") != std::string::npos);
+    assert(Serial.out.find("DISCOVERY=0 TEMP_ALLOW=0") != std::string::npos);
+    assert(!persisted.externalTemperaturesEnabled());
+    assert(persisted.txBegin());
+    assert(persisted.txSetBroker("temporary", 9999));
+    persisted.txCancel();
+    assert(Preferences::writeCount() == beforeTxWrites + 1);
+    assert(persisted.setBroker("new.local", 2883));
+    assert(Preferences::writeCount() == beforeTxWrites + 1); // NVS no-op
+    assert(persisted.setCredentials("operator", "another-password"));
+    assert(Preferences::writeCount() == beforeTxWrites + 1);
+    assert(persisted.setDiscovery(false));
+    assert(Preferences::writeCount() == beforeTxWrites + 1);
     std::cout << "PASS: MQTT NVS, fan interlock, temp and ARGB routing\n";
 }

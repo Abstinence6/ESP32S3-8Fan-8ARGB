@@ -11,7 +11,7 @@ SerialConsole::SerialConsole(Stream& serial, FanController& fans, ArgbController
     : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling), wifi_(wifi), mqtt_(mqtt), pc_(pc), hw_(hw) {}
 
 void SerialConsole::begin() {
-    serial_.println(F("8Fan/8ARGB ready | protocol v5 | type HELP"));
+    serial_.println(F("8Fan/8ARGB ready | protocol v7 | type HELP"));
 }
 
 void SerialConsole::poll() {
@@ -183,7 +183,7 @@ void SerialConsole::handleLine(char* line) {
     }
     if (strcmp(command, "VERSION?") == 0) {
         if (!noMore()) return error();
-        serial_.print(F("FW VERSION=8 SERIAL=6 DC_READY="));
+        serial_.print(F("FW VERSION=8 SERIAL=7 DC_READY="));
         serial_.print(board::kDcSupplyPwmValidated ? 1 : 0);
         serial_.print(F(" DS18B20="));
         serial_.print(hw_ && hw_->enabled() ? 1 : 0);
@@ -436,6 +436,41 @@ void SerialConsole::handleLine(char* line) {
         if (!strcmp(op, "CONFIG?")) {
             if (!noMore()) return error();
             mqtt_->printConfig(serial_); return;
+        }
+        if (!strcmp(op, "TX")) {
+            char* step = next();
+            if (!step) return error();
+            for (char* c = step; *c; ++c)
+                *c = static_cast<char>(toupper(static_cast<unsigned char>(*c)));
+            bool ok = false;
+            if (!strcmp(step, "START") && noMore()) ok = mqtt_->txBegin();
+            else if (!strcmp(step, "CANCEL") && noMore()) {
+                mqtt_->txCancel(); ok = true;
+            } else if (!strcmp(step, "COMMIT") && noMore()) ok = mqtt_->txCommit();
+            else if (!strcmp(step, "CLEAR") && noMore()) ok = mqtt_->txClear();
+            else if (!strcmp(step, "BROKER")) {
+                char* host = next();
+                uint16_t port = 0;
+                if (!host || !parseU16(next(), 65535, port) || !port || !noMore())
+                    return error();
+                ok = mqtt_->txSetBroker(host, port);
+            } else if (!strcmp(step, "AUTHHEX")) {
+                const char* userHex = next(); const char* secretHex = next();
+                if (!userHex || !secretHex || !noMore()) return error();
+                char user[32] = {}, password[64] = {};
+                if (!configwire::decode(userHex, user, sizeof(user), true) ||
+                    !configwire::decode(secretHex, password, sizeof(password), true))
+                    return error();
+                ok = mqtt_->txSetCredentials(user, password);
+                memset(password, 0, sizeof(password));
+            } else if (!strcmp(step, "FLAGS")) {
+                uint8_t enabled = 0, ha = 0, temp = 0;
+                if (!parseByte(next(), 1, enabled) || !parseByte(next(), 1, ha) ||
+                    !parseByte(next(), 1, temp) || !noMore()) return error();
+                ok = mqtt_->txSetOptions(enabled, ha, temp);
+            } else return error();
+            serial_.println(ok ? F("OK MQTT_TX") : F("ERR MQTT transaction"));
+            return;
         }
         if (!strcmp(op, "BROKER") || !strcmp(op, "HOST")) {
             char* host = next(); uint16_t port = 0;
@@ -728,6 +763,7 @@ void SerialConsole::printHelp() {
     serial_.println(F("VERSION? | HTEMP? | HTLIST? | HTSCAN | HTMAP? <ch> | HTMAP <ch> AUTO|ROMHEX"));
     serial_.println(F("HTMODE? <ch> | HTMODE <ch> PC|LOCAL|BACKUP"));
     serial_.println(F("MQTT CONFIG? | MQTT BROKER <host> <port> | MQTT AUTHHEX <userHex|-> <passHex|-> | MQTT HA ON|OFF | MQTT TEMP ON|OFF | MQTT ON|OFF | MQTT CLEAR"));
+    serial_.println(F("MQTT TX START | BROKER <host> <port> | AUTHHEX <userHex|-> <passHex|-> | FLAGS <on> <ha> <temp> | CLEAR | COMMIT | CANCEL")"));
     serial_.println(F("TEMP <ch> <0..1250> | AUTO <ch> | ALLAUTO"));
     serial_.println(F("FAN <ch> <0..100> | ALLFAN <0..100> (manual override)"));
     serial_.println(F("CURVE? <ch> | CURVE <ch> <T1> <PWM1> ... <T5> <PWM5>"));

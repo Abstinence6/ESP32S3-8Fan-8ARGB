@@ -26,6 +26,15 @@ public:
     bool setExternalTemperatures(bool enabled);
     bool externalTemperaturesEnabled() const { return externalTemperaturesEnabled_; }
     bool resetSettings();
+    // v8.2 staged MQTT provisioning. Only COMMIT writes NVS; a failed write
+    // leaves live state untouched. Staging expires after 30 seconds.
+    bool txBegin();
+    bool txSetBroker(const char* host, uint16_t port);
+    bool txSetCredentials(const char* user, const char* password);
+    bool txSetOptions(bool enabled, bool discovery, bool allowTemperatures);
+    bool txClear();
+    bool txCommit();
+    void txCancel();
     void printStatus(Stream& serial);
     void printConfig(Stream& serial);
     bool connected();
@@ -41,7 +50,19 @@ private:
         char user[32];
         char password[64];
     };
+    struct Snapshot {
+        uint32_t magic;
+        Settings settings;
+        uint8_t discovery;
+        uint8_t allowTemperatures;
+        uint8_t reserved[2];
+        uint32_t checksum;
+    };
+    static uint32_t snapshotChecksum(const Snapshot& data);
+    bool persistValues(const Settings& candidate, bool discovery, bool allowTemperatures);
     bool persist();
+    bool transactionValid();
+    void applyDiscoveryChange(bool enabled);
     void publishStatus(uint8_t ch);
     void publishDiscovery();
     void removeDiscovery(uint8_t channel);
@@ -62,6 +83,12 @@ private:
     uint32_t lastDiscoveryMs_ = 0;
     bool discoveryEnabled_ = true;
     bool externalTemperaturesEnabled_ = false;
+    bool storageHealthy_ = true;
+    Settings staged_ = {};
+    bool stagedDiscovery_ = true;
+    bool stagedTemperatures_ = false;
+    bool transactionActive_ = false;
+    uint32_t transactionStartMs_ = 0;
     // 0..8: pending retained-entity deletion, 255: complete.
     uint8_t discoveryCleanupStep_ = 255;
 #if defined(ARDUINO_ARCH_ESP32)

@@ -1,13 +1,15 @@
 #include "MqttBridge.h"
 #include "ConfigWire.h"
 #include <ctype.h>
+#include <stddef.h>
 #include <initializer_list>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 namespace {
-constexpr uint32_t kMagic = 0x4D515435UL; // MQT5
+constexpr uint32_t kMagic = 0x4D515435UL; // MQT5 (legacy settings)
+constexpr uint32_t kSnapshotMagic = 0x4D515436UL; // MQT6, one-record settings
 bool parseUInt(const char* s, unsigned max, unsigned& value) {
     if (!s || !*s) return false;
     unsigned n = 0;
@@ -31,28 +33,51 @@ MqttBridge::MqttBridge(CoolingController& cooling, FanController& fans,
 
 bool MqttBridge::begin() {
     if (!storage_.begin("fanmqtt", false)) return false;
-    Settings old = {};
-    if (storage_.getBytesLength("config") == sizeof(old) &&
-        storage_.getBytes("config", &old, sizeof(old)) == sizeof(old) &&
-        old.magic == kMagic && old.enabled <= 1 && old.port > 0 &&
-        memchr(old.host, 0, sizeof(old.host)) &&
-        memchr(old.user, 0, sizeof(old.user)) &&
-        memchr(old.password, 0, sizeof(old.password))) {
-        settings_ = old;
+    settings_ = {};
+    settings_.magic = kMagic;
+    settings_.port = 1883;
+    const size_t newSize = storage_.getBytesLength("config_v2");
+    if (newSize) {
+        Snapshot state = {};
+        if (newSize == sizeof(state) &&
+            storage_.getBytes("config_v2", &state, sizeof(state)) == sizeof(state) &&
+            state.magic == kSnapshotMagic && state.checksum == snapshotChecksum(state) &&
+            state.settings.magic == kMagic && state.settings.enabled <= 1 &&
+            state.settings.port > 0 &&
+            (!state.settings.enabled || state.settings.host[0]) &&
+            memchr(state.settings.host, 0, sizeof(state.settings.host)) &&
+            memchr(state.settings.user, 0, sizeof(state.settings.user)) &&
+            memchr(state.settings.password, 0, sizeof(state.settings.password)) &&
+            state.discovery <= 1 && state.allowTemperatures <= 1) {
+            settings_ = state.settings;
+            discoveryEnabled_ = state.discovery != 0;
+            externalTemperaturesEnabled_ = state.allowTemperatures != 0;
+        } else {
+            // Corrupt new state: never re-enable MQTT using stale legacy keys.
+            storageHealthy_ = false;
+            discoveryEnabled_ = false;
+            externalTemperaturesEnabled_ = false;
+        }
     } else {
-        settings_ = {};
-        settings_.magic = kMagic;
-        settings_.port = 1883;
+        // Upgrade from v8 NVS without writing or changing live settings on boot.
+        Settings old = {};
+        if (storage_.getBytesLength("config") == sizeof(old) &&
+            storage_.getBytes("config", &old, sizeof(old)) == sizeof(old) &&
+            old.magic == kMagic && old.enabled <= 1 && old.port > 0 &&
+            memchr(old.host, 0, sizeof(old.host)) &&
+            memchr(old.user, 0, sizeof(old.user)) &&
+            memchr(old.password, 0, sizeof(old.password))) {
+            settings_ = old;
+        }
+        uint8_t discovery = 1;
+        if (storage_.getBytesLength("ha_discovery") == 1 &&
+            storage_.getBytes("ha_discovery", &discovery, 1) == 1 && discovery <= 1)
+            discoveryEnabled_ = discovery != 0;
+        uint8_t externalTemps = 0;
+        if (storage_.getBytesLength("mqtt_temp") == 1 &&
+            storage_.getBytes("mqtt_temp", &externalTemps, 1) == 1 && externalTemps <= 1)
+            externalTemperaturesEnabled_ = externalTemps != 0;
     }
-    uint8_t discovery = 1;
-    if (storage_.getBytesLength("ha_discovery") == 1 &&
-        storage_.getBytes("ha_discovery", &discovery, 1) == 1 &&
-        discovery <= 1)
-        discoveryEnabled_ = discovery != 0;
-    uint8_t externalTemps = 0;
-    if (storage_.getBytesLength("mqtt_temp") == 1 &&
-        storage_.getBytes("mqtt_temp", &externalTemps, 1) == 1 && externalTemps <= 1)
-        externalTemperaturesEnabled_ = externalTemps != 0;
     if (!discoveryEnabled_) discoveryCleanupStep_ = 0;
 #if defined(ARDUINO_ARCH_ESP32)
     snprintf(baseTopic_, sizeof(baseTopic_), "esp32fan/%08lx",
@@ -65,11 +90,122 @@ bool MqttBridge::begin() {
     return true;
 }
 
+uint32_t MqttBridge::snapshotChecksum(const Snapshot& state) {
+    const uint8_t* b = reinterpret_cast<const uint8_t*>(&state);
+    uint32_t hash = 2166136261UL;
+    for (size_t i = 0; i < offsetof(Snapshot, checksum); ++i) {
+        hash ^= b[i];
+        hash *= 16777619UL;
+    }
+    return hash;
+}
+bool MqttBridge::persistValues(const Settings& config, bool discovery, bool allowTemperatures) {
+    Snapshot state = {};
+    state.magic = kSnapshotMagic;
+    state.settings = config;
+    state.discovery = discovery ? 1 : 0;
+    state.allowTemperatures = allowTemperatures ? 1 : 0;
+    state.checksum = snapshotChecksum(state);
+    const bool ok = storage_.putBytes("config_v2", &state, sizeof(state)) == sizeof(state);
+    storageHealthy_ = ok;
+    return ok;
+}
 bool MqttBridge::persist() {
-    return storage_.putBytes("config", &settings_, sizeof(settings_)) == sizeof(settings_);
+    return persistValues(settings_, discoveryEnabled_, externalTemperaturesEnabled_);
+}
+void MqttBridge::applyDiscoveryChange(bool enabled) {
+    if (discoveryEnabled_ == enabled) return;
+    discoveryEnabled_ = enabled;
+    if (enabled) {
+        discoveryStep_ = 0;
+        discoveryCleanupStep_ = 255;
+        lastDiscoveryMs_ = 0;
+    } else {
+        discoveryCleanupStep_ = 0;
+    }
+}
+bool MqttBridge::transactionValid() {
+    if (!transactionActive_) return false;
+    if (static_cast<uint32_t>(millis() - transactionStartMs_) > 30000U) {
+        txCancel();
+        return false;
+    }
+    return true;
+}
+bool MqttBridge::txBegin() {
+    txCancel();
+    staged_ = settings_;
+    stagedDiscovery_ = discoveryEnabled_;
+    stagedTemperatures_ = externalTemperaturesEnabled_;
+    transactionStartMs_ = millis();
+    transactionActive_ = true;
+    return true;
+}
+bool MqttBridge::txSetBroker(const char* host, uint16_t port) {
+    if (!transactionValid() || !host || !*host ||
+        strlen(host) >= sizeof(staged_.host) || port == 0) return false;
+    memset(staged_.host, 0, sizeof(staged_.host));
+    memcpy(staged_.host, host, strlen(host));
+    staged_.port = port;
+    return true;
+}
+bool MqttBridge::txSetCredentials(const char* user, const char* password) {
+    if (!transactionValid() || !user || !password ||
+        strlen(user) >= sizeof(staged_.user) ||
+        strlen(password) >= sizeof(staged_.password) ||
+        (!user[0] && password[0])) return false;
+    memset(staged_.user, 0, sizeof(staged_.user));
+    memset(staged_.password, 0, sizeof(staged_.password));
+    memcpy(staged_.user, user, strlen(user));
+    memcpy(staged_.password, password, strlen(password));
+    return true;
+}
+bool MqttBridge::txSetOptions(bool enabled, bool discovery, bool allowTemperatures) {
+    if (!transactionValid()) return false;
+    staged_.enabled = enabled ? 1 : 0;
+    stagedDiscovery_ = discovery;
+    stagedTemperatures_ = allowTemperatures;
+    return true;
+}
+bool MqttBridge::txClear() {
+    if (!transactionValid()) return false;
+    staged_ = {};
+    staged_.magic = kMagic;
+    staged_.port = 1883;
+    stagedDiscovery_ = true;
+    stagedTemperatures_ = false;
+    return true;
+}
+bool MqttBridge::txCommit() {
+    if (!transactionValid() || (staged_.enabled && !staged_.host[0])) return false;
+    const bool changes = memcmp(&settings_, &staged_, sizeof(settings_)) != 0 ||
+        stagedDiscovery_ != discoveryEnabled_ ||
+        stagedTemperatures_ != externalTemperaturesEnabled_;
+    if (changes && !persistValues(staged_, stagedDiscovery_, stagedTemperatures_))
+        return false; // no live mutation on NVS failure; caller may retry or cancel
+
+    const bool transportChanged = memcmp(&settings_, &staged_, sizeof(settings_)) != 0;
+    settings_ = staged_;
+    applyDiscoveryChange(stagedDiscovery_);
+    externalTemperaturesEnabled_ = stagedTemperatures_;
+#if defined(ARDUINO_ARCH_ESP32)
+    if (transportChanged) mqtt_.disconnect();
+#else
+    (void)transportChanged;
+#endif
+    txCancel();
+    return true;
+}
+void MqttBridge::txCancel() {
+    transactionActive_ = false;
+    memset(&staged_, 0, sizeof(staged_)); // discard any uncommitted secrets
+    stagedDiscovery_ = true;
+    stagedTemperatures_ = false;
 }
 bool MqttBridge::setBroker(const char* host, uint16_t port, bool enable) {
     if (!host || !*host || strlen(host) >= sizeof(settings_.host) || !port) return false;
+    if (!strcmp(settings_.host, host) && settings_.port == port &&
+        (!enable || settings_.enabled)) return true;
     const Settings before = settings_;
     memset(settings_.host, 0, sizeof(settings_.host));
     memcpy(settings_.host, host, strlen(host));
@@ -84,6 +220,8 @@ bool MqttBridge::setBroker(const char* host, uint16_t port, bool enable) {
 bool MqttBridge::setCredentials(const char* user, const char* password) {
     if (!user || !password || strlen(user) >= sizeof(settings_.user) ||
         strlen(password) >= sizeof(settings_.password)) return false;
+    if (!strcmp(settings_.user, user) && !strcmp(settings_.password, password))
+        return true;
     const Settings before = settings_;
     memset(settings_.user, 0, sizeof(settings_.user));
     memset(settings_.password, 0, sizeof(settings_.password));
@@ -97,6 +235,7 @@ bool MqttBridge::setCredentials(const char* user, const char* password) {
 }
 bool MqttBridge::setEnabled(bool enabled) {
     if (enabled && !settings_.host[0]) return false;
+    if (settings_.enabled == (enabled ? 1 : 0)) return true;
     const uint8_t old = settings_.enabled;
     settings_.enabled = enabled ? 1 : 0;
     if (!persist()) { settings_.enabled = old; return false; }
@@ -107,36 +246,26 @@ bool MqttBridge::setEnabled(bool enabled) {
 }
 bool MqttBridge::setDiscovery(bool enabled) {
     if (discoveryEnabled_ == enabled) return true;
-    const uint8_t value = enabled ? 1 : 0;
-    if (storage_.putBytes("ha_discovery", &value, 1) != 1) return false;
-    discoveryEnabled_ = enabled;
-    if (enabled) {
-        discoveryStep_ = 0;
-        discoveryCleanupStep_ = 255;
-        lastDiscoveryMs_ = 0;
-    } else {
-        // Clear retained discovery entries when a broker is connected.
-        // Keep pending across disconnects; retry after the next reconnect.
-        discoveryCleanupStep_ = 0;
-    }
+    if (!persistValues(settings_, enabled, externalTemperaturesEnabled_)) return false;
+    applyDiscoveryChange(enabled);
     return true;
 }
 bool MqttBridge::setExternalTemperatures(bool enabled) {
     if (externalTemperaturesEnabled_ == enabled) return true;
-    const uint8_t value = enabled ? 1 : 0;
-    if (storage_.putBytes("mqtt_temp", &value, 1) != 1) return false;
+    if (!persistValues(settings_, discoveryEnabled_, enabled)) return false;
     externalTemperaturesEnabled_ = enabled;
     return true;
 }
 bool MqttBridge::resetSettings() {
-    const Settings previous = settings_;
-    settings_ = {};
-    settings_.magic = kMagic;
-    settings_.port = 1883;
-    if (!persist()) {
-        settings_ = previous;
-        return false;
-    }
+    Settings empty = {};
+    empty.magic = kMagic;
+    empty.port = 1883;
+    if (!memcmp(&settings_, &empty, sizeof(empty)) && !externalTemperaturesEnabled_ &&
+        discoveryEnabled_) return true;
+    if (!persistValues(empty, true, false)) return false;
+    settings_ = empty;
+    applyDiscoveryChange(true);
+    externalTemperaturesEnabled_ = false;
 #if defined(ARDUINO_ARCH_ESP32)
     mqtt_.disconnect();
 #endif
@@ -158,6 +287,7 @@ void MqttBridge::printConfig(Stream& serial) {
     serial.print(F(" AUTH=")); serial.print(settings_.user[0] ? 1 : 0);
     serial.print(F(" DISCOVERY=")); serial.print(discoveryEnabled_ ? 1 : 0);
     serial.print(F(" TEMP_ALLOW=")); serial.print(externalTemperaturesEnabled_ ? 1 : 0);
+    serial.print(F(" STORAGE_OK=")); serial.print(storageHealthy_ ? 1 : 0);
     serial.print(F(" TOPIC=")); serial.println(baseTopic_);
 }
 void MqttBridge::printStatus(Stream& serial) {
@@ -350,6 +480,7 @@ void MqttBridge::publishDiscovery() {
 }
 
 void MqttBridge::update(uint32_t nowMs) {
+    if (transactionActive_) transactionValid();
 #if defined(ARDUINO_ARCH_ESP32)
     if (!settings_.enabled || !settings_.host[0] || !network_.connected()) {
         if (mqtt_.connected()) mqtt_.disconnect();

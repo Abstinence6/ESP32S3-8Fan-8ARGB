@@ -1,7 +1,7 @@
 import unittest
 
 from pc_app.device_config_protocol import (
-    decode_value, encode_value, fields, mqtt_commands, wifi_command,
+    decode_value, encode_value, fields, mqtt_commands, mqtt_transaction_commands, wifi_command,
 )
 
 
@@ -57,6 +57,23 @@ class DeviceConfigurationTests(unittest.TestCase):
             mqtt_commands(host="", port=1883, username="", password="",
                           enabled=False, discovery=True, current={}), ["MQTT HA ON", "MQTT OFF"],
         )
+
+    def test_mqtt_transaction_stages_without_partial_nvs_updates(self):
+        previous = {"host": "old.local", "port": 1883, "username": "user",
+                    "enabled": True, "discovery": True, "allow_temperatures": False}
+        commands = mqtt_transaction_commands(
+            host="new.local", port=1884, username="user", password="new secret",
+            enabled=True, discovery=False, allow_temperatures=True, current=previous)
+        self.assertEqual(commands[0], "MQTT TX START")
+        self.assertIn("MQTT TX BROKER new.local 1884", commands)
+        self.assertTrue(any(c.startswith("MQTT TX AUTHHEX ") for c in commands))
+        self.assertEqual(commands[-2], "MQTT TX FLAGS 1 0 1")
+        self.assertEqual(commands[-1], "MQTT TX COMMIT")
+        self.assertFalse(any("new secret" in c for c in commands))
+        self.assertEqual(mqtt_transaction_commands(
+            host="old.local", port=1883, username="user", password="",
+            enabled=True, discovery=True, allow_temperatures=False,
+            current=previous), [])
 
     def test_mqtt_temperature_opt_in_and_legacy_default(self):
         base = dict(host="mqtt.local", port=1883, username="", password="",

@@ -85,3 +85,13 @@ GUI не вважає OS Serial write підтвердженням збереж�
 вентиляторів. Оновлюйте ESP32-S3 **тільки на безпечному окремому стенді**
 або при вимкненому ПК і перевіреному fail-ON драйвері. DC PWM
 залишається забороненим за замовчуванням, поки силову схему не перевірено.
+
+### MQTT transaction in firmware serial protocol v7
+
+With ESP32 serial protocol v7, the PC sends `MQTT TX START`, staged
+`BROKER`/`AUTHHEX`/`FLAGS` changes, and `MQTT TX COMMIT`. The
+firmware writes **one** CRC-checked NVS record after validation; a failed
+transaction can be canceled or retried and does not partially enable MQTT.
+The original serial v5/v6 commands remain as a fallback for older firmware.
+`MQTT TX CLEAR` staged reset also disables external MQTT temperatures;
+any uncommitted transaction expires automatically after 30 seconds.
