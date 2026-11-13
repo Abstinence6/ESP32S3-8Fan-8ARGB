@@ -63,13 +63,13 @@ bool MqttBridge::begin() {
 bool MqttBridge::persist() {
     return storage_.putBytes("config", &settings_, sizeof(settings_)) == sizeof(settings_);
 }
-bool MqttBridge::setBroker(const char* host, uint16_t port) {
+bool MqttBridge::setBroker(const char* host, uint16_t port, bool enable) {
     if (!host || !*host || strlen(host) >= sizeof(settings_.host) || !port) return false;
     const Settings before = settings_;
     memset(settings_.host, 0, sizeof(settings_.host));
     memcpy(settings_.host, host, strlen(host));
     settings_.port = port;
-    settings_.enabled = 1;
+    if (enable) settings_.enabled = 1;
     if (!persist()) { settings_ = before; return false; }
 #if defined(ARDUINO_ARCH_ESP32)
     mqtt_.disconnect();
