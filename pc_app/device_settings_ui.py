@@ -279,6 +279,8 @@ class DeviceSettingsPanel(QWidget):
         working = (self._active is not None or bool(self._operations) or
                    self._verify is not None)
         self.refresh_button.setEnabled(ready and not working)
+        self.rgb_zone.setEnabled(ready and not working)
+        self.fan_zone.setEnabled(ready and not working)
         for button, known in (
             (self.wifi_save, self._wifi_known),
             (self.wifi_disable, self._wifi_known),
@@ -306,10 +308,14 @@ class DeviceSettingsPanel(QWidget):
         self.controller.send("MQTT CONFIG?")
 
     def request_strip(self, *_args) -> None:
+        self._rgb_known = False
+        self._update_buttons()
         if self.connected and self.version >= 8:
             self.controller.send(f"STRIPCFG? {self.rgb_zone.currentData()}")
 
     def request_fan(self, *_args) -> None:
+        self._fan_known = False
+        self._update_buttons()
         if self.connected and self.version >= 8:
             self.controller.send(f"CONFIG {self.fan_zone.currentData()}")
 
@@ -321,6 +327,8 @@ class DeviceSettingsPanel(QWidget):
         if self._active is not None or self._verify is not None:
             return
         if not operations:
+            self._wifi_dirty = False
+            self._mqtt_dirty = False
             self._state_label("Зміни не потрібні · зчитую поточний стан")
             self.refresh_all()
             return
