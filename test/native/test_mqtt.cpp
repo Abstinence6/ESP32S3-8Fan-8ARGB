@@ -34,8 +34,20 @@ int main() {
     assert(!afterReboot.applyCommand((base+"/fan/1/set").c_str(), "-1", 1000));
     assert(!afterReboot.applyCommand((base+"/fan/9/set").c_str(), "100", 1000));
     assert(!afterReboot.applyCommand("esp32fan/untrusted/fan/1/set", "100", 1000));
+    assert(!afterReboot.applyCommand((base+"/fan/1/temp/set").c_str(), "550", 1200));
+    assert(cooling.temperature(0) == 0);
+    assert(afterReboot.setExternalTemperatures(true));
     assert(afterReboot.applyCommand((base+"/fan/1/temp/set").c_str(), "550", 1200));
     assert(cooling.temperature(0) == 550);
+    // Fresh USB temperature preempts MQTT; MQTT may resume only after expiry.
+    cooling.setTemperature(0, 650, 1300);
+    assert(!afterReboot.applyCommand((base+"/fan/1/temp/set").c_str(), "250", 1400));
+    assert(cooling.temperature(0) == 650);
+    assert(afterReboot.applyCommand((base+"/fan/1/temp/set").c_str(), "450", 11500));
+    assert(cooling.temperature(0) == 450);
+    MqttBridge afterTempReboot(cooling, fans, lights, network);
+    assert(afterTempReboot.begin());
+    assert(afterTempReboot.externalTemperaturesEnabled());
     assert(!afterReboot.applyCommand((base+"/fan/1/temp/set").c_str(), "1500", 1200));
     assert(afterReboot.applyCommand((base+"/fan/1/mode/set").c_str(), "auto", 1200));
     assert(afterReboot.applyCommand((base+"/light/2/rgb/set").c_str(), "255,0,14", 1200));

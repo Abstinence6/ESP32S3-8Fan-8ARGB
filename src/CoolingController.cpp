@@ -257,7 +257,18 @@ void CoolingController::setTemperature(uint8_t ch, uint16_t deciC, uint32_t nowM
     raw = deciC;
     stamp = nowMs;
     valid = true;
+    (secondary ? mqttSecondary_[ch] : mqttPrimary_[ch]) = false;
     timeoutRecorded_[ch] = false;
+}
+bool CoolingController::setMqttTemperature(uint8_t ch, uint16_t deciC,
+                                            uint32_t nowMs, bool secondary) {
+    if (ch >= board::kChannelCount || deciC > 1250) return false;
+    // Fresh data from USB, DS18B20 or other explicit local source wins.
+    if (temperatureFresh(ch, nowMs, secondary) &&
+        !(secondary ? mqttSecondary_[ch] : mqttPrimary_[ch])) return false;
+    setTemperature(ch, deciC, nowMs, secondary);
+    (secondary ? mqttSecondary_[ch] : mqttPrimary_[ch]) = true;
+    return true;
 }
 bool CoolingController::temperatureFresh(uint8_t ch, uint32_t nowMs, bool secondary) const {
     if (ch >= board::kChannelCount) return false;

@@ -49,6 +49,11 @@ bool MqttBridge::begin() {
         storage_.getBytes("ha_discovery", &discovery, 1) == 1 &&
         discovery <= 1)
         discoveryEnabled_ = discovery != 0;
+    uint8_t externalTemps = 0;
+    if (storage_.getBytesLength("mqtt_temp") == 1 &&
+        storage_.getBytes("mqtt_temp", &externalTemps, 1) == 1 && externalTemps <= 1)
+        externalTemperaturesEnabled_ = externalTemps != 0;
+    if (!discoveryEnabled_) discoveryCleanupStep_ = 0;
 #if defined(ARDUINO_ARCH_ESP32)
     snprintf(baseTopic_, sizeof(baseTopic_), "esp32fan/%08lx",
              static_cast<unsigned long>(ESP.getEfuseMac() & 0xFFFFFFFFULL));
@@ -107,10 +112,20 @@ bool MqttBridge::setDiscovery(bool enabled) {
     discoveryEnabled_ = enabled;
     if (enabled) {
         discoveryStep_ = 0;
+        discoveryCleanupStep_ = 255;
         lastDiscoveryMs_ = 0;
+    } else {
+        // Clear retained discovery entries when a broker is connected.
+        // Keep pending across disconnects; retry after the next reconnect.
+        discoveryCleanupStep_ = 0;
     }
-    // Turning discovery off does not remove existing retained entities
-    // from the broker. The user can remove orphaned MQTT entities in HA.
+    return true;
+}
+bool MqttBridge::setExternalTemperatures(bool enabled) {
+    if (externalTemperaturesEnabled_ == enabled) return true;
+    const uint8_t value = enabled ? 1 : 0;
+    if (storage_.putBytes("mqtt_temp", &value, 1) != 1) return false;
+    externalTemperaturesEnabled_ = enabled;
     return true;
 }
 bool MqttBridge::resetSettings() {
@@ -142,6 +157,7 @@ void MqttBridge::printConfig(Stream& serial) {
     serial.print(F(" USER_HEX=")); configwire::printHex(serial, settings_.user);
     serial.print(F(" AUTH=")); serial.print(settings_.user[0] ? 1 : 0);
     serial.print(F(" DISCOVERY=")); serial.print(discoveryEnabled_ ? 1 : 0);
+    serial.print(F(" TEMP_ALLOW=")); serial.print(externalTemperaturesEnabled_ ? 1 : 0);
     serial.print(F(" TOPIC=")); serial.println(baseTopic_);
 }
 void MqttBridge::printStatus(Stream& serial) {
@@ -180,12 +196,11 @@ bool MqttBridge::applyCommand(const char* topic, const char* payload, uint32_t n
         }
         if (!strcmp(suffix, "mode/set") && !strcmp(payload, "auto"))
             return cooling_.setAuto(number);
-        if ((!strcmp(suffix, "temp/set") || !strcmp(suffix, "temp2/set")) &&
-            parseUInt(payload, 1250, value)) {
-            cooling_.setTemperature(number, static_cast<uint16_t>(value), nowMs,
-                                    !strcmp(suffix, "temp2/set"));
-            return true;
-        }
+        if (externalTemperaturesEnabled_ &&
+            (!strcmp(suffix, "temp/set") || !strcmp(suffix, "temp2/set")) &&
+            parseUInt(payload, 1250, value))
+            return cooling_.setMqttTemperature(number, static_cast<uint16_t>(value),
+                                               nowMs, !strcmp(suffix, "temp2/set"));
         return false;
     }
     if (!strncmp(p, "light/", 6)) {
@@ -241,6 +256,32 @@ void MqttBridge::publishStatus(uint8_t ch) {
 #endif
 }
 
+void MqttBridge::removeDiscovery(uint8_t channel) {
+#if defined(ARDUINO_ARCH_ESP32)
+    if (!connected() || channel > board::kChannelCount) return;
+    const char* id = strchr(baseTopic_, '/');
+    id = id ? id + 1 : "esp32s3";
+    char topic[120];
+    if (channel < board::kChannelCount) {
+        const unsigned i = channel + 1;
+        snprintf(topic, sizeof(topic), "homeassistant/fan/%s_f%u/config", id, i);
+        mqtt_.publish(topic, "", true);
+        snprintf(topic, sizeof(topic), "homeassistant/sensor/%s_f%u_rpm/config", id, i);
+        mqtt_.publish(topic, "", true);
+        snprintf(topic, sizeof(topic), "homeassistant/light/%s_l%u/config", id, i);
+        mqtt_.publish(topic, "", true);
+    } else {
+        snprintf(topic, sizeof(topic), "homeassistant/binary_sensor/%s_pc_power/config", id);
+        mqtt_.publish(topic, "", true);
+        for (const char* key : {"pc_on", "pc_off", "pc_force"}) {
+            snprintf(topic, sizeof(topic), "homeassistant/button/%s_%s/config", id, key);
+            mqtt_.publish(topic, "", true);
+        }
+    }
+#else
+    (void)channel;
+#endif
+}
 void MqttBridge::publishDiscovery() {
 #if defined(ARDUINO_ARCH_ESP32)
     char topic[120], payload[900];
@@ -337,16 +378,21 @@ void MqttBridge::update(uint32_t nowMs) {
             mqtt_.subscribe(topic);
         }
         discoveryStep_ = 0;
+        if (!discoveryEnabled_) discoveryCleanupStep_ = 0;
         lastDiscoveryMs_ = nowMs;
         lastPublishMs_ = nowMs - 2000U;
     }
     mqtt_.loop();
     // Limit HA discovery traffic: three retained configs per 300 ms visit.
-    if (discoveryEnabled_ &&
-        discoveryStep_ < board::kChannelCount + ((pc_ && pc_->enabled()) ? 1U : 0U) &&
-        nowMs - lastDiscoveryMs_ >= 300U) {
-        lastDiscoveryMs_ = nowMs;
-        publishDiscovery();
+    if (nowMs - lastDiscoveryMs_ >= 300U) {
+        if (!discoveryEnabled_ && discoveryCleanupStep_ <= board::kChannelCount) {
+            lastDiscoveryMs_ = nowMs;
+            removeDiscovery(discoveryCleanupStep_++);
+        } else if (discoveryEnabled_ &&
+            discoveryStep_ < board::kChannelCount + ((pc_ && pc_->enabled()) ? 1U : 0U)) {
+            lastDiscoveryMs_ = nowMs;
+            publishDiscovery();
+        }
     }
     if (pc_ && pc_->enabled() && nowMs - lastPcPublishMs_ >= 2000U) {
         lastPcPublishMs_ = nowMs;

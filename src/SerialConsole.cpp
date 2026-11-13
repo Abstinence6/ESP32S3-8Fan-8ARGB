@@ -462,11 +462,13 @@ void SerialConsole::handleLine(char* line) {
                 if (!pass || !noMore()) return error();
                 if (!mqtt_->setCredentials(user, pass)) { serial_.println(F("ERR MQTT auth")); return; }
             }
-        } else if (!strcmp(op, "HA")) {
+        } else if (!strcmp(op, "HA") || !strcmp(op, "TEMP")) {
+            const bool temperature = !strcmp(op, "TEMP");
             char* state = next();
             if (!state || !noMore() || (strcmp(state, "ON") && strcmp(state, "OFF"))) return error();
-            if (!mqtt_->setDiscovery(!strcmp(state, "ON"))) {
-                serial_.println(F("ERR MQTT discovery storage")); return;
+            if (!(temperature ? mqtt_->setExternalTemperatures(!strcmp(state, "ON")) :
+                  mqtt_->setDiscovery(!strcmp(state, "ON")))) {
+                serial_.println(F("ERR MQTT option storage")); return;
             }
         } else if (!strcmp(op, "CLEAR")) {
             if (!noMore() || !mqtt_->resetSettings()) {
@@ -725,7 +727,7 @@ void SerialConsole::printHelp() {
     serial_.println(F("PING | STATUS | HEALTH [ch] | SELFTEST [CANCEL] | HELP | LEDS | PC STATUS|ON|OFF|FORCE"));
     serial_.println(F("VERSION? | HTEMP? | HTLIST? | HTSCAN | HTMAP? <ch> | HTMAP <ch> AUTO|ROMHEX"));
     serial_.println(F("HTMODE? <ch> | HTMODE <ch> PC|LOCAL|BACKUP"));
-    serial_.println(F("MQTT CONFIG? | MQTT BROKER <host> <port> | MQTT AUTHHEX <userHex|-> <passHex|-> | MQTT HA ON|OFF | MQTT ON|OFF | MQTT CLEAR"));
+    serial_.println(F("MQTT CONFIG? | MQTT BROKER <host> <port> | MQTT AUTHHEX <userHex|-> <passHex|-> | MQTT HA ON|OFF | MQTT TEMP ON|OFF | MQTT ON|OFF | MQTT CLEAR"));
     serial_.println(F("TEMP <ch> <0..1250> | AUTO <ch> | ALLAUTO"));
     serial_.println(F("FAN <ch> <0..100> | ALLFAN <0..100> (manual override)"));
     serial_.println(F("CURVE? <ch> | CURVE <ch> <T1> <PWM1> ... <T5> <PWM5>"));

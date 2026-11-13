@@ -33,6 +33,10 @@ Configuration resides in ESP32 NVS; reconnect is automatic with a 10 s backoff.
 If broker unavailable, cooling still runs using the last known temperature
 until the existing 10 s stale-data safety threshold expires, then 100% duty.
 
+**v8.1 MQTT temperature safety:** Remote `temp/set` and `temp2/set` are **disabled by default**, and are enabled only from the Windows ESP32 → MQTT checkbox (or `MQTT TEMP ON`). Even then they can update a channel only after its USB/local temperature has gone stale (10 s). Fresh USB and DS18B20 readings have priority and preempt MQTT. The setting is persisted separately in ESP NVS and reported as `TEMP_ALLOW` in `MQTT CONFIG?`.
+
+Turning Home Assistant Discovery off now publishes empty retained payloads for all 8 fan, RPM and ARGB entities plus optional PC entities when MQTT remains connected. The pending cleanup is retried on MQTT reconnect; disabling MQTT or Wi-Fi prevents immediate broker cleanup.
+
 **Security:** this is **unencrypted MQTT**. Use only on a trusted local LAN,
 with an authenticated broker and ACL restricting device-specific topics. Do
 not forward broker port 1883 to the internet. Local serial configuration also

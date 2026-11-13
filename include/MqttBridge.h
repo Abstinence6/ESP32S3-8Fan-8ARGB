@@ -23,6 +23,8 @@ public:
     bool setCredentials(const char* username, const char* password);
     bool setEnabled(bool enabled);
     bool setDiscovery(bool enabled);
+    bool setExternalTemperatures(bool enabled);
+    bool externalTemperaturesEnabled() const { return externalTemperaturesEnabled_; }
     bool resetSettings();
     void printStatus(Stream& serial);
     void printConfig(Stream& serial);
@@ -42,6 +44,7 @@ private:
     bool persist();
     void publishStatus(uint8_t ch);
     void publishDiscovery();
+    void removeDiscovery(uint8_t channel);
     void receive(char* topic, uint8_t* payload, unsigned length);
     CoolingController& cooling_;
     FanController& fans_;
@@ -58,6 +61,9 @@ private:
     uint8_t discoveryStep_ = 0;
     uint32_t lastDiscoveryMs_ = 0;
     bool discoveryEnabled_ = true;
+    bool externalTemperaturesEnabled_ = false;
+    // 0..8: pending retained-entity deletion, 255: complete.
+    uint8_t discoveryCleanupStep_ = 255;
 #if defined(ARDUINO_ARCH_ESP32)
     WiFiClient tcp_;
     PubSubClient mqtt_;

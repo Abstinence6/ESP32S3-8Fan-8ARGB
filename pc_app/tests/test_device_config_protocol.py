@@ -58,6 +58,15 @@ class DeviceConfigurationTests(unittest.TestCase):
                           enabled=False, discovery=True, current={}), ["MQTT HA ON", "MQTT OFF"],
         )
 
+    def test_mqtt_temperature_opt_in_and_legacy_default(self):
+        base = dict(host="mqtt.local", port=1883, username="", password="",
+                    enabled=True, discovery=True)
+        previous = {"host": "mqtt.local", "port": 1883, "enabled": True,
+                    "discovery": True, "allow_temperatures": False}
+        self.assertEqual(mqtt_commands(**base, current=previous, allow_temperatures=True),
+                         ["MQTT TEMP ON"])
+        self.assertEqual(mqtt_commands(**base, current=previous), [])
+
     def test_parses_machine_readable_status(self):
         data = fields("WIFI_CONFIG ENABLED=1 SSID_HEX=4D792057696669 IP=1.2.3.4", "WIFI_CONFIG")
         self.assertEqual(decode_value(data["SSID_HEX"], 32), "My Wifi")

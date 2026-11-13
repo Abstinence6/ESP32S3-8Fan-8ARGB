@@ -22,6 +22,8 @@ public:
     bool begin();
     void update(uint32_t nowMs);
     void setTemperature(uint8_t ch, uint16_t deciC, uint32_t nowMs, bool secondary = false);
+    // External MQTT telemetry is fallback-only and never overrides fresh USB/local data.
+    bool setMqttTemperature(uint8_t ch, uint16_t deciC, uint32_t nowMs, bool secondary = false);
     bool setCurve(uint8_t ch, const CurvePoint* points, bool secondary = false);
     const CurvePoint* curve(uint8_t ch, bool secondary = false) const;
     bool setManual(uint8_t ch, uint8_t pwm);
@@ -142,6 +144,8 @@ private:
     uint32_t lastTemp2Ms_[board::kChannelCount] = {};
     bool gotTemp_[board::kChannelCount] = {};
     bool gotTemp2_[board::kChannelCount] = {};
+    bool mqttPrimary_[board::kChannelCount] = {};
+    bool mqttSecondary_[board::kChannelCount] = {};
     bool timeoutRecorded_[board::kChannelCount] = {};
     bool overheatRecorded_[board::kChannelCount] = {};
     uint8_t manualPwm_[board::kChannelCount] = {};

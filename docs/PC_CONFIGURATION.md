@@ -21,6 +21,7 @@
 |---|---|---|
 | Wi-Fi SSID, ключ, вимкнення Wi-Fi | ESP32 → Wi-Fi | ESP32 NVS |
 | MQTT broker/port, ім'я, пароль, ON/OFF | ESP32 → MQTT | ESP32 NVS |
+| Зовнішні MQTT-температури як резервне джерело (OFF за замовчуванням) | ESP32 → MQTT | ESP32 NVS |
 | Home Assistant MQTT Discovery | ESP32 → MQTT | ESP32 NVS |
 | ARGB: довжина 8 стрічок, reverse, бюджет 5V | ESP32 → ARGB | ESP32 NVS |
 | ARGB яскравість і сцени | ESP32 / ARGB | ESP RAM (яскравість не постійна) |
@@ -65,6 +66,7 @@ MQTT CONFIG?               -> MQTT_CONFIG ENABLED=1 CONNECTED=0 HOST_HEX=... POR
 MQTT BROKER <hostname> <port>
 MQTT AUTHHEX <userHex|-> <passwordHex|->
 MQTT HA ON|OFF
+MQTT TEMP ON|OFF
 MQTT ON|OFF
 MQTT CLEAR
 STRIPCFG? <channel>        -> STRIPCFG CH=1 LEDS=30 REVERSE=0 BRIGHT=255

@@ -63,7 +63,8 @@ def wifi_command(ssid: str, password: str, *, previous_ssid: str = "",
 
 def mqtt_commands(*, host: str, port: int, username: str, password: str,
                   enabled: bool, discovery: bool,
-                  current: dict[str, object] | None = None) -> list[str]:
+                  current: dict[str, object] | None = None,
+                  allow_temperatures: bool | None = None) -> list[str]:
     previous = current or {}
     broker = host.strip()
     if broker and (len(broker) > 63 or not _BROKER.fullmatch(broker)):
@@ -93,6 +94,8 @@ def mqtt_commands(*, host: str, port: int, username: str, password: str,
         commands.append("MQTT AUTH CLEAR")
     if discovery != previous.get("discovery"):
         commands.append(f"MQTT HA {'ON' if discovery else 'OFF'}")
+    if (allow_temperatures is not None and allow_temperatures != previous.get("allow_temperatures"):
+        commands.append(f"MQTT TEMP {'ON' if allow_temperatures else 'OFF'}")
     if enabled != previous.get("enabled"):
         commands.append(f"MQTT {'ON' if enabled else 'OFF'}")
     return commands

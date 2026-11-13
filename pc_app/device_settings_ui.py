@@ -120,6 +120,8 @@ class DeviceSettingsPanel(QWidget):
         self.mqtt_discovery = QCheckBox("Публікувати Home Assistant MQTT Discovery")
         mqtt_form.addRow("", self.mqtt_enabled)
         mqtt_form.addRow("", self.mqtt_discovery)
+        self.mqtt_temperature = QCheckBox("Дозволити зовнішні MQTT-температури як резервні")
+        mqtt_form.addRow("", self.mqtt_temperature)
         mqtt_actions = QHBoxLayout()
         self.mqtt_save = QPushButton("Записати MQTT / HA у ESP32")
         self.mqtt_save.setProperty("role", "primary")
@@ -140,6 +142,7 @@ class DeviceSettingsPanel(QWidget):
         self.mqtt_port.valueChanged.connect(self._mark_mqtt_dirty)
         self.mqtt_enabled.toggled.connect(self._mark_mqtt_dirty)
         self.mqtt_discovery.toggled.connect(self._mark_mqtt_dirty)
+        self.mqtt_temperature.toggled.connect(self._mark_mqtt_dirty)
         root.addWidget(mqtt_box)
 
         # Per-zone ARGB hardware settings, fetched from the actual controller.
@@ -432,6 +435,7 @@ class DeviceSettingsPanel(QWidget):
                 username=username, password=self.mqtt_password.text(),
                 enabled=self.mqtt_enabled.isChecked(),
                 discovery=self.mqtt_discovery.isChecked(),
+                allow_temperatures=self.mqtt_temperature.isChecked(),
                 current=self.mqtt_config,
             )
         except ValueError as exc:
@@ -443,6 +447,7 @@ class DeviceSettingsPanel(QWidget):
             "username": username,
             "enabled": self.mqtt_enabled.isChecked(),
             "discovery": self.mqtt_discovery.isChecked(),
+            "allow_temperatures": self.mqtt_temperature.isChecked(),
         }
         self.mqtt_password.clear()
         self._start([(cmd, "OK MQTT_SAVED") for cmd in commands], "mqtt", expected)
@@ -577,6 +582,7 @@ class DeviceSettingsPanel(QWidget):
                 "connected": data["CONNECTED"] == "1",
                 "port": int(data["PORT"]),
                 "discovery": data["DISCOVERY"] == "1",
+                "allow_temperatures": data.get("TEMP_ALLOW", "0") == "1",
                 "topic": data.get("TOPIC", ""),
             }
         except (ValueError, KeyError):
@@ -597,6 +603,7 @@ class DeviceSettingsPanel(QWidget):
             self.mqtt_user.setText(str(new["username"]))
             self.mqtt_enabled.setChecked(bool(new["enabled"]))
             self.mqtt_discovery.setChecked(bool(new["discovery"]))
+            self.mqtt_temperature.setChecked(bool(new["allow_temperatures"]))
             self._loading = False
         if self._verify == "pending_mqtt":
             good = all(new.get(k) == v for k, v in self._expected.items())
