@@ -22,6 +22,9 @@ try:
     from .protocol import make_curve_command
     from .serial_owner import SerialOwnerServer
     from .serial_tx import SerialTransmitter
+    from .telemetry_store import TelemetryStore
+    from .tach_health import TachHealthMonitor
+    from .protocol import parse_status
 except ImportError:  # packaged as a standalone PyInstaller entrypoint
     from monitor import MAX_ALL, resolve_temperature
     from nwinfo_sensors import NwinfoSensorSampler
@@ -31,6 +34,9 @@ except ImportError:  # packaged as a standalone PyInstaller entrypoint
     from protocol import make_curve_command
     from serial_owner import SerialOwnerServer
     from serial_tx import SerialTransmitter
+    from telemetry_store import TelemetryStore
+    from tach_health import TachHealthMonitor
+    from protocol import parse_status
 
 
 def load_assignments(settings: QSettings) -> list[tuple[str, list[str], dict[str, float], str, bool]]:
@@ -113,6 +119,8 @@ def run_agent() -> int:
         sensor_sampler.set_enabled(set(stored_providers.split(",")))
     smooth_filter = SafeTemperatureFilter()
     auto_profiles = AutoProfileSelector()
+    telemetry = TelemetryStore()
+    tach_monitor = TachHealthMonitor()
     next_connect = 0.0
     query_due = 0.0
     client_was_connected = False
@@ -155,6 +163,20 @@ def run_agent() -> int:
                         if len(buffer) > 8192: buffer = ""
                         while "\n" in buffer:
                             line, buffer = buffer.split("\n", 1)
+                            status = parse_status(line.strip())
+                            if status:
+                                telemetry.record_fan(
+                                    status.channel, pwm=status.pwm, rpm=status.rpm,
+                                    temperature=status.deci_c / 10 if status.fresh else None,
+                                    fresh=status.fresh, fault=status.fault,
+                                )
+                                warning = tach_monitor.observe(
+                                    status.channel, pwm=status.pwm, rpm=status.rpm,
+                                    has_feedback=status.rpm_feedback, fault=status.fault,
+                                )
+                                if warning:
+                                    log.warning(warning)
+                                    telemetry.record_alert("TACH", warning)
                             fields = line.strip().split()
                             if len(fields) == 9 and fields[0] == "LEDCOUNTS":
                                 vals = [int(v) for v in fields[1:]]
@@ -168,6 +190,10 @@ def run_agent() -> int:
                             if not owner.has_client and sample is not None:
                                 for msg in make_sensor_commands(settings, sample, smooth_filter):
                                     tx.send_command(msg)
+                                for metric in sensor_sampler.metrics:
+                                    telemetry.record_metric(
+                                        metric.sensor_id, metric.name, metric.value, metric.unit
+                                    )
                                 settings.sync()
                                 if str(settings.value("autoProfiles", "false")).lower() in ("true", "1"):
                                     gpu_load = [
@@ -221,5 +247,6 @@ def run_agent() -> int:
         listener.stop()
         temp_executor.shutdown(wait=False, cancel_futures=True)
         sensor_sampler.close()
+        telemetry.close()
         if output is not None:
             output.close()
