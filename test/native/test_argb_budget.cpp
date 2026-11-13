@@ -37,7 +37,7 @@ int main() {
     Serial.out.clear();
     Serial.send("VERSION?\nARGBCFG 1 170 0 1900 128\nFANCFG 1 3 88 250\nSTRIPCFG? 1\nCONFIG 1\nARGBSTATUS\n");
     console.poll();
-    assert(Serial.out.find("SERIAL=6") != std::string::npos);
+    assert(Serial.out.find("SERIAL=7") != std::string::npos);
     assert(Serial.out.find("OK ARGBCFG_SAVED") != std::string::npos);
     assert(Serial.out.find("OK FANCFG_SAVED") != std::string::npos);
     assert(Serial.out.find("BRIGHT=128") != std::string::npos);
