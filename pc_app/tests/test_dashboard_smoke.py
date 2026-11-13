@@ -57,6 +57,19 @@ class DashboardSmokeTests(unittest.TestCase):
         self.window.dashboard.set_bridge_state(True, 128)
         self.window.dashboard.set_mqtt_state("ENABLED=1 CONNECTED=1")
         self.window.dashboard.update_pc_state("on BUSY=0")
+        self.window.handle_line("FW VERSION=8 SERIAL=7 DC_READY=0 DS18B20=0 SENSORS=0")
+        self.window.handle_line(
+            "WIFI_CONFIG ENABLED=1 CONNECTED=1 SSID_HEX=4D792057694669 "
+            "PASSWORD_SET=1 IP=192.168.1.10"
+        )
+        self.window.handle_line(
+            "MQTT_CONFIG ENABLED=1 CONNECTED=1 HOST_HEX=6D7174742E6C6F63616C "
+            "PORT=1883 USER_HEX=- AUTH=0 DISCOVERY=1 TEMP_ALLOW=0 "
+            "STORAGE_OK=1 TOPIC=esp32fan/demo"
+        )
+        self.window.handle_line("STRIPCFG CH=1 LEDS=30 REVERSE=0 BRIGHT=64")
+        self.window.handle_line("ARGBSTATUS LIMIT_MA=2000 REQUESTED_MA=320")
+        self.window.handle_line("CONFIG 1 TYPE=3 PPR=2 CRIT=90 STALL=0")
         self.window.show()
         self.app.processEvents()
         output = Path("dist/ui-preview")
@@ -67,6 +80,93 @@ class DashboardSmokeTests(unittest.TestCase):
             target = output / f"{key}.png"
             self.assertTrue(self.window.grab().save(str(target), "PNG"))
             self.assertGreater(target.stat().st_size, 10_000)
+        panel = self.window.dashboard.device_settings
+        self.window.dashboard.show_page("esp32")
+        for tab_key in ("wifi", "mqtt", "argb", "fan"):
+            self.assertTrue(panel.select_tab(tab_key))
+            self.app.processEvents()
+            target = output / f"esp32-{tab_key}.png"
+            self.assertTrue(self.window.grab().save(str(target), "PNG"))
+            self.assertGreater(target.stat().st_size, 10_000)
+
+    def test_quick_navigation_and_search_palette(self):
+        shell = self.window.dashboard
+        self.assertEqual(len(shell._shortcuts), 9)
+        palette = shell.create_command_palette()
+        palette.search.setText("Вентилятор 6")
+        self.assertGreater(palette.results.count(), 0)
+        palette.activate_selection()
+        self.assertEqual(shell.stack.currentIndex(), shell.page_index["fans"])
+        self.assertEqual(self.window.current_fan, 6)
+
+        palette = shell.create_command_palette()
+        palette.search.setText("Home Assistant")
+        self.assertEqual(palette.results.count(), 1)
+        palette.activate_selection()
+        self.assertEqual(shell.stack.currentIndex(), shell.page_index["esp32"])
+        self.assertEqual(shell.device_settings.tabs.currentIndex(), 1)
+
+        palette = shell.create_command_palette()
+        palette.search.setText("невідомий розділ")
+        self.assertEqual(palette.results.count(), 0)
+        palette.close()
+
+    def test_overview_safety_hierarchy_and_detail_visibility(self):
+        shell = self.window.dashboard
+        self.assertIn("не підключено", shell.health_title.text().lower())
+        shell.set_connected(True, "COM7")
+        self.assertIn("Читаємо", shell.health_title.text())
+        self.window.handle_line(
+            "CH 1 FAN=100% RPM=1200 TEMP=450 MODE=auto SENSOR=stale TYPE=3 FAULT=0"
+        )
+        self.assertIn("Захисне", shell.health_title.text())
+        self.assertEqual(shell.system_banner.property("state"), "warning")
+        self.window.handle_line(
+            "CH 1 FAN=55% RPM=1200 TEMP=450 MODE=auto SENSOR=ok TYPE=3 FAULT=0"
+        )
+        self.assertIn("працює", shell.health_title.text())
+        self.window.handle_line(
+            "CH 1 FAN=100% RPM=1200 TEMP=980 MODE=auto SENSOR=ok TYPE=3 FAULT=1"
+        )
+        self.assertEqual(shell.system_banner.property("state"), "critical")
+        self.assertIn("Потрібна увага", shell.health_title.text())
+        shell.show_sources.setChecked(False)
+        self.assertTrue(shell.fan_cards[1]["source"].isHidden())
+        shell.show_sources.setChecked(True)
+        self.assertFalse(shell.fan_cards[1]["source"].isHidden())
+        shell.show_sources.setChecked(False)
+        shell.set_connected(False)
+        self.assertEqual(shell.system_banner.property("state"), "idle")
+
+    def test_esp32_tabs_preserve_safe_readback_and_password_masking(self):
+        panel = self.window.dashboard.device_settings
+        self.assertEqual(panel.tabs.count(), 4)
+        self.assertTrue(panel.select_tab("mqtt"))
+        self.assertFalse(panel.select_tab("unsupported"))
+        self.assertFalse(panel.mqtt_host.isEnabled())
+        panel.set_connected(True)
+        panel.set_version(8, 7)
+        self.window.handle_line(
+            "WIFI_CONFIG ENABLED=0 CONNECTED=0 SSID_HEX=- PASSWORD_SET=0 IP=-"
+        )
+        self.assertTrue(panel.wifi_ssid.isEnabled())
+        self.assertFalse(panel.mqtt_host.isEnabled())
+        self.window.handle_line(
+            "MQTT_CONFIG ENABLED=0 CONNECTED=0 HOST_HEX=- PORT=1883 "
+            "USER_HEX=- AUTH=0 DISCOVERY=1 TEMP_ALLOW=0 TOPIC=esp32fan/demo"
+        )
+        self.assertTrue(panel.mqtt_host.isEnabled())
+        panel.mqtt_reveal.setChecked(True)
+        from PySide6.QtWidgets import QLineEdit
+        self.assertEqual(panel.mqtt_password.echoMode(), QLineEdit.EchoMode.Normal)
+        panel.mqtt_reveal.setChecked(False)
+        self.assertEqual(panel.mqtt_password.echoMode(), QLineEdit.EchoMode.Password)
+        panel.mqtt_host.textEdited.emit("new.local")
+        self.assertIn("•", panel.tabs.tabText(1))
+        panel.set_connected(False)
+        self.assertNotIn("•", panel.tabs.tabText(1))
+        self.assertFalse(panel.mqtt_host.isEnabled())
+        self.assertEqual(panel.mqtt_host.text(), "")
 
     def test_esp32_config_readback_and_acknowledged_save(self):
         panel = self.window.dashboard.device_settings

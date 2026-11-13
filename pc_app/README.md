@@ -69,7 +69,7 @@ Full instructions: [features](../docs/FEATURES_V6.md) and
 
 ## Dashboard interface
 
-The desktop GUI uses seven focused pages instead of one large engineering panel:
+The desktop GUI uses eight focused pages instead of one large engineering panel:
 
 - **Огляд**: eight live fan cards, ESP connection, NWinfo local sensors, E1.31, MQTT and PC Power status.
 - **Вентилятори**: temperature-only source selection, curves, PWM/RPM and history.
@@ -77,6 +77,7 @@ The desktop GUI uses seven focused pages instead of one large engineering panel:
 - **ARGB**: single-zone or all-zone lighting presets; these send only LED
   commands and never overwrite fan curves. Live OpenRGB uses E1.31.
 - **Живлення ПК**: monitored PC state and guarded power/force-off actions.
+- **Контролер ESP32**: tabbed Wi-Fi, MQTT/Home Assistant, ARGB and TACH configuration.
 - **Сервіс**: calibration, hardware ARGB, searchable temperature/telemetry tabs, network setup,
   combined configuration presets and diagnostics.
 - **Логи**: Serial output and advanced raw command entry.
@@ -221,3 +222,31 @@ USB identity-based reconnection mechanism is armed. Repeat PINGs cannot
 extend the deadline indefinitely. Manual disconnect still disables automatic
 reconnect. This only detects communication loss; loss of PC temperatures
 is still handled independently by the ESP32 10-second full-fan fail-safe.
+
+
+## v8.3 UI/UX refinement (Windows)
+
+The overview now prioritizes the real cooling state: a single safety status
+banner distinguishes disconnected, waiting for telemetry, healthy, stale
+temperature fail-safe and fan faults. Four small cards summarize sensor
+availability, ARGB/OpenRGB, MQTT and PC power; the eight fan cards flow
+across **2, 3 or 4 columns** according to window width. The
+**Показати джерела** option controls optional fan source detail and is
+stored in Windows QSettings, not on ESP32.
+
+Navigation is grouped by daily tasks, device controls and diagnostics.
+**Ctrl+K** opens a read-only searchable navigation palette. **Ctrl+1…8**
+opens the eight main pages in sidebar order; palette search can jump to
+a particular fan or ESP32 configuration tab. Search/navigation does not
+send any fan or power commands.
+
+ESP32 settings are presented as Wi-Fi, MQTT / HA, ARGB and TACH tabs instead
+of one long scroll. Unsaved Wi-Fi/MQTT changes are indicated on tab labels.
+Fields remain read-only until current controller configuration is received;
+editing is temporarily blocked while a USB NVS transaction awaits an
+acknowledgment/readback. Password visibility is user-controlled and never
+saves secrets to Windows settings or logs.
+
+The Windows CI captures offscreen screenshots for the overview, each main
+page and all four ESP32 configuration tabs. All PWM, GPIO, NVS, watchdog,
+firmware flashing interlocks and PC-power safety protections remain unchanged.
