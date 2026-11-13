@@ -197,7 +197,7 @@ class MaintenancePanel(QGroupBox):
         if not port or port == "None":
             QMessageBox.warning(self, "Прошивання", "Не визначено COM-порт")
             return
-        self.controller.disconnect()
+        self.controller.disconnect(manual=True)
         self.flash_button.setEnabled(False)
         self.progress.setRange(0, 0)
         self.progress.setVisible(True)
