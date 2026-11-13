@@ -1284,6 +1284,8 @@ class FanArgbWindow(QMainWindow):
 
     def apply_argb_scene(self, scene_name: str, all_zones: bool = False) -> None:
         """Apply a lighting-only scene without modifying cooling NVS or fan duty."""
+        if self.dashboard.studio.active:
+            self.dashboard.studio.stop()
         if not self.port:
             QMessageBox.warning(self, "ARGB", "Спочатку підключи ESP32-S3")
             return
@@ -1399,6 +1401,8 @@ class FanArgbWindow(QMainWindow):
         self.send(f"WIFI SET {ssid} {password}")
 
     def toggle_sacn(self, enabled: bool) -> None:
+        if enabled and self.dashboard.studio.active:
+            self.dashboard.studio.stop()
         if not enabled:
             self.sacn.stop()
             self.sacn_pending.clear()
@@ -1460,6 +1464,7 @@ class FanArgbWindow(QMainWindow):
             return
         if self.tray_icon is not None:
             self.tray_icon.hide()
+        self.dashboard.studio.stop()
         self.sacn.stop()
         self.temperature_executor.shutdown(wait=False, cancel_futures=True)
         self.sensor_sampler.close()
