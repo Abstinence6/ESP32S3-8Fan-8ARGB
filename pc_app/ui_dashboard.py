@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 PAGES = (
     ("overview", "◉  Огляд", "Огляд системи", "Стан охолодження та підсвітки з одного погляду"),
     ("fans", "≋  Вентилятори", "Вентилятори", "Температурні криві, швидкість і джерела даних"),
+    ("sensors", "◉  Датчики", "Датчики обладнання", "Температура, частоти, споживання, оберти"),
     ("argb", "✦  ARGB", "Підсвітка", "Сцени для восьми незалежних зон та OpenRGB"),
     ("pc", "⏻  Живлення ПК", "Живлення ПК", "Керування кнопкою PWR_SW з перевіркою стану"),
     ("service", "⚙  Сервіс", "Додаткові налаштування", "Калібрування, конфігурація та діагностика"),
@@ -181,10 +182,11 @@ class DashboardShell(QWidget):
 
         self._create_overview()
         self._create_fans(table_box, choose_row, curve_box, history_box)
+        self._create_sensors(sensors_box)
         self._create_argb(rgb_box, scenes)
         self._create_pc(pc_box)
         self._create_service(
-            calibration_box, sensors_box, hardware_rgb, config_files,
+            calibration_box, hardware_rgb, config_files,
             preset_row, diagnostic_row,
         )
         self._create_logs(log_box)
@@ -459,8 +461,30 @@ class DashboardShell(QWidget):
             box.addLayout(target)
         return group
 
+    def _create_sensors(self, sensors_box) -> None:
+        page, layout = self._content(
+            "Датчики обладнання",
+            "Усі доступні дані NWinfo. Температури можна використовувати для кривих; "
+            "інші параметри наведено лише для моніторингу.",
+        )
+        sensors_box.setTitle("Температури та інші показники")
+        sensors_box.setMinimumHeight(460)
+        layout.addWidget(sensors_box, 1)
+        endpoint = QGroupBox("Локальне опитування NWinfo")
+        ep = QHBoxLayout(endpoint)
+        ep.setContentsMargins(16, 20, 16, 12)
+        ep.addWidget(_label(
+            "CPU · GPU · RAM · SSD · Intel / AMD · без LHM", "minor"
+        ), 1)
+        scan = QPushButton("Оновити датчики")
+        scan.clicked.connect(self.controller.refresh_temperatures)
+        ep.addWidget(scan)
+        ep.addWidget(self.controller.sensor_status)
+        layout.addWidget(endpoint)
+        self._add_page("sensors", page)
+
     def _create_service(
-        self, calibration_box, sensors_box, hardware_rgb, config_files,
+        self, calibration_box, hardware_rgb, config_files,
         preset_row, diagnostic_row,
     ) -> None:
         page, layout = self._content(
@@ -485,18 +509,6 @@ class DashboardShell(QWidget):
         advanced = self._service_group("Діагностика та MQTT / Home Assistant", diagnostic_row)
         layout.addWidget(advanced)
 
-        sensors_box.setTitle("Датчики обладнання · температури та телеметрія")
-        sensors_box.setMinimumHeight(235)
-        layout.addWidget(sensors_box)
-        endpoint = QGroupBox("Локальний моніторинг NWinfo")
-        ep = QHBoxLayout(endpoint)
-        ep.setContentsMargins(16, 20, 16, 12)
-        ep.addWidget(_label("CPU · GPU · RAM · SSD · Intel / AMD · без LHM", "minor"), 1)
-        scan = QPushButton("Оновити датчики")
-        scan.clicked.connect(self.controller.refresh_temperatures)
-        ep.addWidget(scan)
-        ep.addWidget(self.controller.sensor_status)
-        layout.addWidget(endpoint)
         layout.addStretch(1)
         self._add_page("service", page)
 
