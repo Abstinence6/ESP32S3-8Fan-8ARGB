@@ -1,3 +1,15 @@
+## v8 — full ESP32 configuration via PC
+
+From **ESP32** in the Windows app: read the current controller settings,
+edit Wi-Fi with spaces/UTF-8 in SSID and PSK, MQTT with optional Home
+Assistant Discovery, ARGB LED count/reverse/power budget, and fan PPR,
+critical and stall thresholds. PC reads the stored settings back after
+firmware acknowledgements; partial failures and timeouts are reported.
+Password text is never echoed by ESP32 or persisted on Windows. The
+new page requires ESP32 firmware v8+.
+
+See [setup, persistence and safety](../docs/PC_CONFIGURATION.md).
+
 # Windows application for ESP32-S3 Fan & ARGB Controller
 
 ## v7: native OpenRGB and reliable USB
