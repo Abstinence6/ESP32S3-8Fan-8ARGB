@@ -36,6 +36,7 @@ from nwinfo_sensors import NwinfoSensorSampler
 from sacn_bridge import E131Listener, SACN_PORT, SERIAL_BAUD, encode_rgb_frame
 from protocol import validate_curve, DEFAULT_CURVE, make_curve_command, make_temperature_command, parse_curve, parse_status
 from serial_owner import SerialProxyClient
+from serial_tx import SerialTransmitter
 from profiles import PRESETS
 from config_presets import (RGB_SCENES, FAN_CURVES, commands as preset_commands,
                             create_configuration, from_json as parse_configuration,
@@ -54,6 +55,7 @@ class FanArgbWindow(QMainWindow):
         self.setMinimumSize(1080, 700)
         self.settings = QSettings("FanARGB", "FanARGBControl")
         self.port: Optional[serial.Serial | SerialProxyClient] = None
+        self.tx: SerialTransmitter | None = None
         self.read_buffer = ""
         self.temperatures: list[TemperatureSensor] = []
         self.curves = {ch: list(DEFAULT_CURVE) for ch in range(1, 9)}
@@ -109,6 +111,9 @@ class FanArgbWindow(QMainWindow):
         self.serial_timer = QTimer(self)
         self.serial_timer.timeout.connect(self.poll_serial)
         self.serial_timer.start(80)
+        self.tx_timer = QTimer(self)
+        self.tx_timer.timeout.connect(self.flush_serial_tx)
+        self.tx_timer.start(25)
         self.temperature_timer = QTimer(self)
         self.temperature_timer.timeout.connect(self.refresh_temperatures)
         self.temperature_timer.start(2000)
@@ -539,6 +544,7 @@ class FanArgbWindow(QMainWindow):
             except (OSError, ConnectionError):
                 self.port = serial.Serial(port_name, SERIAL_BAUD, timeout=0, write_timeout=0.3)
                 using_agent = False
+            self.tx = SerialTransmitter(self.port)
             self.led_counts = None
             self.settings.setValue("port", port_name)
             self.connect_button.setText("Від'єднати")
@@ -581,8 +587,13 @@ class FanArgbWindow(QMainWindow):
                 self.port.close()
             except OSError:
                 pass
+        if self.tx is not None:
+            self.tx.clear()
+        self.tx = None
         self.port = None
         self.led_counts = None
+        if self.dashboard.studio.active:
+            self.dashboard.studio.stop()
         self.connect_button.setText("Підключити")
         self.dashboard.set_connected(False)
         self.fault_gate.reset()
@@ -594,17 +605,33 @@ class FanArgbWindow(QMainWindow):
         if not self.port:
             return False
         try:
-            payload = (message + "\n").encode("ascii")
-            sent = self.port.write(payload)
-            if sent != len(payload):
-                raise serial.SerialTimeoutException(
-                    f"Частковий запис до ESP32: {sent}/{len(payload)} байтів"
-                )
+            if self.tx is None:
+                return False
+            self.tx.send_command(message)
             return True
-        except (serial.SerialException, OSError) as exc:
+        except (serial.SerialException, OSError, ValueError, UnicodeError) as exc:
             self.log(f"ПОМИЛКА Serial: {exc}")
             self.disconnect()
             return False
+
+    def queue_rgb(self, channel: int, packet: bytes) -> bool:
+        if not self.port or self.tx is None:
+            return False
+        try:
+            self.tx.queue_rgb(channel, packet)
+            return True
+        except ValueError as exc:
+            self.log(f"RGB: {exc}")
+            return False
+
+    def flush_serial_tx(self) -> None:
+        if self.tx is None:
+            return
+        try:
+            self.tx.flush_rgb()
+        except (OSError, serial.SerialException) as exc:
+            self.log(f"USB RGB: {exc}")
+            self.disconnect()
 
     def send_raw(self) -> None:
         raw = self.raw_input.text().strip()
@@ -1552,14 +1579,14 @@ class FanArgbWindow(QMainWindow):
                 continue
             try:
                 packet = encode_rgb_frame(ch, rgb)
-                if self.port.write(packet) != len(packet):
-                    raise serial.SerialTimeoutException("incomplete RGB frame")
-                self.sacn_forwarded += 1
+                if not self.queue_rgb(ch, packet):
+                    raise OSError("RGB frame rejected")
+                self.sacn_forwarded = self.tx.frames_sent if self.tx else 0
             except (ValueError, serial.SerialException, OSError) as exc:
                 self.log(f"ARGB E1.31 → USB ERROR: {exc}")
                 self.disconnect()
                 return
-        if self.sacn_forwarded % 50 < len(frames):
+        if frames and self.tx and (self.tx.frames_sent % 50) < len(frames):
             self.bridge_status.setText(
                 f"Прийом: 127.0.0.1:{SACN_PORT} ({self.sacn_forwarded} кадрів → ESP)"
             )
