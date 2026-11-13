@@ -48,6 +48,11 @@ class DesktopSettingsPanel(QGroupBox):
         self.minimize_tray.toggled.connect(
             lambda v: controller.settings.setValue("minimizeToTray", v))
         layout.addWidget(self.minimize_tray)
+        self.notify_faults = QCheckBox("Сповіщати у треї про аварії та втрату температури")
+        self.notify_faults.setChecked(_enabled(controller.settings.value("notifyFanFaults", "true")))
+        self.notify_faults.toggled.connect(
+            lambda value: controller.settings.setValue("notifyFanFaults", value))
+        layout.addWidget(self.notify_faults)
 
         layout.addWidget(QLabel(
             "Автозапуск із правами адміністратора (Windows Task Scheduler). "
