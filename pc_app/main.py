@@ -45,6 +45,8 @@ from ui_dashboard_model import make_scene_commands
 from ui_dashboard import DashboardShell
 from smart_control import SafeTemperatureFilter, AutoProfileSelector
 from tray_monitor import FaultNotificationGate
+from tach_health import TachHealthMonitor
+from telemetry_store import TelemetryStore
 
 
 class FanArgbWindow(QMainWindow):
@@ -96,6 +98,8 @@ class FanArgbWindow(QMainWindow):
         self.safe_filter = SafeTemperatureFilter()
         self.auto_selector = AutoProfileSelector()
         self.fault_gate = FaultNotificationGate()
+        self.tach_monitor = TachHealthMonitor()
+        self.telemetry = TelemetryStore()
         self._quit_requested = False
         self._last_hwtemp_line = ""
         self.temperature_future: Future | None = None
@@ -600,6 +604,7 @@ class FanArgbWindow(QMainWindow):
         self.connect_button.setText("Підключити")
         self.dashboard.set_connected(False)
         self.fault_gate.reset()
+        self.tach_monitor.reset()
         self._update_tray_tooltip()
         self.statusBar().showMessage("ESP: відключено — автономний захист через 10 с без температур")
         self.log("ESP відключено")
@@ -686,6 +691,24 @@ class FanArgbWindow(QMainWindow):
             self.fan_table.item(row, 2).setText(str(status.rpm) if status.rpm_feedback else "—")
             self.history[status.channel].append((time.time(), status.pwm, status.rpm,
                                                   status.deci_c / 10 if status.fresh else float("nan")))
+            self.telemetry.record_fan(
+                status.channel, pwm=status.pwm, rpm=status.rpm,
+                temperature=status.deci_c / 10 if status.fresh else None,
+                fresh=status.fresh, fault=status.fault,
+            )
+            tach_warning = self.tach_monitor.observe(
+                status.channel, pwm=status.pwm, rpm=status.rpm,
+                has_feedback=status.rpm_feedback, fault=status.fault,
+            )
+            if tach_warning:
+                self.log("TACH: " + tach_warning)
+                self.telemetry.record_alert("TACH", tach_warning)
+                if (self.tray_icon is not None and
+                        self.dashboard.settings_panel.notify_faults.isChecked()):
+                    self.tray_icon.showMessage(
+                        "FanARGB · діагностика TACH", tach_warning,
+                        QSystemTrayIcon.MessageIcon.Warning, 6500,
+                    )
             if status.channel == self.current_fan:
                 self._refresh_history()
             self.fan_table.item(row, 3).setText(f"{status.deci_c / 10:.1f}" if status.fresh else "—")
@@ -872,6 +895,10 @@ class FanArgbWindow(QMainWindow):
         self._update_sensor_table()
         self._update_metric_table()
         watts = self.sensor_sampler.metrics
+        for metric in watts:
+            self.telemetry.record_metric(
+                metric.sensor_id, metric.name, metric.value, metric.unit
+            )
         cpu_w = [m.value for m in watts if m.unit == "W" and
                  ("cpu" in m.name.casefold() or "intel" in m.name.casefold()
                   or "zen" in m.name.casefold())]
@@ -1604,6 +1631,22 @@ class FanArgbWindow(QMainWindow):
             )
             self.dashboard.set_bridge_state(True, self.sacn_forwarded)
 
+    def export_history_csv(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Експорт історії вентиляторів", "fanargb-history.csv",
+            "CSV (*.csv)",
+        )
+        if not path:
+            return
+        try:
+            count = self.telemetry.export_csv(path)
+            QMessageBox.information(
+                self, "Історія FanARGB",
+                f"Експортовано {count} вимірювань за останні 7 діб.",
+            )
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Історія", str(exc))
+
     def closeEvent(self, event) -> None:
         worker = getattr(self.dashboard.maintenance_panel, "worker", None)
         if worker is not None and worker.isRunning():
@@ -1624,6 +1667,7 @@ class FanArgbWindow(QMainWindow):
         self.sacn.stop()
         self.temperature_executor.shutdown(wait=False, cancel_futures=True)
         self.sensor_sampler.close()
+        self.telemetry.close()
         self.disconnect()
         self.settings.sync()
         super().closeEvent(event)
