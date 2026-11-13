@@ -42,7 +42,7 @@ private:
     uint32_t selfTestBasePulses_[board::kChannelCount] = {};
     uint8_t selfTestBasePwm_[board::kChannelCount] = {};
     FanController::Type selfTestBaseType_[board::kChannelCount] = {};
-    char line_[192] = {};
+    char line_[240] = {}; // bounded hex-encoded SSID/PSK + MQTT auth tokens
     uint8_t size_ = 0;
     bool discardingLongLine_ = false;
     RxState rx_ = RxState::Text;
