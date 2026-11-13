@@ -13,7 +13,7 @@ _ALLOWED = re.compile(
     r"^(?:source[1-8]|source2[1-8]|groupSensors[1-8]|"
     r"groupWeights[1-8]|dualEnabled[1-8]|customCurves|"
     r"autoProfiles|smoothTemperatures|minimizeToTray|"
-    r"sacnEnabled|argbStudioPreset)$"
+    r"sacnEnabled|argbStudioPreset|nwinfoProviders)$"
 )
 
 
