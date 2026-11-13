@@ -22,9 +22,20 @@ public:
     void notePc(uint8_t channel, uint32_t nowMs);
     bool enabled() const { return HARDWARE_TEMP_ENABLED != 0; }
     bool fresh(uint32_t nowMs) const;
-    uint16_t deciC() const { return valueDeciC_; }
-    uint32_t age(uint32_t nowMs) const { return fresh(nowMs) ? nowMs - sampleMs_ : 0; }
+    uint16_t deciC() const { return count_ ? probes_[0].deciC : 0; }
+    uint32_t age(uint32_t nowMs) const { return fresh(nowMs) ? nowMs - probes_[0].sampleMs : 0; }
     static const char* modeName(Mode mode);
+
+    // Stable 64-bit ROM identification avoids index changes across reboots.
+    static constexpr uint8_t kMaxProbes = 8;
+    uint8_t sensorCount() const { return count_; }
+    bool sensorInfo(uint8_t index, char rom[17], uint16_t& deciC,
+                    bool& valid, uint32_t& ageMs, uint32_t nowMs) const;
+    bool mappedAddress(uint8_t channel, char rom[17]) const;
+    bool setAddress(uint8_t channel, const char* romOrAuto);
+    bool rescan(); // explicit, never automatic during fan-control loop
+    static bool parseRom(const char* hex, uint8_t (&rom)[8]);
+    static void formatRom(const uint8_t (&rom)[8], char (&hex)[17]);
 private:
 #if HARDWARE_TEMP_ENABLED
     OneWire oneWire_{board::kHardwareTempPin};
@@ -33,12 +44,20 @@ private:
     uint32_t conversionMs_ = 0;
     uint32_t lastRequestMs_ = 0;
 #endif
+    struct Probe {
+        uint8_t rom[8] = {};
+        uint16_t deciC = 0;
+        uint32_t sampleMs = 0;
+        bool valid = false;
+    };
     Preferences preferences_;
+    Probe probes_[kMaxProbes] = {};
+    uint8_t count_ = 0;
     Mode modes_[board::kChannelCount] = {};
-    bool valid_ = false;
-    uint16_t valueDeciC_ = 0;
-    uint32_t sampleMs_ = 0;
+    bool mapped_[board::kChannelCount] = {};
+    uint8_t assignedRom_[board::kChannelCount][8] = {};
     uint32_t lastInjectMs_[board::kChannelCount] = {};
     uint32_t pcReceivedMs_[board::kChannelCount] = {};
     bool pcSeen_[board::kChannelCount] = {};
+    int8_t resolve(uint8_t channel) const;
 };

@@ -181,6 +181,17 @@ OpenRGB E1.31 Devices manually for local USB bridging or direct ESP Wi-Fi;
 it is not a native OpenRGB profile import or USB auto-discovery.
 See [configuration preset documentation](docs/CONFIG_PRESETS.md).
 
+## v7: Native OpenRGB, multi-DS18B20, safer USB, TACH and history
+
+The v7 application adds an optional localhost OpenRGB SDK controller with
+8 independently addressable zones (connect OpenRGB to `127.0.0.1:6743`),
+conservative USB identity reconnect, priority Serial writer, multiple DS18B20
+sensors with 64-bit ROM bindings, passive TACH fault alerts, 30-day SQLite
+history, and stronger ESP32-S3 firmware file verification.
+
+See [features](docs/FEATURES_V7.md) and
+[hardware fail-ON checklist](docs/V7_HARDWARE_SAFETY.md).
+
 ## v6: Integrated automation, diagnostics, firmware update and DS18B20
 
 The Windows GUI adds ARGB Studio effects, CPU/GPU-specific smart cooling,

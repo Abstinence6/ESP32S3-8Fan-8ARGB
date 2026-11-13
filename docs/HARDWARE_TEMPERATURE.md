@@ -26,8 +26,10 @@ Do NOT connect DS18B20 data to 5 V; do NOT reuse GPIOs occupied by
 PWM/TACH/ARGB, USB, bootstrapping, flash/PSRAM or PC Power. The firmware
 checks configured pin collisions at compile time, but cannot verify the
 physical board's additional wiring. Max recommended cabling depends on
-topology/noise. This initial implementation reads **the first sensor** on
-one bus; do not rely on stable address selection when several are attached.
+topology/noise. v7 reads up to **eight sensors with CRC-checked 64-bit ROM
+addresses**, and can map each fan to its explicit ROM. With more than one
+sensor present, `AUTO` is deliberately unavailable for fan control until
+you select a specific sensor.
 
 ## Serial protocol (921600 baud)
 

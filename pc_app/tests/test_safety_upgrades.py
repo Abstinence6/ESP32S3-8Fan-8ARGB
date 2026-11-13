@@ -4,6 +4,7 @@ from pathlib import Path
 import unittest
 
 from pc_app.firmware_update import flash_preflight, inspect_firmware
+from pc_app.tests.esp_image_fixture import make_test_image
 from pc_app.smart_control import AutoProfileSelector
 from pc_app.tray_monitor import FaultNotificationGate
 
@@ -26,9 +27,9 @@ class SafetyUpgrades(unittest.TestCase):
     def test_changed_firmware_image_does_not_match_selected_digest(self):
         with tempfile.TemporaryDirectory() as temp:
             firmware = Path(temp) / "firmware.bin"
-            firmware.write_bytes(bytes([0xE9, 3, 0, 0, 0, 0, 0, 0]) + bytes(2200))
+            firmware.write_bytes(make_test_image())
             old, _ = inspect_firmware(str(firmware))
-            firmware.write_bytes(bytes([0xE9, 3, 0, 0, 0, 0, 0, 0]) + bytes([2])*2200)
+            firmware.write_bytes(make_test_image(content=bytes([2]) * 2304))
             new, _ = inspect_firmware(str(firmware))
             self.assertNotEqual(old, new)
 

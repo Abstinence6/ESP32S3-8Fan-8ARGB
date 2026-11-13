@@ -88,6 +88,8 @@ class ArgbStudioPanel(QGroupBox):
             return
         if self.controller.bridge_checkbox.isChecked():
             self.controller.bridge_checkbox.setChecked(False)
+        if self.controller.dashboard.native_checkbox.isChecked():
+            self.controller.dashboard.native_checkbox.setChecked(False)
         self.started = time.monotonic()
         self.next_zone = 1
         self.active = True
@@ -116,8 +118,8 @@ class ArgbStudioPanel(QGroupBox):
                 *self.colors, self.brightness.value(), self.speed.value() / 50.0,
             )
             packet = encode_rgb_frame(channel, frame)
-            if self.controller.port.write(packet) != len(packet):
-                raise IOError("Short RGB write")
+            if not self.controller.queue_rgb(channel, packet):
+                raise IOError("ARGB queue rejected frame")
         except (ValueError, OSError) as exc:
             self.stop()
             self.controller.log(f"ARGB Studio: {exc}")

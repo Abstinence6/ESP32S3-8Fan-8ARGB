@@ -21,6 +21,10 @@ try:
     from .profiles import PRESETS
     from .protocol import make_curve_command
     from .serial_owner import SerialOwnerServer
+    from .serial_tx import SerialTransmitter
+    from .telemetry_store import TelemetryStore
+    from .tach_health import TachHealthMonitor
+    from .protocol import parse_status
 except ImportError:  # packaged as a standalone PyInstaller entrypoint
     from monitor import MAX_ALL, resolve_temperature
     from nwinfo_sensors import NwinfoSensorSampler
@@ -29,6 +33,10 @@ except ImportError:  # packaged as a standalone PyInstaller entrypoint
     from profiles import PRESETS
     from protocol import make_curve_command
     from serial_owner import SerialOwnerServer
+    from serial_tx import SerialTransmitter
+    from telemetry_store import TelemetryStore
+    from tach_health import TachHealthMonitor
+    from protocol import parse_status
 
 
 def load_assignments(settings: QSettings) -> list[tuple[str, list[str], dict[str, float], str, bool]]:
@@ -88,6 +96,7 @@ def run_agent() -> int:
     settings = QSettings("FanARGB", "FanARGBControl")
     log = setup_logging()
     output: serial.Serial | None = None
+    tx: SerialTransmitter | None = None
     port_name = str(settings.value("port", ""))
     try:
         owner = SerialOwnerServer(port_name)
@@ -110,6 +119,8 @@ def run_agent() -> int:
         sensor_sampler.set_enabled(set(stored_providers.split(",")))
     smooth_filter = SafeTemperatureFilter()
     auto_profiles = AutoProfileSelector()
+    telemetry = TelemetryStore()
+    tach_monitor = TachHealthMonitor()
     next_connect = 0.0
     query_due = 0.0
     client_was_connected = False
@@ -124,6 +135,7 @@ def run_agent() -> int:
                 if port_name:
                     try:
                         output = serial.Serial(port_name, SERIAL_BAUD, timeout=0, write_timeout=0.25)
+                        tx = SerialTransmitter(output)
                         led_counts = None
                         buffer = ""
                         log.info("Connected to %s", port_name)
@@ -132,14 +144,16 @@ def run_agent() -> int:
                     except (serial.SerialException, OSError) as exc:
                         output = None
                         log.warning("Unable to connect %s: %s", port_name, exc)
-            owner.poll(output)
+            owner.poll(tx if tx is not None else output)
             if owner.has_client != client_was_connected:
                 last_frames.clear() # never replay stale RGB across GUI handoff
+                if tx is not None:
+                    tx.clear()
                 client_was_connected = owner.has_client
             if output is not None:
                 try:
                     if query_due and now >= query_due:
-                        output.write(b"PING\nLEDS\nSTATUS\n")
+                        tx.write(b"PING\nLEDS\nSTATUS\n")
                         query_due = 0.0
                     rx = output.read(output.in_waiting or 0)
                     if rx:
@@ -149,6 +163,20 @@ def run_agent() -> int:
                         if len(buffer) > 8192: buffer = ""
                         while "\n" in buffer:
                             line, buffer = buffer.split("\n", 1)
+                            status = parse_status(line.strip())
+                            if status:
+                                telemetry.record_fan(
+                                    status.channel, pwm=status.pwm, rpm=status.rpm,
+                                    temperature=status.deci_c / 10 if status.fresh else None,
+                                    fresh=status.fresh, fault=status.fault,
+                                )
+                                warning = tach_monitor.observe(
+                                    status.channel, pwm=status.pwm, rpm=status.rpm,
+                                    has_feedback=status.rpm_feedback, fault=status.fault,
+                                )
+                                if warning:
+                                    log.warning(warning)
+                                    telemetry.record_alert("TACH", warning)
                             fields = line.strip().split()
                             if len(fields) == 9 and fields[0] == "LEDCOUNTS":
                                 vals = [int(v) for v in fields[1:]]
@@ -161,7 +189,11 @@ def run_agent() -> int:
                             sample = temp_future.result()
                             if not owner.has_client and sample is not None:
                                 for msg in make_sensor_commands(settings, sample, smooth_filter):
-                                    output.write((msg + "\n").encode("ascii"))
+                                    tx.send_command(msg)
+                                for metric in sensor_sampler.metrics:
+                                    telemetry.record_metric(
+                                        metric.sensor_id, metric.name, metric.value, metric.unit
+                                    )
                                 settings.sync()
                                 if str(settings.value("autoProfiles", "false")).lower() in ("true", "1"):
                                     gpu_load = [
@@ -176,9 +208,7 @@ def run_agent() -> int:
                                     )
                                     if desired:
                                         for ch in range(1, 9):
-                                            output.write(
-                                                (make_curve_command(ch, list(PRESETS[desired])) + "\n").encode("ascii")
-                                            )
+                                            tx.send_command(make_curve_command(ch, list(PRESETS[desired])))
                                         auto_profiles.applied(desired, time.monotonic())
                                         log.info("Automatic profile applied: %s", desired)
                         except Exception as exc:
@@ -192,13 +222,17 @@ def run_agent() -> int:
                             rgb = rgb[:led_counts[ch-1] * 3]
                             if len(rgb) < 3: continue
                             packet = encode_rgb_frame(ch, rgb)
-                            if output.write(packet) != len(packet):
-                                raise serial.SerialTimeoutException("short USB RGB write")
+                            tx.queue_rgb(ch, packet)
+                    if tx is not None:
+                        tx.flush_rgb(now)
                 except (serial.SerialException, OSError, ValueError) as exc:
                     log.warning("Serial disconnected: %s", exc)
                     try: output.close()
                     except (OSError, serial.SerialException): pass
                     output = None
+                    if tx is not None:
+                        tx.clear()
+                    tx = None
                     led_counts = None
                     last_frames.clear()
                     next_connect = now + 5.0
@@ -213,5 +247,6 @@ def run_agent() -> int:
         listener.stop()
         temp_executor.shutdown(wait=False, cancel_futures=True)
         sensor_sampler.close()
+        telemetry.close()
         if output is not None:
             output.close()

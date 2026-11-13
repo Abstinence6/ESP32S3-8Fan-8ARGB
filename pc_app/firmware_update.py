@@ -7,26 +7,59 @@ PC fans will remain electrically ON while ESP32 reboots.
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 
 
 def inspect_firmware(path: str) -> tuple[str, int]:
+    """Validate the ESP32-S3 application image, segments, checksum and SHA.
+
+    ESP image header: 8 bytes + 16-byte extended header. The target
+    esp_chip_id_t is at offsets 12-13 and ESP32-S3 is 0x0009.
+    Never accept a bare magic byte or an image built for another ESP32.
+    """
     file = Path(path)
     if file.suffix.lower() != ".bin" or not file.is_file():
         raise ValueError("Вибери файл firmware.bin")
-    size = file.stat().st_size
-    if not 1024 <= size <= 4 * 1024 * 1024:
+    data = file.read_bytes()
+    size = len(data)
+    if not 1024 <= size <= 4 * 1024 * 1024 or len(data) < 24:
         raise ValueError("Некоректний розмір прошивки")
-    with file.open("rb") as inp:
-        header = inp.read(8)
-    if len(header) < 8 or header[0] != 0xE9 or not (1 <= header[1] <= 16):
-        raise ValueError("Файл не схожий на ESP32 firmware image")
-    sha = hashlib.sha256(file.read_bytes()).hexdigest()
-    return sha, size
-
+    if data[0] != 0xE9 or not 1 <= data[1] <= 16:
+        raise ValueError("Файл не є стандартним ESP firmware image")
+    if int.from_bytes(data[12:14], "little") != 0x0009:
+        raise ValueError("Образ призначений не для ESP32-S3 (chip_id != 9)")
+    if data[23] not in (0, 1):
+        raise ValueError("Некоректний прапорець SHA-256 в ESP image")
+    cursor = 24
+    check = 0xEF
+    for _segment in range(data[1]):
+        if cursor + 8 > size:
+            raise ValueError("Заголовок сегмента виходить за межі BIN")
+        address = int.from_bytes(data[cursor:cursor + 4], "little")
+        length = int.from_bytes(data[cursor + 4:cursor + 8], "little")
+        cursor += 8
+        if not address or length == 0 or length > size - cursor:
+            raise ValueError("Некоректна адреса чи розмір ESP image сегмента")
+        for byte in data[cursor:cursor + length]:
+            check ^= byte
+        cursor += length
+    checksum_at = ((cursor + 16) // 16) * 16 - 1
+    if checksum_at >= size or data[checksum_at] != check:
+        raise ValueError("Пошкоджено контрольну суму сегментів ESP32-S3")
+    image_end = checksum_at + 1
+    if data[23] == 1:
+        if size != image_end + 32:
+            raise ValueError("Некоректна довжина SHA-256 ESP image")
+        if data[image_end:] != hashlib.sha256(data[:image_end]).digest():
+            raise ValueError("SHA-256 усередині прошивки не збігається")
+    elif size != image_end:
+        raise ValueError("Неочікувані дані після ESP image")
+    digest = hashlib.sha256(data).hexdigest()
+    return digest, size
 
 def flash_command(port: str, path: str) -> list[str]:
-    if not port or not port.upper().startswith("COM") and not port.startswith("/dev/"):
+    if not (re.fullmatch(r"COM[1-9][0-9]*", port, flags=re.IGNORECASE) or port.startswith("/dev/")):
         raise ValueError("Необхідно вибрати Serial порт ESP32-S3")
     inspect_firmware(path)
     return [

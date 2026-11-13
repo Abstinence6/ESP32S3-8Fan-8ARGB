@@ -36,6 +36,9 @@ from nwinfo_sensors import NwinfoSensorSampler
 from sacn_bridge import E131Listener, SACN_PORT, SERIAL_BAUD, encode_rgb_frame
 from protocol import validate_curve, DEFAULT_CURVE, make_curve_command, make_temperature_command, parse_curve, parse_status
 from serial_owner import SerialProxyClient
+from serial_tx import SerialTransmitter
+from openrgb_native import OpenRGBNativeServer
+from port_recovery import PortRecovery
 from profiles import PRESETS
 from config_presets import (RGB_SCENES, FAN_CURVES, commands as preset_commands,
                             create_configuration, from_json as parse_configuration,
@@ -44,6 +47,8 @@ from ui_dashboard_model import make_scene_commands
 from ui_dashboard import DashboardShell
 from smart_control import SafeTemperatureFilter, AutoProfileSelector
 from tray_monitor import FaultNotificationGate
+from tach_health import TachHealthMonitor
+from telemetry_store import TelemetryStore
 
 
 class FanArgbWindow(QMainWindow):
@@ -54,6 +59,9 @@ class FanArgbWindow(QMainWindow):
         self.setMinimumSize(1080, 700)
         self.settings = QSettings("FanARGB", "FanARGBControl")
         self.port: Optional[serial.Serial | SerialProxyClient] = None
+        self.tx: SerialTransmitter | None = None
+        self.recovery = PortRecovery()
+        self._reconnect_armed = False
         self.read_buffer = ""
         self.temperatures: list[TemperatureSensor] = []
         self.curves = {ch: list(DEFAULT_CURVE) for ch in range(1, 9)}
@@ -94,10 +102,13 @@ class FanArgbWindow(QMainWindow):
         self.safe_filter = SafeTemperatureFilter()
         self.auto_selector = AutoProfileSelector()
         self.fault_gate = FaultNotificationGate()
+        self.tach_monitor = TachHealthMonitor()
+        self.telemetry = TelemetryStore()
         self._quit_requested = False
         self._last_hwtemp_line = ""
         self.temperature_future: Future | None = None
         self.sacn = E131Listener()
+        self.openrgb_native = OpenRGBNativeServer()
         self.sacn_pending: dict[int, bytes] = {}
         self.sacn_last_sent = 0.0
         self.sacn_forwarded = 0
@@ -109,6 +120,12 @@ class FanArgbWindow(QMainWindow):
         self.serial_timer = QTimer(self)
         self.serial_timer.timeout.connect(self.poll_serial)
         self.serial_timer.start(80)
+        self.tx_timer = QTimer(self)
+        self.tx_timer.timeout.connect(self.flush_serial_tx)
+        self.tx_timer.start(25)
+        self.reconnect_timer = QTimer(self)
+        self.reconnect_timer.timeout.connect(self._try_reconnect)
+        self.reconnect_timer.start(5000)
         self.temperature_timer = QTimer(self)
         self.temperature_timer.timeout.connect(self.refresh_temperatures)
         self.temperature_timer.start(2000)
@@ -118,6 +135,9 @@ class FanArgbWindow(QMainWindow):
         self.sacn_timer = QTimer(self)
         self.sacn_timer.timeout.connect(self.poll_sacn)
         self.sacn_timer.start(20)
+        self.openrgb_sdk_timer = QTimer(self)
+        self.openrgb_sdk_timer.timeout.connect(self.poll_native_openrgb)
+        self.openrgb_sdk_timer.start(25)
         self.refresh_temperatures()
         self.aux_status_timer = QTimer(self)
         self.aux_status_timer.timeout.connect(self.refresh_aux_status)
@@ -526,30 +546,60 @@ class FanArgbWindow(QMainWindow):
 
     def toggle_serial(self) -> None:
         if self.port:
-            self.disconnect()
+            self.disconnect(manual=True)
             return
         port_name = self.port_box.currentData()
         if not port_name:
             QMessageBox.warning(self, "COM порт", "Підключи ESP32-S3 та вибери COM порт")
             return
+        self.connect_to_port(str(port_name))
+
+    def connect_to_port(self, port_name: str, quiet: bool = False) -> bool:
+        if self.port:
+            return True
         try:
             try:
                 self.port = SerialProxyClient(port_name)
                 using_agent = True
             except (OSError, ConnectionError):
-                self.port = serial.Serial(port_name, SERIAL_BAUD, timeout=0, write_timeout=0.3)
+                self.port = serial.Serial(
+                    port_name, SERIAL_BAUD, timeout=0, write_timeout=0.3
+                )
                 using_agent = False
+            self.tx = SerialTransmitter(self.port)
             self.led_counts = None
             self.settings.setValue("port", port_name)
             self.connect_button.setText("Від'єднати")
             self.dashboard.set_connected(True, port_name)
             self.statusBar().showMessage(f"ESP: {port_name} підключено")
-            self.log(f"Підключено до {port_name} ({'через фоновий агент' if using_agent else 'COM напряму'})")
-            # Opening a serial port can reset an ESP board; wait for the boot message.
+            self.log(
+                f"Підключено до {port_name} "
+                f"({'через агента' if using_agent else 'COM напряму'})"
+            )
+            if not quiet or self.recovery.identity is None:
+                # Identity is recorded only after an explicit user-selected port.
+                self.recovery.remember(list_ports.comports(), port_name)
+            self._reconnect_armed = True
             QTimer.singleShot(2200, self.read_device_state)
+            return True
         except (serial.SerialException, OSError) as exc:
             self.port = None
-            QMessageBox.critical(self, "Serial", str(exc))
+            self.tx = None
+            if quiet:
+                self.log(f"Перепідключення ESP не вдалося: {exc}")
+            else:
+                QMessageBox.warning(self, "Serial", str(exc))
+            return False
+
+    def _try_reconnect(self) -> None:
+        if self.port or not self._reconnect_armed:
+            return
+        ports = list(list_ports.comports())
+        target = self.recovery.find(ports)
+        if not target:
+            return
+        self.refresh_ports()
+        self.connect_to_port(target, quiet=True)
 
     def read_device_state(self) -> None:
         if not self.port:
@@ -561,6 +611,9 @@ class FanArgbWindow(QMainWindow):
         self.send("PC STATUS")
         self.send("MQTT?")
         self.send("HTEMP?")
+        self.send("HTLIST?")
+        for ch in range(1, 9):
+            self.send(f"HTMAP? {ch}")
         for ch in range(1, 9):
             self.send(f"HTMODE? {ch}")
         for ch in range(1, 9):
@@ -575,17 +628,27 @@ class FanArgbWindow(QMainWindow):
             self.send("MQTT?")
             self.send("HTEMP?")
 
-    def disconnect(self) -> None:
+    def disconnect(self, manual: bool = False) -> None:
+        if manual:
+            self._reconnect_armed = False
         if self.port:
             try:
                 self.port.close()
             except OSError:
                 pass
+        if self.tx is not None:
+            self.tx.clear()
+        self.tx = None
         self.port = None
         self.led_counts = None
+        if self.dashboard.native_checkbox.isChecked():
+            self.dashboard.native_checkbox.setChecked(False)
+        if self.dashboard.studio.active:
+            self.dashboard.studio.stop()
         self.connect_button.setText("Підключити")
         self.dashboard.set_connected(False)
         self.fault_gate.reset()
+        self.tach_monitor.reset()
         self._update_tray_tooltip()
         self.statusBar().showMessage("ESP: відключено — автономний захист через 10 с без температур")
         self.log("ESP відключено")
@@ -594,17 +657,33 @@ class FanArgbWindow(QMainWindow):
         if not self.port:
             return False
         try:
-            payload = (message + "\n").encode("ascii")
-            sent = self.port.write(payload)
-            if sent != len(payload):
-                raise serial.SerialTimeoutException(
-                    f"Частковий запис до ESP32: {sent}/{len(payload)} байтів"
-                )
+            if self.tx is None:
+                return False
+            self.tx.send_command(message)
             return True
-        except (serial.SerialException, OSError) as exc:
+        except (serial.SerialException, OSError, ValueError, UnicodeError) as exc:
             self.log(f"ПОМИЛКА Serial: {exc}")
             self.disconnect()
             return False
+
+    def queue_rgb(self, channel: int, packet: bytes) -> bool:
+        if not self.port or self.tx is None:
+            return False
+        try:
+            self.tx.queue_rgb(channel, packet)
+            return True
+        except ValueError as exc:
+            self.log(f"RGB: {exc}")
+            return False
+
+    def flush_serial_tx(self) -> None:
+        if self.tx is None:
+            return
+        try:
+            self.tx.flush_rgb()
+        except (OSError, serial.SerialException) as exc:
+            self.log(f"USB RGB: {exc}")
+            self.disconnect()
 
     def send_raw(self) -> None:
         raw = self.raw_input.text().strip()
@@ -656,6 +735,24 @@ class FanArgbWindow(QMainWindow):
             self.fan_table.item(row, 2).setText(str(status.rpm) if status.rpm_feedback else "—")
             self.history[status.channel].append((time.time(), status.pwm, status.rpm,
                                                   status.deci_c / 10 if status.fresh else float("nan")))
+            self.telemetry.record_fan(
+                status.channel, pwm=status.pwm, rpm=status.rpm,
+                temperature=status.deci_c / 10 if status.fresh else None,
+                fresh=status.fresh, fault=status.fault,
+            )
+            tach_warning = self.tach_monitor.observe(
+                status.channel, pwm=status.pwm, rpm=status.rpm,
+                has_feedback=status.rpm_feedback, fault=status.fault,
+            )
+            if tach_warning:
+                self.log("TACH: " + tach_warning)
+                self.telemetry.record_alert("TACH", tach_warning)
+                if (self.tray_icon is not None and
+                        self.dashboard.settings_panel.notify_faults.isChecked()):
+                    self.tray_icon.showMessage(
+                        "FanARGB · діагностика TACH", tach_warning,
+                        QSystemTrayIcon.MessageIcon.Warning, 6500,
+                    )
             if status.channel == self.current_fan:
                 self._refresh_history()
             self.fan_table.item(row, 3).setText(f"{status.deci_c / 10:.1f}" if status.fresh else "—")
@@ -677,6 +774,15 @@ class FanArgbWindow(QMainWindow):
                 )
             except (ValueError, KeyError):
                 self.log("Невалідна відповідь VERSION?")
+            return
+        if line.startswith("HTSENSOR_END"):
+            self.dashboard.hardware_sensor.handle_sensor_line(line)
+            return
+        if line.startswith("HTSENSOR "):
+            self.dashboard.hardware_sensor.handle_sensor_line(line[9:])
+            return
+        if line.startswith("HTMAP "):
+            self.dashboard.hardware_sensor.handle_map(line[6:])
             return
         if line.startswith("HTEMP "):
             self._last_hwtemp_line = line
@@ -833,6 +939,10 @@ class FanArgbWindow(QMainWindow):
         self._update_sensor_table()
         self._update_metric_table()
         watts = self.sensor_sampler.metrics
+        for metric in watts:
+            self.telemetry.record_metric(
+                metric.sensor_id, metric.name, metric.value, metric.unit
+            )
         cpu_w = [m.value for m in watts if m.unit == "W" and
                  ("cpu" in m.name.casefold() or "intel" in m.name.casefold()
                   or "zen" in m.name.casefold())]
@@ -1395,6 +1505,8 @@ class FanArgbWindow(QMainWindow):
         """Apply a lighting-only scene without modifying cooling NVS or fan duty."""
         if self.dashboard.studio.active:
             self.dashboard.studio.stop()
+        if self.dashboard.native_checkbox.isChecked():
+            self.dashboard.native_checkbox.setChecked(False)
         if not self.port:
             QMessageBox.warning(self, "ARGB", "Спочатку підключи ESP32-S3")
             return
@@ -1509,7 +1621,45 @@ class FanArgbWindow(QMainWindow):
         # Do not log the password, and do not include it in GUI history.
         self.send(f"WIFI SET {ssid} {password}")
 
+    def toggle_native_openrgb(self, enabled: bool) -> None:
+        if not enabled:
+            self.openrgb_native.stop()
+            return
+        if not self.port or self.led_counts is None:
+            self.log("Native OpenRGB: підключи ESP та дочекайся LEDCOUNTS")
+            box = self.dashboard.native_checkbox
+            box.blockSignals(True)
+            box.setChecked(False)
+            box.blockSignals(False)
+            return
+        if self.bridge_checkbox.isChecked():
+            self.bridge_checkbox.setChecked(False)
+        if self.dashboard.studio.active:
+            self.dashboard.studio.stop()
+        try:
+            self.openrgb_native.start(self.led_counts)
+            self.log("OpenRGB SDK: 127.0.0.1:6743, один контролер із 8 зонами")
+        except (OSError, ValueError) as exc:
+            self.log(f"OpenRGB SDK: {exc}")
+            box = self.dashboard.native_checkbox
+            box.blockSignals(True)
+            box.setChecked(False)
+            box.blockSignals(False)
+
+    def poll_native_openrgb(self) -> None:
+        frames = self.openrgb_native.read_latest()
+        if not self.port or self.led_counts is None:
+            return
+        for ch, rgb in frames.items():
+            try:
+                if not self.queue_rgb(ch, encode_rgb_frame(ch, rgb)):
+                    break
+            except ValueError as exc:
+                self.log(f"OpenRGB SDK кадр відхилено: {exc}")
+
     def toggle_sacn(self, enabled: bool) -> None:
+        if enabled and self.dashboard.native_checkbox.isChecked():
+            self.dashboard.native_checkbox.setChecked(False)
         if enabled and self.dashboard.studio.active:
             self.dashboard.studio.stop()
         if not enabled:
@@ -1552,18 +1702,34 @@ class FanArgbWindow(QMainWindow):
                 continue
             try:
                 packet = encode_rgb_frame(ch, rgb)
-                if self.port.write(packet) != len(packet):
-                    raise serial.SerialTimeoutException("incomplete RGB frame")
-                self.sacn_forwarded += 1
+                if not self.queue_rgb(ch, packet):
+                    raise OSError("RGB frame rejected")
+                self.sacn_forwarded = self.tx.frames_sent if self.tx else 0
             except (ValueError, serial.SerialException, OSError) as exc:
                 self.log(f"ARGB E1.31 → USB ERROR: {exc}")
                 self.disconnect()
                 return
-        if self.sacn_forwarded % 50 < len(frames):
+        if frames and self.tx and (self.tx.frames_sent % 50) < len(frames):
             self.bridge_status.setText(
                 f"Прийом: 127.0.0.1:{SACN_PORT} ({self.sacn_forwarded} кадрів → ESP)"
             )
             self.dashboard.set_bridge_state(True, self.sacn_forwarded)
+
+    def export_history_csv(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Експорт історії вентиляторів", "fanargb-history.csv",
+            "CSV (*.csv)",
+        )
+        if not path:
+            return
+        try:
+            count = self.telemetry.export_csv(path)
+            QMessageBox.information(
+                self, "Історія FanARGB",
+                f"Експортовано {count} вимірювань за останні 7 діб.",
+            )
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Історія", str(exc))
 
     def closeEvent(self, event) -> None:
         worker = getattr(self.dashboard.maintenance_panel, "worker", None)
@@ -1582,10 +1748,12 @@ class FanArgbWindow(QMainWindow):
         if self.tray_icon is not None:
             self.tray_icon.hide()
         self.dashboard.studio.stop()
+        self.openrgb_native.stop()
         self.sacn.stop()
         self.temperature_executor.shutdown(wait=False, cancel_futures=True)
         self.sensor_sampler.close()
-        self.disconnect()
+        self.telemetry.close()
+        self.disconnect(manual=True)
         self.settings.sync()
         super().closeEvent(event)
 
