@@ -58,6 +58,7 @@ class HardwareSensorPanel(QGroupBox):
 
     def refresh(self) -> None:
         self.controller.send("HTEMP?")
+        self.probes.clear()
         self.controller.send("HTLIST?")
         self._query_mode()
 
