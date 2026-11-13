@@ -636,7 +636,7 @@ void SerialConsole::handleLine(char* line) {
 void SerialConsole::printHelp() {
     serial_.println(F("Channels: 1..8, temperatures: deci-Celsius, e.g. 455 = 45.5 C"));
     serial_.println(F("PING | STATUS | HEALTH [ch] | SELFTEST [CANCEL] | HELP | LEDS | PC STATUS|ON|OFF|FORCE"));
-    serial_.println(F("VERSION? | HTTEMP? (legacy: HTEMP?) | HTLIST? | HTSCAN | HTMAP? <ch> | HTMAP <ch> AUTO|ROMHEX"));
+    serial_.println(F("VERSION? | HTEMP? | HTLIST? | HTSCAN | HTMAP? <ch> | HTMAP <ch> AUTO|ROMHEX"));
     serial_.println(F("HTMODE? <ch> | HTMODE <ch> PC|LOCAL|BACKUP"));
     serial_.println(F("MQTT? | MQTT HOST <broker> <port> | MQTT AUTH <user> <pass> | MQTT ON|OFF"));
     serial_.println(F("TEMP <ch> <0..1250> | AUTO <ch> | ALLAUTO"));
