@@ -399,10 +399,29 @@ class DashboardShell(QWidget):
     @staticmethod
     def _content(title: str, subtitle: str) -> tuple[QWidget, QVBoxLayout]:
         page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(27, 21, 27, 26)
+        page.setMinimumWidth(0)
+        outside = QVBoxLayout(page)
+        outside.setContentsMargins(18, 0, 18, 0)
+        outside.setSpacing(0)
+        # Never stretch a fan card to 700px on ultrawide monitors.
+        # All pages share this same centered readable canvas.
+        body = QWidget(page)
+        body.setObjectName("pageCanvas")
+        body.setMinimumWidth(0)
+        body.setMaximumWidth(1280)
+        body.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(7, 21, 7, 26)
         layout.setSpacing(14)
         layout.addWidget(_page_header(title, subtitle))
+        center = QHBoxLayout()
+        center.setContentsMargins(0, 0, 0, 0)
+        center.setSpacing(0)
+        center.addStretch(1)
+        center.addWidget(body, 100)
+        center.addStretch(1)
+        outside.addLayout(center)
+        outside.addStretch(1)
         return page, layout
 
     @staticmethod
@@ -892,7 +911,7 @@ class DashboardShell(QWidget):
         )
         self.device_settings = DeviceSettingsPanel(self.controller)
         self.device_settings.setMaximumWidth(925)
-        layout.addWidget(self.device_settings, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self.device_settings, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         self._add_page("esp32", page)
 
     def _create_service(
