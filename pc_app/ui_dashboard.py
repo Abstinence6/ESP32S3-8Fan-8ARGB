@@ -8,6 +8,12 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from PySide6.QtCore import Qt
+from settings_widgets import DesktopSettingsPanel
+from hardware_sensor_ui import HardwareSensorPanel
+from argb_studio_ui import ArgbStudioPanel
+from maintenance_ui import MaintenancePanel
+from diagnostics_ui import DiagnosticPanel
+from sensor_manager_ui import SensorManagerPanel
 from PySide6.QtWidgets import (
     QButtonGroup, QComboBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
     QLabel, QLayout, QPushButton, QRadioButton, QScrollArea, QSplitter,
@@ -391,6 +397,8 @@ class DashboardShell(QWidget):
 
         rgb_box.setTitle("Колір, яскравість та OpenRGB")
         layout.addWidget(rgb_box)
+        self.studio = ArgbStudioPanel(self.controller)
+        layout.addWidget(self.studio)
         note = QFrame()
         note.setObjectName("quietCard")
         foot = QVBoxLayout(note)
@@ -481,6 +489,10 @@ class DashboardShell(QWidget):
         ep.addWidget(scan)
         ep.addWidget(self.controller.sensor_status)
         layout.addWidget(endpoint)
+        self.hardware_sensor = HardwareSensorPanel(self.controller)
+        layout.addWidget(self.hardware_sensor)
+        self.sensor_manager = SensorManagerPanel(self.controller)
+        layout.addWidget(self.sensor_manager)
         self._add_page("sensors", page)
 
     def _create_service(
@@ -501,6 +513,8 @@ class DashboardShell(QWidget):
             "minor", True,
         ))
         layout.addWidget(warning)
+        self.firmware_status = _label("Прошивка: версію ще не прочитано", "minor")
+        layout.addWidget(self.firmware_status)
         layout.addWidget(calibration_box)
         network = self._service_group("Налаштування ARGB, Wi-Fi та живлення стрічок", hardware_rgb)
         layout.addWidget(network)
@@ -508,6 +522,12 @@ class DashboardShell(QWidget):
         layout.addWidget(combined)
         advanced = self._service_group("Діагностика та MQTT / Home Assistant", diagnostic_row)
         layout.addWidget(advanced)
+        self.diagnostics = DiagnosticPanel(self.controller)
+        layout.addWidget(self.diagnostics)
+        self.settings_panel = DesktopSettingsPanel(self.controller)
+        layout.addWidget(self.settings_panel)
+        self.maintenance_panel = MaintenancePanel(self.controller)
+        layout.addWidget(self.maintenance_panel)
 
         layout.addStretch(1)
         self._add_page("service", page)

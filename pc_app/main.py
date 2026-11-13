@@ -1,12 +1,13 @@
 """Windows desktop companion: ESP32 calibration, fan curves and PC temperatures.
 
 Run: python pc_app/main.py (from repository root or from pc_app).
-Requires a running LibreHardwareMonitor Remote Web Server on localhost:8085.
+Uses bundled NWinfo and an optional local DS18B20 sensor on ESP32-S3.
 """
 from __future__ import annotations
 
 import json
 import csv
+from datetime import datetime
 from collections import deque
 import sys
 import time
@@ -17,18 +18,18 @@ import pyqtgraph as pg
 import serial
 from serial.tools import list_ports
 from PySide6.QtCore import QSettings, QTimer, Qt
-from PySide6.QtGui import QTextCursor, QFont
+from PySide6.QtGui import QTextCursor, QFont, QAction
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton,
     QSplitter, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
     QColorDialog, QCheckBox, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem,
-    QFileDialog,
+    QFileDialog, QSystemTrayIcon, QMenu, QStyle,
     QHeaderView, QAbstractItemView, QTabWidget,
 )
 
 from monitor import (
-    GROUP_AVG, GROUP_MAX, GROUP_WEIGHTED, MAX_ALL,
+    GROUP_AVG, GROUP_MAX, GROUP_WEIGHTED, MAX_ALL, MAX_CPU_GPU,
     TemperatureSensor, resolve_temperature,
 )
 from nwinfo_sensors import NwinfoSensorSampler
@@ -41,6 +42,7 @@ from config_presets import (RGB_SCENES, FAN_CURVES, commands as preset_commands,
                             to_json as serialize_configuration, openrgb_e131_manifest)
 from ui_dashboard_model import make_scene_commands
 from ui_dashboard import DashboardShell
+from smart_control import SafeTemperatureFilter, AutoProfileSelector
 
 
 class FanArgbWindow(QMainWindow):
@@ -59,6 +61,7 @@ class FanArgbWindow(QMainWindow):
         self.fan_pid_enabled = {ch: False for ch in range(1, 9)}
         self.fan_dual_enabled = {ch: False for ch in range(1, 9)}
         self.history: dict[int, deque] = {ch: deque(maxlen=3600) for ch in range(1, 9)}
+        self.power_history = deque(maxlen=3600)
         self.cal_points: dict[int, dict[int, int]] = {ch: {} for ch in range(1, 9)}
         self.current_fan = 1
         self.target_items: list[pg.TargetItem] = []
@@ -82,14 +85,22 @@ class FanArgbWindow(QMainWindow):
                 self.sensor_groups[ch] = []
         self.led_counts: list[int] | None = None  # do not stream until ESP confirms sizes
         self.sensor_sampler = NwinfoSensorSampler()
+        saved_providers = str(self.settings.value("nwinfoProviders", ""))
+        if saved_providers:
+            self.sensor_sampler.set_enabled(set(saved_providers.split(",")))
         self.temperature_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="NWinfoResults")
         self._last_sensor_issue: str | None = None
+        self.safe_filter = SafeTemperatureFilter()
+        self.auto_selector = AutoProfileSelector()
+        self._quit_requested = False
+        self._last_hwtemp_line = ""
         self.temperature_future: Future | None = None
         self.sacn = E131Listener()
         self.sacn_pending: dict[int, bytes] = {}
         self.sacn_last_sent = 0.0
         self.sacn_forwarded = 0
         self._build_ui()
+        self._setup_tray()
         self.refresh_ports()
         self._update_targets()
 
@@ -109,6 +120,9 @@ class FanArgbWindow(QMainWindow):
         self.aux_status_timer = QTimer(self)
         self.aux_status_timer.timeout.connect(self.refresh_aux_status)
         self.aux_status_timer.start(5000)
+        self.profile_timer = QTimer(self)
+        self.profile_timer.timeout.connect(self._check_automatic_profile)
+        self.profile_timer.start(6000)
         if str(self.settings.value("sacnEnabled", "false")).lower() in ("true", "1"):
             self.bridge_checkbox.setChecked(True)
 
@@ -157,16 +171,17 @@ class FanArgbWindow(QMainWindow):
                 self.fan_table.setItem(row, col, QTableWidgetItem(value))
             box = QComboBox()
             box.addItem("MAX усіх температур", MAX_ALL)
+            box.addItem("MAX(CPU, GPU) — для корпусних вентиляторів", MAX_CPU_GPU)
             box.addItem("AVG вибраної групи", GROUP_AVG)
             box.addItem("MAX вибраної групи", GROUP_MAX)
             box.addItem("Зважене AVG групи", GROUP_WEIGHTED)
             desired = str(self.settings.value(f"source{ch}", MAX_ALL))
-            known = [MAX_ALL, GROUP_AVG, GROUP_MAX, GROUP_WEIGHTED]
+            known = [MAX_ALL, MAX_CPU_GPU, GROUP_AVG, GROUP_MAX, GROUP_WEIGHTED]
             if desired in known:
                 box.setCurrentIndex(known.index(desired))
             else:
                 box.addItem(f"Недоступний: {desired}", desired)
-                box.setCurrentIndex(3)
+                box.setCurrentIndex(box.count() - 1)
             box.currentIndexChanged.connect(lambda _=0, number=ch: self.source_changed(number))
             self.fan_table.setCellWidget(row, 5, box)
             self.source_boxes.append(box)
@@ -317,14 +332,39 @@ class FanArgbWindow(QMainWindow):
         calibration_layout.addWidget(self.rpm_plot, 1)
         right_layout.addWidget(calibration_box, 1)
 
-        history_box = QGroupBox("Історія — PWM / RPM")
+        history_box = QGroupBox("Історія — PWM / RPM / температури / потужність")
         history_layout = QVBoxLayout(history_box)
-        self.history_plot = pg.PlotWidget()
-        self.history_plot.setMaximumHeight(130)
-        self.history_plot.setLabel("bottom", "Час", units="с")
-        self.history_plot.showGrid(x=True, y=True, alpha=0.2)
-        self.history_pwm_curve = self.history_plot.plot(pen=pg.mkPen("#6cbce5", width=2), name="PWM")
-        history_layout.addWidget(self.history_plot)
+        self.history_tabs = QTabWidget()
+        self.history_plots = {}
+        for key, label, unit in (
+            ("pwm", "PWM", "%"), ("rpm", "RPM", "RPM"),
+            ("temp", "Температура", "°C"), ("power", "Потужність", "Вт"),
+        ):
+            plot = pg.PlotWidget()
+            plot.setMinimumHeight(190)
+            plot.setLabel("bottom", "Час", units="с")
+            plot.setLabel("left", label, units=unit)
+            plot.showGrid(x=True, y=True, alpha=0.2)
+            self.history_plots[key] = plot
+            self.history_tabs.addTab(plot, label)
+        self.history_plot = self.history_plots["pwm"]
+        self.history_pwm_curve = self.history_plot.plot(
+            pen=pg.mkPen("#6cbce5", width=2), name="PWM"
+        )
+        self.history_rpm_curve = self.history_plots["rpm"].plot(
+            pen=pg.mkPen("#8cdb98", width=2)
+        )
+        self.history_temperature_curve = self.history_plots["temp"].plot(
+            pen=pg.mkPen("#e6ae6d", width=2)
+        )
+        self.cpu_power_curve = self.history_plots["power"].plot(
+            pen=pg.mkPen("#80b7eb", width=2), name="CPU W"
+        )
+        self.gpu_power_curve = self.history_plots["power"].plot(
+            pen=pg.mkPen("#e8a073", width=2), name="GPU W"
+        )
+        self.history_plots["power"].addLegend()
+        history_layout.addWidget(self.history_tabs)
         hist_row = QHBoxLayout()
         export_button = QPushButton("Зберегти історію CSV…")
         export_button.clicked.connect(self.export_history)
@@ -513,10 +553,14 @@ class FanArgbWindow(QMainWindow):
         if not self.port:
             return
         self.send("PING")
+        self.send("VERSION?")
         self.send("LEDS")
         self.send("STATUS")
         self.send("PC STATUS")
         self.send("MQTT?")
+        self.send("HTEMP?")
+        for ch in range(1, 9):
+            self.send(f"HTMODE? {ch}")
         for ch in range(1, 9):
             self.send(f"CURVE? {ch}")
             self.send(f"CURVE2? {ch}")
@@ -527,6 +571,7 @@ class FanArgbWindow(QMainWindow):
         if self.port:
             self.send("PC STATUS")
             self.send("MQTT?")
+            self.send("HTEMP?")
 
     def disconnect(self) -> None:
         if self.port:
@@ -580,6 +625,8 @@ class FanArgbWindow(QMainWindow):
     def handle_line(self, line: str) -> None:
         if not line:
             return
+        if self.dashboard.diagnostics.handle_line(line):
+            return
         status = parse_status(line)
         if status:
             self.fan_status[status.channel] = status
@@ -597,6 +644,26 @@ class FanArgbWindow(QMainWindow):
                 + (" · FAULT" if status.fault else "")
                 + (f" · {status.detected_type}-pin" if status.detected_type in (2, 3) else "")
             )
+            return
+        if line.startswith("FW VERSION="):
+            fields = dict(x.split("=", 1) for x in line.split() if "=" in x)
+            try:
+                version = int(fields["VERSION"])
+                self.dashboard.firmware_status.setText(
+                    f"ESP32 firmware v{version} · "
+                    + ("сумісна" if version >= 6 else "старіша; оновлення рекомендовано")
+                    + f" · DC PWM {'дозволено' if fields.get('DC_READY') == '1' else 'заблоковано'}"
+                    + f" · DS18B20 {'так' if fields.get('DS18B20') == '1' else 'ні'}"
+                )
+            except (ValueError, KeyError):
+                self.log("Невалідна відповідь VERSION?")
+            return
+        if line.startswith("HTEMP "):
+            self._last_hwtemp_line = line
+            self.dashboard.hardware_sensor.handle_status(line)
+            return
+        if line.startswith("HTMODE "):
+            self.dashboard.hardware_sensor.handle_mode(line[7:])
             return
         if line.startswith("PC "):
             self.pc_power_status.setText("Стан ПК: " + line[3:])
@@ -745,6 +812,17 @@ class FanArgbWindow(QMainWindow):
         )
         self._update_sensor_table()
         self._update_metric_table()
+        watts = self.sensor_sampler.metrics
+        cpu_w = [m.value for m in watts if m.unit == "W" and
+                 ("cpu" in m.name.casefold() or "intel" in m.name.casefold()
+                  or "zen" in m.name.casefold())]
+        gpu_w = [m.value for m in watts if m.unit == "W" and
+                 "gpu" in m.name.casefold()]
+        self.power_history.append((
+            time.time(), max(cpu_w) if cpu_w else float("nan"),
+            max(gpu_w) if gpu_w else float("nan"),
+        ))
+        self._refresh_history()
         self._update_source_boxes()
         self._update_secondary_box()
 
@@ -754,6 +832,8 @@ class FanArgbWindow(QMainWindow):
             celsius = resolve_temperature(
                 str(box.currentData()), self.temperatures, self.sensor_groups[ch], self.sensor_weights[ch]
             )
+            if self.dashboard.settings_panel.smoothing.isChecked():
+                celsius = self.safe_filter.update(ch, celsius, time.monotonic())
             if celsius is not None:
                 try:
                     self.send(make_temperature_command(ch, celsius))
@@ -769,6 +849,75 @@ class FanArgbWindow(QMainWindow):
                     except ValueError:
                         pass
         self.send("STATUS")
+
+    def _check_automatic_profile(self) -> None:
+        if not self.port or not self.dashboard.settings_panel.auto_profiles.isChecked():
+            return
+        gpu_usage = [
+            m.value for m in self.sensor_sampler.metrics
+            if m.kind == "load" and "gpu" in m.name.casefold()
+            and ("utilization" in m.name.casefold() or "load" in m.name.casefold())
+        ]
+        desired = self.auto_selector.consider(
+            max(gpu_usage) if gpu_usage else None,
+            datetime.now().hour,
+            time.monotonic(),
+        )
+        if desired:
+            curves = [list(PRESETS[desired]) for _ in range(8)]
+            try:
+                for ch, points in enumerate(curves, 1):
+                    if not self.send(make_curve_command(ch, points)):
+                        self.log("Автопрофіль: COM недоступний, зміни не завершено")
+                        return
+            except ValueError as exc:
+                self.log(f"Автопрофіль: {exc}")
+                return
+            for ch, points in enumerate(curves, 1):
+                self.curves[ch] = points
+            self.auto_selector.applied(desired, time.monotonic())
+            self.profile_box.setCurrentText(desired)
+            self._update_targets()
+            self.log(f"Автопрофіль {desired}: надіслано 8 кривих, без зміни захисту")
+
+    def _setup_tray(self) -> None:
+        self.tray_icon = None
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        tray = QSystemTrayIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon), self)
+        tray.setToolTip("FanARGBControl · ESP32-S3")
+        menu = QMenu(self)
+        show_action = QAction("Відкрити FanARGBControl", self)
+        show_action.triggered.connect(self._restore_from_tray)
+        menu.addAction(show_action)
+        menu.addSeparator()
+        for preset in ("Silent", "Balanced", "Performance"):
+            action = QAction(f"Профіль: {preset}", self)
+            action.triggered.connect(lambda _=False, name=preset: self._tray_profile(name))
+            menu.addAction(action)
+        menu.addSeparator()
+        quit_action = QAction("Вийти", self)
+        quit_action.triggered.connect(self._exit_from_tray)
+        menu.addAction(quit_action)
+        tray.setContextMenu(menu)
+        tray.activated.connect(lambda reason: self._restore_from_tray()
+                               if reason == QSystemTrayIcon.ActivationReason.Trigger else None)
+        tray.show()
+        self.tray_icon = tray
+
+    def _tray_profile(self, profile: str) -> None:
+        self.profile_box.setCurrentText(profile)
+        self._restore_from_tray()
+        self.apply_profile()  # requires the existing explicit confirmation
+
+    def _restore_from_tray(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _exit_from_tray(self) -> None:
+        self._quit_requested = True
+        self.close()
 
     def _update_sensor_table(self) -> None:
         self.sensor_table.setRowCount(len(self.temperatures))
@@ -806,6 +955,7 @@ class FanArgbWindow(QMainWindow):
             box.blockSignals(True)
             box.clear()
             box.addItem("MAX усіх температур", MAX_ALL)
+            box.addItem("MAX(CPU, GPU)", MAX_CPU_GPU)
             box.addItem(f"AVG групи ({len(self.sensor_groups[ch])})", GROUP_AVG)
             box.addItem(f"MAX групи ({len(self.sensor_groups[ch])})", GROUP_MAX)
             box.addItem(f"Зважене AVG групи ({len(self.sensor_groups[ch])})", GROUP_WEIGHTED)
@@ -971,9 +1121,18 @@ class FanArgbWindow(QMainWindow):
 
     def _refresh_history(self) -> None:
         hist = list(self.history[self.current_fan])
-        if not hist: return
-        origin = hist[0][0]
-        self.history_pwm_curve.setData([ts-origin for ts, *_ in hist], [pwm for _,pwm,_,_ in hist])
+        if hist:
+            origin = hist[0][0]
+            times = [row[0] - origin for row in hist]
+            self.history_pwm_curve.setData(times, [row[1] for row in hist])
+            self.history_rpm_curve.setData(times, [row[2] for row in hist])
+            self.history_temperature_curve.setData(times, [row[3] for row in hist])
+        power = list(self.power_history)
+        if power:
+            origin = power[0][0]
+            xs = [row[0] - origin for row in power]
+            self.cpu_power_curve.setData(xs, [row[1] for row in power])
+            self.gpu_power_curve.setData(xs, [row[2] for row in power])
 
     def export_history(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Експорт журналу", "fan_history.csv", "CSV (*.csv)")
@@ -1190,6 +1349,8 @@ class FanArgbWindow(QMainWindow):
 
     def apply_argb_scene(self, scene_name: str, all_zones: bool = False) -> None:
         """Apply a lighting-only scene without modifying cooling NVS or fan duty."""
+        if self.dashboard.studio.active:
+            self.dashboard.studio.stop()
         if not self.port:
             QMessageBox.warning(self, "ARGB", "Спочатку підключи ESP32-S3")
             return
@@ -1305,6 +1466,8 @@ class FanArgbWindow(QMainWindow):
         self.send(f"WIFI SET {ssid} {password}")
 
     def toggle_sacn(self, enabled: bool) -> None:
+        if enabled and self.dashboard.studio.active:
+            self.dashboard.studio.stop()
         if not enabled:
             self.sacn.stop()
             self.sacn_pending.clear()
@@ -1359,6 +1522,22 @@ class FanArgbWindow(QMainWindow):
             self.dashboard.set_bridge_state(True, self.sacn_forwarded)
 
     def closeEvent(self, event) -> None:
+        worker = getattr(self.dashboard.maintenance_panel, "worker", None)
+        if worker is not None and worker.isRunning():
+            QMessageBox.warning(
+                self, "ESP32-S3",
+                "Прошивання триває. Не закривай програму та не відключай USB.",
+            )
+            event.ignore()
+            return
+        if (not self._quit_requested and self.tray_icon is not None and
+                self.dashboard.settings_panel.minimize_tray.isChecked()):
+            self.hide()
+            event.ignore()
+            return
+        if self.tray_icon is not None:
+            self.tray_icon.hide()
+        self.dashboard.studio.stop()
         self.sacn.stop()
         self.temperature_executor.shutdown(wait=False, cancel_futures=True)
         self.sensor_sampler.close()

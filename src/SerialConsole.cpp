@@ -6,8 +6,8 @@
 #include <string.h>
 
 SerialConsole::SerialConsole(Stream& serial, FanController& fans, ArgbController& leds,
-                             CoolingController& cooling, NetworkRgbBridge* wifi, MqttBridge* mqtt, PcPowerController* pc)
-    : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling), wifi_(wifi), mqtt_(mqtt), pc_(pc) {}
+                             CoolingController& cooling, NetworkRgbBridge* wifi, MqttBridge* mqtt, PcPowerController* pc, HardwareTemperature* hw)
+    : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling), wifi_(wifi), mqtt_(mqtt), pc_(pc), hw_(hw) {}
 
 void SerialConsole::begin() {
     serial_.println(F("8Fan/8ARGB ready | protocol v4 | type HELP"));
@@ -178,6 +178,54 @@ void SerialConsole::handleLine(char* line) {
         serial_.println(F("OK PC_PULSE_STARTED"));
         return;
     }
+    if (strcmp(command, "VERSION?") == 0) {
+        if (!noMore()) return error();
+        serial_.print(F("FW VERSION=6 SERIAL=4 DC_READY="));
+        serial_.print(board::kDcSupplyPwmValidated ? 1 : 0);
+        serial_.print(F(" DS18B20="));
+        serial_.println(hw_ && hw_->enabled() ? 1 : 0);
+        return;
+    }
+    if (strcmp(command, "HTEMP?") == 0) {
+        if (!noMore()) return error();
+        if (!hw_) { serial_.println(F("HTEMP ENABLED=0 VALID=0")); return; }
+        const uint32_t now = millis();
+        serial_.print(F("HTEMP ENABLED=")); serial_.print(hw_->enabled() ? 1 : 0);
+        serial_.print(F(" VALID=")); serial_.print(hw_->fresh(now) ? 1 : 0);
+        if (hw_->fresh(now)) {
+            serial_.print(F(" TEMP=")); serial_.print(hw_->deciC());
+            serial_.print(F(" AGE_MS=")); serial_.print(hw_->age(now));
+        }
+        serial_.println("");
+        return;
+    }
+    if (strcmp(command, "HTMODE") == 0 || strcmp(command, "HTMODE?") == 0) {
+        if (!hw_) { serial_.println(F("ERR hardware sensor unavailable")); return; }
+        const bool query = strcmp(command, "HTMODE?") == 0;
+        uint8_t channel = 0;
+        if (!parseByte(next(), board::kChannelCount, channel) || channel == 0) return error();
+        if (query) {
+            if (!noMore()) return error();
+            serial_.print(F("HTMODE ")); serial_.print(channel);
+            serial_.print(F(" ")); serial_.println(HardwareTemperature::modeName(hw_->mode(channel-1)));
+            return;
+        }
+        char* value = next();
+        if (!value || !noMore()) return error();
+        for (char* p = value; *p; ++p)
+            *p = static_cast<char>(toupper(static_cast<unsigned char>(*p)));
+        HardwareTemperature::Mode mode;
+        if (!strcmp(value, "PC")) mode = HardwareTemperature::Mode::PcOnly;
+        else if (!strcmp(value, "LOCAL")) mode = HardwareTemperature::Mode::Local;
+        else if (!strcmp(value, "BACKUP")) mode = HardwareTemperature::Mode::Backup;
+        else return error();
+        if (!hw_->setMode(channel-1, mode)) {
+            serial_.println(F("ERR hardware sensor disabled / NVS unavailable"));
+            return;
+        }
+        serial_.println(F("OK HTMODE"));
+        return;
+    }
     if (strcmp(command, "LEDS") == 0) {
         if (!noMore()) return error();
         serial_.print(F("LEDCOUNTS"));
@@ -229,7 +277,11 @@ void SerialConsole::handleLine(char* line) {
         uint16_t deciC = 0;
         if (!parseByte(next(), board::kChannelCount, ch) || ch == 0 ||
             !parseU16(next(), 1250, deciC) || !noMore()) return error();
-        cooling_.setTemperature(ch-1, deciC, millis(), secondary);
+        const uint32_t now = millis();
+        if (secondary || !hw_ || hw_->acceptsPc(ch-1)) {
+            cooling_.setTemperature(ch-1, deciC, now, secondary);
+            if (!secondary && hw_) hw_->notePc(ch-1, now);
+        }
         serial_.println(F("OK"));
         return;
     }
@@ -521,6 +573,7 @@ void SerialConsole::handleLine(char* line) {
 void SerialConsole::printHelp() {
     serial_.println(F("Channels: 1..8, temperatures: deci-Celsius, e.g. 455 = 45.5 C"));
     serial_.println(F("PING | STATUS | HEALTH [ch] | SELFTEST [CANCEL] | HELP | LEDS | PC STATUS|ON|OFF|FORCE"));
+    serial_.println(F("VERSION? | HTEMP? | HTMODE? <ch> | HTMODE <ch> PC|LOCAL|BACKUP"));
     serial_.println(F("MQTT? | MQTT HOST <broker> <port> | MQTT AUTH <user> <pass> | MQTT ON|OFF"));
     serial_.println(F("TEMP <ch> <0..1250> | AUTO <ch> | ALLAUTO"));
     serial_.println(F("FAN <ch> <0..100> | ALLFAN <0..100> (manual override)"));

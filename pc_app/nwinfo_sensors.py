@@ -320,11 +320,12 @@ class NwinfoSensorSampler:
 
     def __init__(self, executor=None):
         vendor = detect_cpu_vendor()
-        self._active_providers = tuple(
+        self._permitted_providers = tuple(
             p for p in _PROVIDERS
             if (p != "INTEL" or vendor != "amd")
             and (p != "ZEN" or vendor != "intel")
         )
+        self._active_providers = self._permitted_providers
         self._owns_executor = executor is None
         self._executor = executor if executor is not None else ThreadPoolExecutor(
             max_workers=len(self._active_providers), thread_name_prefix="NWinfoProvider"
@@ -333,10 +334,43 @@ class NwinfoSensorSampler:
         self._next_scan: dict[str, float] = {}
         self._latest: dict[str, tuple[float, list[TemperatureSensor]]] = {}
         self._metric_latest: dict[str, tuple[float, list[HardwareMetric]]] = {}
+        self._failures: dict[str, int] = {}
         self._initialized = False
         self._ever_valid = False
         self._closed = False
         self.problems: dict[str, str] = {}
+
+    def set_enabled(self, providers: set[str]) -> None:
+        """User-managed sensor sources. Disabled sources cannot supply stale data."""
+        self._active_providers = tuple(
+            p for p in self._permitted_providers if p in providers
+        )
+        for p in self._permitted_providers:
+            if p not in self._active_providers:
+                self._latest.pop(p, None)
+                self._metric_latest.pop(p, None)
+                self.problems.pop(p, None)
+            elif self._initialized:
+                self._next_scan.setdefault(p, 0.0)
+
+    def refresh_all(self) -> None:
+        """User's manual refresh bypasses backoff, without interrupting a live probe."""
+        self._failures.clear()
+        for p in self._active_providers:
+            self._next_scan[p] = 0.0
+
+    @property
+    def active_providers(self) -> tuple[str, ...]:
+        return self._active_providers
+
+    @property
+    def permitted_providers(self) -> tuple[str, ...]:
+        return self._permitted_providers
+
+    def _backoff(self, provider: str) -> float:
+        errors = min(5, self._failures.get(provider, 0) + 1)
+        self._failures[provider] = errors
+        return min(120.0, self._retry_delay * (2 ** (errors - 1)))
 
     def poll(self, now: float | None = None) -> list[TemperatureSensor] | None:
         """Return fresh values, [] when unavailable, or None while first probing.
@@ -364,6 +398,8 @@ class NwinfoSensorSampler:
             if not future.done():
                 continue
             del self._inflight[provider]
+            if provider not in self._active_providers:
+                continue
             try:
                 readings = future.result()
                 metrics = getattr(readings, "metrics", [])
@@ -373,6 +409,7 @@ class NwinfoSensorSampler:
                     if readings:
                         self._ever_valid = True
                     self.problems.pop(provider, None)
+                    self._failures.pop(provider, None)
                     self._next_scan[provider] = now + self._frequency[provider]
                 else:
                     # Some platforms do not have Zen, Intel, DIMM thermistors
@@ -383,10 +420,10 @@ class NwinfoSensorSampler:
                         self.problems[provider] = "показань немає"
                     self._latest.pop(provider, None)
                     self._metric_latest.pop(provider, None)
-                    self._next_scan[provider] = now + self._retry_delay
+                    self._next_scan[provider] = now + self._backoff(provider)
             except Exception as exc:
                 self.problems[provider] = str(exc)
-                self._next_scan[provider] = now + self._retry_delay
+                self._next_scan[provider] = now + self._backoff(provider)
 
         for provider in self._active_providers:
             if provider not in self._inflight and now >= self._next_scan[provider]:

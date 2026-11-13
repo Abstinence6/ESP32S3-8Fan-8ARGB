@@ -10,17 +10,24 @@ import logging
 from logging.handlers import RotatingFileHandler
 import os
 import time
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, Future
 
 try:
     from .monitor import MAX_ALL, resolve_temperature
     from .nwinfo_sensors import NwinfoSensorSampler
     from .protocol import make_temperature_command
+    from .smart_control import SafeTemperatureFilter, AutoProfileSelector
+    from .profiles import PRESETS
+    from .protocol import make_curve_command
     from .serial_owner import SerialOwnerServer
 except ImportError:  # packaged as a standalone PyInstaller entrypoint
     from monitor import MAX_ALL, resolve_temperature
     from nwinfo_sensors import NwinfoSensorSampler
     from protocol import make_temperature_command
+    from smart_control import SafeTemperatureFilter, AutoProfileSelector
+    from profiles import PRESETS
+    from protocol import make_curve_command
     from serial_owner import SerialOwnerServer
 
 
@@ -40,10 +47,17 @@ def load_assignments(settings: QSettings) -> list[tuple[str, list[str], dict[str
     return items
 
 
-def make_sensor_commands(settings: QSettings, sensors) -> list[str]:
+def make_sensor_commands(settings: QSettings, sensors,
+                         filter_engine: SafeTemperatureFilter | None = None,
+                         now: float | None = None) -> list[str]:
     lines: list[str] = []
+    if now is None:
+        now = time.monotonic()
+    smoothing = str(settings.value("smoothTemperatures", "true")).lower() in ("true", "1")
     for ch, (assignment, group, weights, second, dual) in enumerate(load_assignments(settings), start=1):
         primary = resolve_temperature(assignment, sensors, group, weights)
+        if filter_engine is not None and smoothing:
+            primary = filter_engine.update(ch, primary, now)
         if primary is not None:
             lines.append(make_temperature_command(ch, primary))
         if dual:
@@ -91,6 +105,11 @@ def run_agent() -> int:
     temp_future: Future | None = None
     temp_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="SensorAgent")
     sensor_sampler = NwinfoSensorSampler()
+    stored_providers = str(settings.value("nwinfoProviders", ""))
+    if stored_providers:
+        sensor_sampler.set_enabled(set(stored_providers.split(",")))
+    smooth_filter = SafeTemperatureFilter()
+    auto_profiles = AutoProfileSelector()
     next_connect = 0.0
     query_due = 0.0
     client_was_connected = False
@@ -141,8 +160,27 @@ def run_agent() -> int:
                         try:
                             sample = temp_future.result()
                             if not owner.has_client and sample is not None:
-                                for msg in make_sensor_commands(settings, sample):
+                                for msg in make_sensor_commands(settings, sample, smooth_filter):
                                     output.write((msg + "\n").encode("ascii"))
+                                settings.sync()
+                                if str(settings.value("autoProfiles", "false")).lower() in ("true", "1"):
+                                    gpu_load = [
+                                        m.value for m in sensor_sampler.metrics
+                                        if m.kind == "load" and "gpu" in m.name.casefold()
+                                        and ("utilization" in m.name.casefold()
+                                             or "load" in m.name.casefold())
+                                    ]
+                                    desired = auto_profiles.consider(
+                                        max(gpu_load) if gpu_load else None,
+                                        datetime.now().hour, time.monotonic()
+                                    )
+                                    if desired:
+                                        for ch in range(1, 9):
+                                            output.write(
+                                                (make_curve_command(ch, list(PRESETS[desired])) + "\n").encode("ascii")
+                                            )
+                                        auto_profiles.applied(desired, time.monotonic())
+                                        log.info("Automatic profile applied: %s", desired)
                         except Exception as exc:
                             log.warning("Sensor read failed; ESP thermal watchdog stays active: %s", exc)
                         temp_future = None

@@ -37,3 +37,9 @@ jobs:
           name: ESP32S3-8Fan-8ARGB-firmware
           path: dist/esp32s3/
           if-no-files-found: error
+      - name: Compile opt-in DS18B20 firmware (GPIO18 test configuration)
+        env:
+          PLATFORMIO_BUILD_FLAGS: "-D HARDWARE_TEMP_ENABLED=1 -D HARDWARE_TEMP_GPIO=18"
+        run: |
+          pio run -e esp32s3 -t clean
+          pio run -e esp32s3
