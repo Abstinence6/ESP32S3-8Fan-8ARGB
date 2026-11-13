@@ -16,7 +16,7 @@ from maintenance_ui import MaintenancePanel
 from diagnostics_ui import DiagnosticPanel
 from sensor_manager_ui import SensorManagerPanel
 from PySide6.QtWidgets import (
-    QButtonGroup, QComboBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
+    QButtonGroup, QCheckBox, QComboBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
     QLabel, QLayout, QPushButton, QRadioButton, QScrollArea, QSplitter,
     QStackedWidget, QVBoxLayout, QWidget,
 )
