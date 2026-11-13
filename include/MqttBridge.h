@@ -22,7 +22,10 @@ public:
     bool setBroker(const char* host, uint16_t port);
     bool setCredentials(const char* username, const char* password);
     bool setEnabled(bool enabled);
+    bool setDiscovery(bool enabled);
+    bool resetSettings();
     void printStatus(Stream& serial);
+    void printConfig(Stream& serial);
     bool connected();
     const char* baseTopic() const { return baseTopic_; }
     // Pure (hardware-independent) MQTT command routing for native safety tests.
@@ -54,6 +57,7 @@ private:
     uint8_t nextChannel_ = 0;
     uint8_t discoveryStep_ = 0;
     uint32_t lastDiscoveryMs_ = 0;
+    bool discoveryEnabled_ = true;
 #if defined(ARDUINO_ARCH_ESP32)
     WiFiClient tcp_;
     PubSubClient mqtt_;
