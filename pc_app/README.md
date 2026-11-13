@@ -211,3 +211,13 @@ MQTT runs on ESP32 over Wi-Fi, not on the PC; configure Wi-Fi first. MQTT
 Home Assistant Discovery and security considerations are in
 [docs/MQTT.md](../docs/MQTT.md). In firmware v5, only 2-pin and 3-pin fan types
 are supported; old 4-pin UI descriptions above are historical.
+
+## v8.2 USB liveness and recovery
+
+The GUI now checks ESP32 `PING`/`PONG` over the active serial session.
+If no `PONG` arrives within 18 seconds of the earliest outstanding PING,
+the connection is closed, queued RGB frames are discarded, and the existing
+USB identity-based reconnection mechanism is armed. Repeat PINGs cannot
+extend the deadline indefinitely. Manual disconnect still disables automatic
+reconnect. This only detects communication loss; loss of PC temperatures
+is still handled independently by the ESP32 10-second full-fan fail-safe.

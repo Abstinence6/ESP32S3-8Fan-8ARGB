@@ -38,7 +38,7 @@ from protocol import validate_curve, DEFAULT_CURVE, make_curve_command, make_tem
 from serial_owner import SerialProxyClient
 from serial_tx import SerialTransmitter
 from openrgb_native import OpenRGBNativeServer
-from port_recovery import PortRecovery
+from port_recovery import PortRecovery, SerialHeartbeat
 from profiles import PRESETS
 from config_presets import (RGB_SCENES, FAN_CURVES, commands as preset_commands,
                             create_configuration, from_json as parse_configuration,
@@ -61,6 +61,7 @@ class FanArgbWindow(QMainWindow):
         self.port: Optional[serial.Serial | SerialProxyClient] = None
         self.tx: SerialTransmitter | None = None
         self.recovery = PortRecovery()
+        self.heartbeat = SerialHeartbeat(timeout_seconds=18.0)
         self._reconnect_armed = False
         self.read_buffer = ""
         self.temperatures: list[TemperatureSensor] = []
@@ -568,6 +569,8 @@ class FanArgbWindow(QMainWindow):
                 using_agent = False
             self.tx = SerialTransmitter(self.port)
             self.led_counts = None
+            self.heartbeat.reset()
+            self.read_buffer = ""
             self.settings.setValue("port", port_name)
             self.connect_button.setText("Від'єднати")
             self.dashboard.set_connected(True, port_name)
@@ -604,7 +607,8 @@ class FanArgbWindow(QMainWindow):
     def read_device_state(self) -> None:
         if not self.port:
             return
-        self.send("PING")
+        if self.send("PING"):
+            self.heartbeat.ping(time.monotonic())
         self.send("VERSION?")
         self.send("LEDS")
         self.send("STATUS")
@@ -624,6 +628,15 @@ class FanArgbWindow(QMainWindow):
 
     def refresh_aux_status(self) -> None:
         if self.port:
+            if self.heartbeat.expired(time.monotonic()):
+                self.log("USB: немає відповіді PONG від ESP32; перепідключення за USB-ідентичністю")
+                self.telemetry.record_alert("USB", "ESP32 не відповідає на PING")
+                self.disconnect()
+                return
+            if self.send("PING"):
+                self.heartbeat.ping(time.monotonic())
+            if not self.port:
+                return
             self.send("PC STATUS")
             self.send("MQTT?")
             self.send("HTEMP?")
@@ -641,6 +654,8 @@ class FanArgbWindow(QMainWindow):
             self.tx.clear()
         self.tx = None
         self.port = None
+        self.heartbeat.reset()
+        self.read_buffer = ""
         self.led_counts = None
         if self.dashboard.native_checkbox.isChecked():
             self.dashboard.native_checkbox.setChecked(False)
@@ -716,6 +731,9 @@ class FanArgbWindow(QMainWindow):
 
     def handle_line(self, line: str) -> None:
         if not line:
+            return
+        if line.startswith("PONG ") and line[5:].isdigit():
+            self.heartbeat.pong()
             return
         if self.dashboard.device_settings.handle_line(line):
             return

@@ -162,6 +162,24 @@ class DashboardSmokeTests(unittest.TestCase):
         panel.save_mqtt()
         self.assertNotIn("MQTT TX START", sent)
 
+    def test_unresponsive_usb_port_is_closed_for_identity_based_recovery(self):
+        from time import monotonic
+
+        class SilentPort:
+            closed = False
+            def close(self):
+                self.closed = True
+
+        port = SilentPort()
+        self.window.port = port
+        self.window._reconnect_armed = True
+        self.window.heartbeat.ping(monotonic() - 25)
+        self.window.refresh_aux_status()
+        self.assertIsNone(self.window.port)
+        self.assertTrue(port.closed)
+        self.assertTrue(self.window._reconnect_armed)
+        self.assertFalse(self.window.heartbeat.expired(monotonic()))
+
     def test_old_firmware_disables_unavailable_configuration(self):
         panel = self.window.dashboard.device_settings
         panel.set_connected(True)

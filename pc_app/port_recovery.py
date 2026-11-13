@@ -51,3 +51,29 @@ class PortRecovery:
                 p.vid == original.vid and p.pid == original.pid
             ]
         return found[0].device if len(found) == 1 else None
+
+
+class SerialHeartbeat:
+    """Monotonic PING/PONG liveness check; repeated sends never extend a timeout.
+
+    The GUI only marks a pong from the same open serial session as valid.
+    A silent still-open COM port must be closed before conservative
+    PortRecovery attempts to reconnect the known physical device.
+    """
+    def __init__(self, timeout_seconds: float = 18.0):
+        self.timeout_seconds = timeout_seconds
+        self.pending_since: float | None = None
+
+    def reset(self) -> None:
+        self.pending_since = None
+
+    def ping(self, now: float) -> None:
+        if self.pending_since is None:
+            self.pending_since = now
+
+    def pong(self) -> None:
+        self.pending_since = None
+
+    def expired(self, now: float) -> bool:
+        return (self.pending_since is not None and
+                now - self.pending_since > self.timeout_seconds)
