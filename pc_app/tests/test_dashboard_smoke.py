@@ -160,6 +160,27 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertIn("частково", self.window.sensor_status.text())
         self.assertIn("CPU", self.window.sensor_status.toolTip())
 
+    def test_v6_hardware_sensor_diagnostics_and_maintenance_panels(self):
+        shell = self.window.dashboard
+        self.assertIsNotNone(shell.hardware_sensor)
+        self.assertIsNotNone(shell.settings_panel)
+        self.assertIsNotNone(shell.maintenance_panel)
+        self.assertIsNotNone(shell.diagnostics)
+        self.assertIsNotNone(shell.sensor_manager)
+        self.assertIsNotNone(shell.studio)
+        self.assertIn("power", self.window.history_plots)
+        self.window.handle_line("HTEMP ENABLED=1 VALID=1 TEMP=365 AGE_MS=4")
+        self.assertIn("36.5", shell.hardware_sensor.status.text())
+        self.window.handle_line("HTMODE 1 BACKUP")
+        self.assertEqual(shell.hardware_sensor.current_modes[1], "BACKUP")
+        self.window.handle_line("FW VERSION=6 SERIAL=4 DC_READY=0 DS18B20=1")
+        self.assertIn("v6", shell.firmware_status.text())
+        self.window.handle_line(
+            "HEALTH 1 TYPE=3 DETECTED=255 PWM=100 RPM=900 "
+            "TACH=seen TACH_VALID=1 SENSOR=ok FAULT=0 DC_READY=0 MODE=auto"
+        )
+        self.assertIn("заблоковано", shell.diagnostics.table.item(0, 4).text())
+
     def test_telemetry_updates_overview_and_pc_gates(self):
         self.window.handle_line(
             "CH 3 FAN=55% RPM=1200 TEMP=430 MODE=auto SENSOR=ok TYPE=3 FAULT=0"
