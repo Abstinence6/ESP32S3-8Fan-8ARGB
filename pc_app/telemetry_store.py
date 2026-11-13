@@ -7,6 +7,7 @@ a guessed temperature. Retention defaults to 30 days.
 from __future__ import annotations
 
 import csv
+from contextlib import closing
 import os
 from pathlib import Path
 import queue
@@ -44,7 +45,7 @@ class TelemetryStore:
 
     def _writer(self) -> None:
         try:
-            with sqlite3.connect(str(self.path), timeout=5) as db:
+            with closing(sqlite3.connect(str(self.path), timeout=5)) as db:
                 db.execute("PRAGMA journal_mode=WAL")
                 db.execute("PRAGMA busy_timeout=5000")
                 db.execute("CREATE TABLE IF NOT EXISTS fan_samples ("
@@ -124,7 +125,7 @@ class TelemetryStore:
     def export_csv(self, path: str | Path, hours: int = 24 * 7) -> int:
         if not 1 <= hours <= 24 * self.retention_days:
             raise ValueError("Invalid export window")
-        with sqlite3.connect(str(self.path), timeout=5) as db, open(path, "w", newline="", encoding="utf-8-sig") as output:
+        with closing(sqlite3.connect(str(self.path), timeout=5)) as db, open(path, "w", newline="", encoding="utf-8-sig") as output:
             writer = csv.writer(output)
             writer.writerow(("timestamp", "channel", "pwm_percent",
                              "rpm", "temp_c", "fresh", "fault"))
