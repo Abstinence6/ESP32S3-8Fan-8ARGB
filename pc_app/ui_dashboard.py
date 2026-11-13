@@ -510,6 +510,8 @@ class DashboardShell(QWidget):
             "minor", True,
         ))
         layout.addWidget(warning)
+        self.firmware_status = _label("Прошивка: версію ще не прочитано", "minor")
+        layout.addWidget(self.firmware_status)
         layout.addWidget(calibration_box)
         network = self._service_group("Налаштування ARGB, Wi-Fi та живлення стрічок", hardware_rgb)
         layout.addWidget(network)
