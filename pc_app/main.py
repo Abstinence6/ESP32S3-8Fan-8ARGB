@@ -37,6 +37,7 @@ from sacn_bridge import E131Listener, SACN_PORT, SERIAL_BAUD, encode_rgb_frame
 from protocol import validate_curve, DEFAULT_CURVE, make_curve_command, make_temperature_command, parse_curve, parse_status
 from serial_owner import SerialProxyClient
 from serial_tx import SerialTransmitter
+from openrgb_native import OpenRGBNativeServer
 from port_recovery import PortRecovery
 from profiles import PRESETS
 from config_presets import (RGB_SCENES, FAN_CURVES, commands as preset_commands,
@@ -107,6 +108,7 @@ class FanArgbWindow(QMainWindow):
         self._last_hwtemp_line = ""
         self.temperature_future: Future | None = None
         self.sacn = E131Listener()
+        self.openrgb_native = OpenRGBNativeServer()
         self.sacn_pending: dict[int, bytes] = {}
         self.sacn_last_sent = 0.0
         self.sacn_forwarded = 0
@@ -133,6 +135,9 @@ class FanArgbWindow(QMainWindow):
         self.sacn_timer = QTimer(self)
         self.sacn_timer.timeout.connect(self.poll_sacn)
         self.sacn_timer.start(20)
+        self.openrgb_sdk_timer = QTimer(self)
+        self.openrgb_sdk_timer.timeout.connect(self.poll_native_openrgb)
+        self.openrgb_sdk_timer.start(25)
         self.refresh_temperatures()
         self.aux_status_timer = QTimer(self)
         self.aux_status_timer.timeout.connect(self.refresh_aux_status)
@@ -636,6 +641,8 @@ class FanArgbWindow(QMainWindow):
         self.tx = None
         self.port = None
         self.led_counts = None
+        if self.dashboard.native_checkbox.isChecked():
+            self.dashboard.native_checkbox.setChecked(False)
         if self.dashboard.studio.active:
             self.dashboard.studio.stop()
         self.connect_button.setText("Підключити")
@@ -1612,7 +1619,45 @@ class FanArgbWindow(QMainWindow):
         # Do not log the password, and do not include it in GUI history.
         self.send(f"WIFI SET {ssid} {password}")
 
+    def toggle_native_openrgb(self, enabled: bool) -> None:
+        if not enabled:
+            self.openrgb_native.stop()
+            return
+        if not self.port or self.led_counts is None:
+            self.log("Native OpenRGB: підключи ESP та дочекайся LEDCOUNTS")
+            box = self.dashboard.native_checkbox
+            box.blockSignals(True)
+            box.setChecked(False)
+            box.blockSignals(False)
+            return
+        if self.bridge_checkbox.isChecked():
+            self.bridge_checkbox.setChecked(False)
+        if self.dashboard.studio.active:
+            self.dashboard.studio.stop()
+        try:
+            self.openrgb_native.start(self.led_counts)
+            self.log("OpenRGB SDK: 127.0.0.1:6743, один контролер із 8 зонами")
+        except (OSError, ValueError) as exc:
+            self.log(f"OpenRGB SDK: {exc}")
+            box = self.dashboard.native_checkbox
+            box.blockSignals(True)
+            box.setChecked(False)
+            box.blockSignals(False)
+
+    def poll_native_openrgb(self) -> None:
+        frames = self.openrgb_native.read_latest()
+        if not self.port or self.led_counts is None:
+            return
+        for ch, rgb in frames.items():
+            try:
+                if not self.queue_rgb(ch, encode_rgb_frame(ch, rgb)):
+                    break
+            except ValueError as exc:
+                self.log(f"OpenRGB SDK кадр відхилено: {exc}")
+
     def toggle_sacn(self, enabled: bool) -> None:
+        if enabled and self.dashboard.native_checkbox.isChecked():
+            self.dashboard.native_checkbox.setChecked(False)
         if enabled and self.dashboard.studio.active:
             self.dashboard.studio.stop()
         if not enabled:
@@ -1701,6 +1746,7 @@ class FanArgbWindow(QMainWindow):
         if self.tray_icon is not None:
             self.tray_icon.hide()
         self.dashboard.studio.stop()
+        self.openrgb_native.stop()
         self.sacn.stop()
         self.temperature_executor.shutdown(wait=False, cancel_futures=True)
         self.sensor_sampler.close()
