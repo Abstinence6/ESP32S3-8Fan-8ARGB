@@ -1,4 +1,4 @@
-# Serial protocol v3 (921600 baud, ASCII control + binary ARGB)
+# Serial protocol v5 (921600 baud, ASCII control + binary ARGB)
 
 ## v8 — PC-managed ESP32 settings, USB protocol v5
 
