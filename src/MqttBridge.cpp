@@ -1,4 +1,5 @@
 #include "MqttBridge.h"
+#include "ConfigWire.h"
 #include <ctype.h>
 #include <initializer_list>
 #include <stdio.h>
@@ -43,6 +44,11 @@ bool MqttBridge::begin() {
         settings_.magic = kMagic;
         settings_.port = 1883;
     }
+    uint8_t discovery = 1;
+    if (storage_.getBytesLength("ha_discovery") == 1 &&
+        storage_.getBytes("ha_discovery", &discovery, 1) == 1 &&
+        discovery <= 1)
+        discoveryEnabled_ = discovery != 0;
 #if defined(ARDUINO_ARCH_ESP32)
     snprintf(baseTopic_, sizeof(baseTopic_), "esp32fan/%08lx",
              static_cast<unsigned long>(ESP.getEfuseMac() & 0xFFFFFFFFULL));
@@ -94,12 +100,49 @@ bool MqttBridge::setEnabled(bool enabled) {
 #endif
     return true;
 }
+bool MqttBridge::setDiscovery(bool enabled) {
+    if (discoveryEnabled_ == enabled) return true;
+    const uint8_t value = enabled ? 1 : 0;
+    if (storage_.putBytes("ha_discovery", &value, 1) != 1) return false;
+    discoveryEnabled_ = enabled;
+    if (enabled) {
+        discoveryStep_ = 0;
+        lastDiscoveryMs_ = 0;
+    }
+    // Turning discovery off does not remove existing retained entities
+    // from the broker. The user can remove orphaned MQTT entities in HA.
+    return true;
+}
+bool MqttBridge::resetSettings() {
+    const Settings previous = settings_;
+    settings_ = {};
+    settings_.magic = kMagic;
+    settings_.port = 1883;
+    if (!persist()) {
+        settings_ = previous;
+        return false;
+    }
+#if defined(ARDUINO_ARCH_ESP32)
+    mqtt_.disconnect();
+#endif
+    return true;
+}
 bool MqttBridge::connected() {
 #if defined(ARDUINO_ARCH_ESP32)
     return settings_.enabled && network_.connected() && mqtt_.connected();
 #else
     return false;
 #endif
+}
+void MqttBridge::printConfig(Stream& serial) {
+    serial.print(F("MQTT_CONFIG ENABLED=")); serial.print(settings_.enabled);
+    serial.print(F(" CONNECTED=")); serial.print(connected() ? 1 : 0);
+    serial.print(F(" HOST_HEX=")); configwire::printHex(serial, settings_.host);
+    serial.print(F(" PORT=")); serial.print(settings_.port);
+    serial.print(F(" USER_HEX=")); configwire::printHex(serial, settings_.user);
+    serial.print(F(" AUTH=")); serial.print(settings_.user[0] ? 1 : 0);
+    serial.print(F(" DISCOVERY=")); serial.print(discoveryEnabled_ ? 1 : 0);
+    serial.print(F(" TOPIC=")); serial.println(baseTopic_);
 }
 void MqttBridge::printStatus(Stream& serial) {
     serial.print(F("MQTT ENABLED=")); serial.print(settings_.enabled);
@@ -299,7 +342,8 @@ void MqttBridge::update(uint32_t nowMs) {
     }
     mqtt_.loop();
     // Limit HA discovery traffic: three retained configs per 300 ms visit.
-    if (discoveryStep_ < board::kChannelCount + ((pc_ && pc_->enabled()) ? 1U : 0U) &&
+    if (discoveryEnabled_ &&
+        discoveryStep_ < board::kChannelCount + ((pc_ && pc_->enabled()) ? 1U : 0U) &&
         nowMs - lastDiscoveryMs_ >= 300U) {
         lastDiscoveryMs_ = nowMs;
         publishDiscovery();
