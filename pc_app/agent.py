@@ -16,11 +16,13 @@ try:
     from .monitor import MAX_ALL, resolve_temperature
     from .nwinfo_sensors import NwinfoSensorSampler
     from .protocol import make_temperature_command
+    from .smart_control import SafeTemperatureFilter
     from .serial_owner import SerialOwnerServer
 except ImportError:  # packaged as a standalone PyInstaller entrypoint
     from monitor import MAX_ALL, resolve_temperature
     from nwinfo_sensors import NwinfoSensorSampler
     from protocol import make_temperature_command
+    from smart_control import SafeTemperatureFilter
     from serial_owner import SerialOwnerServer
 
 
@@ -40,10 +42,17 @@ def load_assignments(settings: QSettings) -> list[tuple[str, list[str], dict[str
     return items
 
 
-def make_sensor_commands(settings: QSettings, sensors) -> list[str]:
+def make_sensor_commands(settings: QSettings, sensors,
+                         filter_engine: SafeTemperatureFilter | None = None,
+                         now: float | None = None) -> list[str]:
     lines: list[str] = []
+    if now is None:
+        now = time.monotonic()
+    smoothing = str(settings.value("smoothTemperatures", "true")).lower() in ("true", "1")
     for ch, (assignment, group, weights, second, dual) in enumerate(load_assignments(settings), start=1):
         primary = resolve_temperature(assignment, sensors, group, weights)
+        if filter_engine is not None and smoothing:
+            primary = filter_engine.update(ch, primary, now)
         if primary is not None:
             lines.append(make_temperature_command(ch, primary))
         if dual:
@@ -91,6 +100,7 @@ def run_agent() -> int:
     temp_future: Future | None = None
     temp_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="SensorAgent")
     sensor_sampler = NwinfoSensorSampler()
+    smooth_filter = SafeTemperatureFilter()
     next_connect = 0.0
     query_due = 0.0
     client_was_connected = False
@@ -141,7 +151,7 @@ def run_agent() -> int:
                         try:
                             sample = temp_future.result()
                             if not owner.has_client and sample is not None:
-                                for msg in make_sensor_commands(settings, sample):
+                                for msg in make_sensor_commands(settings, sample, smooth_filter):
                                     output.write((msg + "\n").encode("ascii"))
                         except Exception as exc:
                             log.warning("Sensor read failed; ESP thermal watchdog stays active: %s", exc)
