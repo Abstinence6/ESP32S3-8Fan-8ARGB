@@ -56,9 +56,6 @@ bool HardwareTemperature::begin() {
             mapped_[ch] = !allZero;
         }
     }
-    sensor_.begin();
-    sensor_.setResolution(12);
-    sensor_.setWaitForConversion(false);
     return rescan();
 #else
     return true;
@@ -67,6 +64,9 @@ bool HardwareTemperature::begin() {
 
 bool HardwareTemperature::rescan() {
 #if HARDWARE_TEMP_ENABLED
+    sensor_.begin();
+    sensor_.setResolution(12);
+    sensor_.setWaitForConversion(false);
     count_ = 0;
     for (uint8_t idx = 0; idx < sensor_.getDeviceCount() && count_ < kMaxProbes; ++idx) {
         uint8_t address[8] = {};
