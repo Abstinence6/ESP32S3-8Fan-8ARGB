@@ -100,4 +100,35 @@ static_assert(!reservedPcGpio(kPcPowerPin) && !reservedPcGpio(kPcSensePin),
               "PC power pins conflict with reserved GPIOs or fan/ARGB outputs");
 #endif
 
+// Optional local DS18B20 OneWire probe, powered from 3.3V (not 5V).
+// Disabled until the physical ESP32-S3 variant and a spare GPIO are checked.
+#ifndef HARDWARE_TEMP_ENABLED
+#define HARDWARE_TEMP_ENABLED 0
+#endif
+#ifndef HARDWARE_TEMP_GPIO
+#define HARDWARE_TEMP_GPIO -1
+#endif
+constexpr int kHardwareTempPin = HARDWARE_TEMP_GPIO;
+constexpr bool freeAuxPin(int pin, uint8_t index = 0) {
+    return index < 3 * kChannelCount
+        ? (pinAt(index) != pin && freeAuxPin(pin, index + 1))
+        : true;
+}
+constexpr bool allowedAuxPin(int pin) {
+    return pin >= 0 && pin <= 48 && pin != 0 && pin != 3 &&
+        pin != 19 && pin != 20 && pin != 43 && pin != 44 &&
+        pin != 45 && pin != 46 &&
+        !(pin >= 26 && pin <= 32) && !(pin >= 35 && pin <= 37) &&
+        freeAuxPin(pin);
+}
+#if HARDWARE_TEMP_ENABLED
+static_assert(allowedAuxPin(kHardwareTempPin),
+              "DS18B20 GPIO reserved, occupied, or unavailable");
+#if PC_POWER_ENABLED
+static_assert(kHardwareTempPin != kPcPowerPin &&
+              kHardwareTempPin != kPcSensePin,
+              "DS18B20 conflicts with PC power pins");
+#endif
+#endif
+
 } // namespace board
