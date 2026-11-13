@@ -1764,7 +1764,10 @@ def main() -> None:
         sys.exit(run_agent())
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    app.setFont(QFont("Arial", 10))  # Windows Cyrillic-capable system font
+    from PySide6.QtGui import QFontDatabase
+    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
+    font.setPointSize(10)
+    app.setFont(font)  # use the actual Windows UI font and correct glyph metrics
     window = FanArgbWindow()
     window.show()
     sys.exit(app.exec())

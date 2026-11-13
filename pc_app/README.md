@@ -250,3 +250,16 @@ saves secrets to Windows settings or logs.
 The Windows CI captures offscreen screenshots for the overview, each main
 page and all four ESP32 configuration tabs. All PWM, GPIO, NVS, watchdog,
 firmware flashing interlocks and PC-power safety protections remain unchanged.
+
+## Updated layout: focused workspaces
+
+The desktop UI uses a single restrained dark theme and an 8 px spacing rhythm.
+Overview contains one cooling safety banner, a flat telemetry strip and eight
+uniform fan cards. The grid adapts to 2–4 columns without horizontal page
+scrolling. **Fans** separates the curve editor, complete channel table and
+historical graphs. **Sensors** separates PC NWinfo, DS18B20 and source mapping;
+**ARGB** separates effects, OpenRGB and Studio; **Service** separates fault
+analysis, calibration, profiles, firmware maintenance and Windows options.
+The ESP32 configuration form has a maximum width to avoid excessively long
+inputs. Visual controls were reorganized without changing USB, PWM, MQTT or
+fan safety logic. CI now captures compact 1080 px and desktop 1510 px layouts.

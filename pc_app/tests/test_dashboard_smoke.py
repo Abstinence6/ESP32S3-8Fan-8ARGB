@@ -25,8 +25,23 @@ class DashboardSmokeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
-        from PySide6.QtGui import QFont
-        cls.app.setFont(QFont("Arial", 10))
+        from PySide6.QtGui import QFont, QFontDatabase
+        # CI Windows offscreen occasionally runs without its system font cache:
+        # register a real installed UI font so preview labels render as glyphs.
+        font_dir = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
+        for filename in ("segoeui.ttf", "arial.ttf", "tahoma.ttf"):
+            path = font_dir / filename
+            if path.is_file():
+                family_id = QFontDatabase.addApplicationFont(str(path))
+                if family_id >= 0:
+                    fonts = QFontDatabase.applicationFontFamilies(family_id)
+                    if fonts:
+                        cls.app.setFont(QFont(fonts[0], 10))
+                        break
+        else:
+            font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
+            font.setPointSize(10)
+            cls.app.setFont(font)
 
     def setUp(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -88,6 +103,48 @@ class DashboardSmokeTests(unittest.TestCase):
             target = output / f"esp32-{tab_key}.png"
             self.assertTrue(self.window.grab().save(str(target), "PNG"))
             self.assertGreater(target.stat().st_size, 10_000)
+        for width, height in ((1080, 760), (1510, 930)):
+            self.window.resize(width, height)
+            self.app.processEvents()
+            for key in ("overview", "fans", "argb", "service"):
+                self.window.dashboard.show_page(key)
+                self.app.processEvents()
+                file = output / f"{key}-{width}.png"
+                self.assertTrue(self.window.grab().save(str(file), "PNG"))
+                self.assertGreater(file.stat().st_size, 10_000)
+        self.window.resize(1510, 930)
+
+    def test_workspaces_are_focused_and_responsive(self):
+        shell = self.window.dashboard
+        self.assertEqual(shell.fan_workspace_tabs.count(), 3)
+        self.assertEqual(shell.sensor_workspace_tabs.count(), 3)
+        self.assertEqual(shell.argb_workspace_tabs.count(), 3)
+        self.assertEqual(shell.service_workspace_tabs.count(), 5)
+        self.window.show()
+        for width in (1080, 1510):
+            self.window.resize(width, 850)
+            self.app.processEvents()
+            shell.show_page("overview")
+            self.app.processEvents()
+            self.assertIn(shell._fan_grid_columns, (2, 3, 4))
+            card_widths = {frame.width() for frame in shell._fan_frames.values()}
+            self.assertLessEqual(max(card_widths) - min(card_widths), 3)
+            summary_widths = {card.width() for card in shell._summary_cards}
+            self.assertLessEqual(max(summary_widths) - min(summary_widths), 3)
+            if width == 1080:
+                self.assertEqual(shell._fan_grid_columns, 2)
+                self.assertEqual(shell._summary_grid_columns, 2)
+            else:
+                self.assertEqual(shell._fan_grid_columns, 4)
+                self.assertEqual(shell._summary_grid_columns, 4)
+            for key in ("overview", "fans", "sensors", "argb", "esp32", "service"):
+                shell.show_page(key)
+                self.app.processEvents()
+                scroll = shell.stack.widget(shell.page_index[key])
+                self.assertLessEqual(
+                    scroll.widget().width(), scroll.viewport().width() + 3,
+                    f"Horizontal clipping in {key} at {width}px",
+                )
 
     def test_quick_navigation_and_search_palette(self):
         shell = self.window.dashboard
