@@ -1,35 +1,37 @@
 """Maintenance UI: portable settings backup and guarded firmware upgrade."""
 from __future__ import annotations
 import os
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QFileDialog, QGroupBox, QHBoxLayout, QLabel, QMessageBox, QProgressBar,
-    QPushButton, QVBoxLayout,
+    QCheckBox, QFileDialog, QGroupBox, QHBoxLayout, QInputDialog, QLabel,
+    QMessageBox, QProgressBar, QPushButton, QVBoxLayout,
 )
 
 try:
     from .config_backup import to_json, from_json, restore_settings
-    from .firmware_update import inspect_firmware, flash_firmware
+    from .firmware_update import inspect_firmware, flash_firmware, flash_preflight
     from .serial_owner import SerialProxyClient
 except ImportError:
     from config_backup import to_json, from_json, restore_settings
-    from firmware_update import inspect_firmware, flash_firmware
+    from firmware_update import inspect_firmware, flash_firmware, flash_preflight
     from serial_owner import SerialProxyClient
 
 
 class FlashWorker(QThread):
     outcome = Signal(bool, str)
 
-    def __init__(self, port: str, firmware_path: str, parent=None):
+    def __init__(self, port: str, firmware_path: str, image_sha256: str, parent=None):
         super().__init__(parent)
         self.port = port
         self.firmware_path = firmware_path
+        self.image_sha256 = image_sha256
 
     def run(self) -> None:
         try:
-            flash_firmware(self.port, self.firmware_path)
+            flash_firmware(self.port, self.firmware_path, expected_sha256=self.image_sha256)
         except (Exception, SystemExit) as exc:
             # An explicit esptool zero SystemExit is success.
             if isinstance(exc, SystemExit) and exc.code in (0, None):
@@ -46,6 +48,7 @@ class MaintenancePanel(QGroupBox):
         self.controller = controller
         self.worker = None
         self.firmware_path = ""
+        self.selected_sha256 = ""
         layout = QVBoxLayout(self)
         backup_row = QHBoxLayout()
         export = QPushButton("Експорт налаштувань ПК…")
@@ -78,6 +81,15 @@ class MaintenancePanel(QGroupBox):
         )
         info.setWordWrap(True)
         layout.addWidget(info)
+        self.isolated_bench = QCheckBox(
+            "Підтверджую незалежний стенд: ПК вимкнено, вентилятори "
+            "живляться без ESP32, кабель PWR_SW ізольовано"
+        )
+        self.isolated_bench.setToolTip(
+            "Використовуй лише коли датчик стану ПК недоступний. "
+            "Позначка не замінює фізичної перевірки живлення."
+        )
+        layout.addWidget(self.isolated_bench)
 
     def export_settings(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
@@ -130,6 +142,7 @@ class MaintenancePanel(QGroupBox):
             QMessageBox.warning(self, "Прошивка", str(exc))
             return
         self.firmware_path = path
+        self.selected_sha256 = digest
         self.status.setText(f"{length//1024} КБ · SHA256 {digest[:12]}…")
         self.status.setToolTip(digest)
 
@@ -137,36 +150,54 @@ class MaintenancePanel(QGroupBox):
         if not self.firmware_path or not self.controller.port:
             QMessageBox.warning(self, "Прошивання", "Вибери firmware.bin і підключи ESP32")
             return
-        if isinstance(self.controller.port, SerialProxyClient):
-            QMessageBox.warning(self, "Прошивання",
-                                "USB належить фоновому агенту. Спершу заверши агент через Планувальник завдань.")
+        proxy = isinstance(self.controller.port, SerialProxyClient)
+        dashboard = self.controller.dashboard
+        state = str(getattr(dashboard, "current_pc_state", "unknown"))
+        last_seen = float(getattr(dashboard, "pc_state_updated_at", 0.0))
+        # A stale "off" is not evidence that the machine is still off.
+        if time.monotonic() - last_seen > 15:
+            state = "unknown"
+        isolated = self.isolated_bench.isChecked()
+        try:
+            flash_preflight(state, isolated_bench=isolated, is_proxy=proxy)
+            actual_digest, _size = inspect_firmware(self.firmware_path)
+            if actual_digest != self.selected_sha256:
+                raise ValueError("Файл прошивки змінився після вибору. Вибери його ще раз.")
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Прошивання заблоковано", str(exc))
             return
-        if getattr(self.controller.dashboard, "current_pc_state", "") == "on":
-            QMessageBox.warning(self, "Прошивання",
-                                "ПК увімкнений: перепрошивання може зупинити вентилятори. "
-                                "Спочатку безпечно вимкни ПК або використовуй окремий стенд.")
-            return
+
+        if state != "off":
+            phrase, accepted = QInputDialog.getText(
+                self, "Незалежний стенд — додаткова перевірка",
+                "Датчик живлення ПК не підтверджує OFF. "
+                "Прошивання дозволено лише на перевіреному ізольованому стенді. "
+                "Введи СТЕНД для підтвердження:",
+            )
+            if not accepted or phrase.strip().upper() != "СТЕНД":
+                return
+
         if QMessageBox.warning(
             self, "НЕБЕЗПЕКА: ESP32 перезавантажиться",
-            "Перевірено: ПК/стенд безпечно вимкнений, вентилятори не залежать від ESP "
-            "під час перепрошивання, firmware.bin відповідає ESP32-S3 та "
-            "розміщенню розділів (app 0x10000).\n\n"
-            "Почати запис у флеш? Жодного автоматичного стирання всього чипа не буде.",
+            "Фізично перевір: вентилятори не залежать від ESP32, "
+            "комп'ютер вимкнено, а firmware.bin відповідає ESP32-S3 "
+            "та app-розділу 0x10000. "
+            "Запис перериває живлення/температурну телеметрію.\n\n"
+            "Почати запис? Стирання всього чипа не виконується.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         ) != QMessageBox.StandardButton.Yes:
             return
+
         port = str(self.controller.port_box.currentData())
-        try:
-            inspect_firmware(self.firmware_path)
-        except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "Прошивання", str(exc))
+        if not port or port == "None":
+            QMessageBox.warning(self, "Прошивання", "Не визначено COM-порт")
             return
         self.controller.disconnect()
         self.flash_button.setEnabled(False)
         self.progress.setRange(0, 0)
         self.progress.setVisible(True)
         self.status.setText("Прошивання… не відключай USB")
-        self.worker = FlashWorker(port, self.firmware_path, self)
+        self.worker = FlashWorker(port, self.firmware_path, actual_digest, self)
         self.worker.outcome.connect(self._finished)
         self.worker.start()
 
