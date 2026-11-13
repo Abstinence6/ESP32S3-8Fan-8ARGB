@@ -1,5 +1,23 @@
 # Windows application for ESP32-S3 Fan & ARGB Controller
 
+## v6 additions
+
+- Windows **Task Scheduler elevated autostart**, with explicit UAC consent,
+  GUI or headless agent selection, task removal and status check.
+- System tray with manual profiles and optional minimize-on-close.
+- CPU/GPU MAX sensor source, immediate-rise/delayed-fall temperature filtering
+  and opt-in Gaming/Work/Night profiles with 15-minute NVS write guard.
+- NWinfo provider manager with adaptive retry and hardware diagnostics.
+- ARGB Studio patterns for 1 or 8 zones, separate from OpenRGB.
+- Four history graphs: PWM, RPM, temperature and CPU/GPU power.
+- DS18B20 physical temperature and source selection via `HTEMP?` / `HTMODE`.
+- Backup/restore of allowlisted QSettings without credentials.
+- Guarded ESP32-S3 application-only firmware update via packaged esptool.
+  **Do not flash while the computer cooled by ESP is powered on.**
+
+Full instructions: [features](../docs/FEATURES_V6.md) and
+[DS18B20 wiring](../docs/HARDWARE_TEMPERATURE.md).
+
 ## Dashboard interface
 
 The desktop GUI uses seven focused pages instead of one large engineering panel:
