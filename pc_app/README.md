@@ -9,7 +9,7 @@ The desktop GUI uses six focused pages instead of one large engineering panel:
 - **ARGB**: single-zone or all-zone lighting presets; these send only LED
   commands and never overwrite fan curves. Live OpenRGB uses E1.31.
 - **Живлення ПК**: monitored PC state and guarded power/force-off actions.
-- **Сервіс**: calibration, hardware ARGB, sensor tables, network setup,
+- **Сервіс**: calibration, hardware ARGB, searchable temperature/telemetry tabs, network setup,
   combined configuration presets and diagnostics.
 - **Логи**: Serial output and advanced raw command entry.
 
@@ -29,7 +29,34 @@ py -3 -m pip install -r requirements.txt
 py -3 main.py
 ```
 
-The bundled [NWinfo](https://github.com/a1ive/nwinfo) executable reads temperatures locally using only its **CPU, GPU and SMART** providers (`--sensors=CPU,GPU,SMART`). The LHM/HWiNFO/GPU-Z providers are not enabled. GPU temperatures come from graphics-driver APIs (AMD ADL2, NVIDIA NVAPI, Intel IGCL). CPU package/core temperatures require privileged access to MSRs via an allowed hardware-access driver and may require running FanARGBControl as Administrator. Hardware/driver support varies. No temperature is invented or replaced with a guessed WMI thermal-zone reading.
+The bundled [NWinfo](https://github.com/a1ive/nwinfo) executable reads local
+CPU, GPU, SSD, RAM and vendor-specific sensor data through independent
+`CPU`, `GPU`, `SMART`, `DIMM`, `INTEL`, `ZEN` and `DISK` probes. The application
+does **not** start LHM, a web server or external monitoring services. Each
+provider has an independent timeout so an unsupported Intel/AMD/RAM/disk
+driver does not prevent GPU/CPU telemetry.
+
+### Expanded sensor catalog
+
+In **Сервіс → Датчики обладнання**, the searchable tables are separated into:
+
+- **Температури:** CPU package/core; AMD Zen Tctl/Tdie/Tccd (CCD), core/GFX/L3;
+  Intel PCH/chipset, GT/eDRAM and package; GPU temperature; SSD SMART;
+  RAM DIMM temperature where the RAM modules and driver actually expose it.
+- **Інші показники:** CPU/GPU utilization and frequencies, CPU/GPU powers,
+  voltage, GPU fan RPM, GPU memory usage, DIMM load, SSD life and disk I/O
+  utilization, latency/IOPS (only when reported by NWinfo).
+
+**Only true live temperature readings can be assigned to fan curves.**
+Maximum/threshold/alarm temperatures (Tj Max, T-Control, SMART alarm) are
+excluded. Loads, watts, voltages, clocks and RPM are informational only and
+cannot accidentally become a temperature target.
+
+Not all motherboard VRM, coolant, DIMM, SSD or GPU hotspot sensors are
+exposed by NWinfo for every device. The program lists only values returned
+by the detected hardware and drivers; absent sensors are not fabricated.
+Additional low-level Intel/AMD/RAM monitoring may require administrator
+permissions and approved drivers. The LHM/HWiNFO/GPU-Z providers are not enabled. GPU temperatures come from graphics-driver APIs (AMD ADL2, NVIDIA NVAPI, Intel IGCL). CPU package/core temperatures require privileged access to MSRs via an allowed hardware-access driver and may require running FanARGBControl as Administrator. Hardware/driver support varies. No temperature is invented or replaced with a guessed WMI thermal-zone reading.
 
 Connect the **COM port** of the ESP32-S3 at **921600 baud**. The GUI reads all eight stored fan curves, displays current duty/RPM and gives each fan a temperature sensor selector. The default selector is MAX of all available temperatures; an individual CPU, GPU, motherboard or disk sensor may be selected instead. Select a fan on the right and **drag the five dots** to edit the temperature/PWM curve. Click **Save curve in ESP** to store it in flash (NVS).
 
@@ -65,7 +92,7 @@ For **each** fan, the `Датчик для кривої` selector offers:
 
 Select a fan, press **Вибрати датчики групи**, check the desired sensor IDs, and choose AVG/MAX in its source selector. The group is saved **on the PC** using QSettings (stable NWinfo-based device/attribute IDs), while the five-point fan curve itself remains in ESP32 NVS. If a group is empty **or any selected sensor disappears**, the GUI stops sending temperatures for that fan. The ESP then switches that automatic fan to 100% after the normal 10-second watchdog timeout. No fictional temperature, zero substitute, or silently partial average is used.
 
-NWinfo runs as **independent asynchronous GPU, CPU and SMART probes**. A slow
+NWinfo runs as **independent asynchronous CPU/GPU/SMART/DIMM/INTEL/ZEN/DISK probes**. A slow
 SMART disk or CPU driver can time out without hiding fresh GPU readings. The
 GPU-only provider runs with `--driver=NONE` (vendor driver APIs do not need
 NWinfo's ring-0 driver), while CPU is allowed a longer initialization window.
@@ -100,7 +127,7 @@ This is **manual E1.31 integration**, not automatic HID/USB discovery in OpenRGB
 
 The packaged `FanARGBControl.exe --headless` runs a **headless companion** after Windows logon. It streams CPU/GPU/SSD temperatures and bridges OpenRGB E1.31 to USB. To register the built EXE in Task Scheduler: `powershell -ExecutionPolicy Bypass -File pc_app/register_agent.ps1`; remove with `pc_app/unregister_agent.ps1`. No separate LHM server is needed. The scheduled agent uses the same bundled NWinfo engine.
 
-This is **not** a Windows Service that operates before user logon. It owns the COM port, so close the agent before opening the GUI. Logging is written to `%LOCALAPPDATA%\FanARGBControl\agent.log`. Missing LHM readings cause the ESP to fall back to 100% fan PWM.
+This is **not** a Windows Service that operates before user logon. It owns the COM port, so close the agent before opening the GUI. Logging is written to `%LOCALAPPDATA%\FanARGBControl\agent.log`. Missing temperature readings cause the ESP to fall back to 100% fan PWM.
 
 ## v5: background agent handoff and MQTT
 
