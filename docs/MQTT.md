@@ -1,4 +1,4 @@
-# MQTT and Home Assistant — ESP32-S3 v5
+# MQTT and Home Assistant — ESP32-S3 v8
 
 > **Windows configuration (v8):** Connect ESP32-S3 via USB to
 > `FanARGBControl.exe`, open **ESP32 → MQTT / Home Assistant**, enter
