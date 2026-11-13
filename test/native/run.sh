@@ -45,3 +45,11 @@ g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
   test/native/mock/Arduino.cpp src/FanController.cpp src/CoolingController.cpp \
   src/HardwareTemperature.cpp test/native/test_hw_temp.cpp -o "$out"
 "$out"
+
+# USB provisioning and readback: secrets never echoed; NVS persisted.
+g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
+  test/native/mock/Arduino.cpp src/FanController.cpp src/ArgbController.cpp \
+  src/CoolingController.cpp src/NetworkRgbBridge.cpp src/MqttBridge.cpp \
+  src/PcPowerController.cpp src/HardwareTemperature.cpp src/SerialConsole.cpp \
+  test/native/test_device_config.cpp -o "$out"
+"$out"
