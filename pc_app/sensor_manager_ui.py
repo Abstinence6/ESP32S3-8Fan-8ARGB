@@ -22,10 +22,13 @@ class SensorManagerPanel(QGroupBox):
         stored = str(controller.settings.value("nwinfoProviders", ""))
         enabled = set(stored.split(",")) if stored else set(PROVIDERS)
         root = QVBoxLayout(self)
-        root.addWidget(QLabel(
+        note = QLabel(
             "Окреме опитування джерел. Проблемні драйвери отримують "
             "збільшені інтервали повторних спроб; дані старші 7 с не керують вентиляторами."
-        ))
+        )
+        note.setWordWrap(True)
+        note.setMinimumWidth(0)
+        root.addWidget(note)
         row = QGridLayout()
         self.checkboxes = {}
         for index, (name, label) in enumerate(PROVIDERS.items()):
@@ -33,7 +36,7 @@ class SensorManagerPanel(QGroupBox):
             checkbox.setChecked(name in enabled)
             checkbox.setEnabled(name in sampler.permitted_providers)
             checkbox.toggled.connect(self._changed)
-            row.addWidget(checkbox, index // 4, index % 4)
+            row.addWidget(checkbox, index // 2, index % 2)
             self.checkboxes[name] = checkbox
         root.addLayout(row)
         second = QHBoxLayout()
@@ -41,9 +44,11 @@ class SensorManagerPanel(QGroupBox):
         scan.clicked.connect(self.force_scan)
         second.addWidget(scan)
         second.addStretch()
-        self.status = QLabel("Активні джерела: —")
-        second.addWidget(self.status)
         root.addLayout(second)
+        self.status = QLabel("Активні джерела: —")
+        self.status.setWordWrap(True)
+        self.status.setMinimumWidth(0)
+        root.addWidget(self.status)
         self._changed()
 
     def _changed(self, *_args) -> None:

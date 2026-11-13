@@ -33,11 +33,15 @@ class HardwareSensorPanel(QGroupBox):
         row.addWidget(self.mode)
         apply = QPushButton("Зберегти режим у ESP")
         apply.clicked.connect(self._apply)
-        row.addWidget(apply)
+        row.addStretch(1)
+        layout.addLayout(row)
+        actions = QHBoxLayout()
+        actions.addWidget(apply)
         query = QPushButton("Перевірити")
         query.clicked.connect(self.refresh)
-        row.addWidget(query)
-        layout.addLayout(row)
+        actions.addWidget(query)
+        actions.addStretch(1)
+        layout.addLayout(actions)
         mapping_row = QHBoxLayout()
         mapping_row.addWidget(QLabel("Датчик (ROM):"))
         self.probe_box = QComboBox()
@@ -45,16 +49,22 @@ class HardwareSensorPanel(QGroupBox):
         mapping_row.addWidget(self.probe_box, 1)
         save_map = QPushButton("Прив'язати до вентилятора")
         save_map.clicked.connect(self._apply_map)
-        mapping_row.addWidget(save_map)
+        layout.addLayout(mapping_row)
+        mapping_actions = QHBoxLayout()
+        mapping_actions.addWidget(save_map)
         rescan = QPushButton("Сканувати 1-Wire")
         rescan.clicked.connect(self.scan)
-        mapping_row.addWidget(rescan)
-        layout.addLayout(mapping_row)
-        layout.addWidget(QLabel(
+        mapping_actions.addWidget(rescan)
+        mapping_actions.addStretch(1)
+        layout.addLayout(mapping_actions)
+        note = QLabel(
             "LOCAL працює без Windows; BACKUP активується після 6 с без "
             "температури ПК. При втраті обох джерел PWM повертається до "
             "100%. Потрібне окреме живлення та GPIO з підтяжкою 4,7 кОм."
-        ))
+        )
+        note.setWordWrap(True)
+        note.setMinimumWidth(0)
+        layout.addWidget(note)
 
     def refresh(self) -> None:
         self.controller.send("HTEMP?")
