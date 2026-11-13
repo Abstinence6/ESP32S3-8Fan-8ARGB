@@ -51,6 +51,19 @@ QFrame#metricsStrip, QFrame#fanCard, QFrame#quietCard, QFrame#systemBanner {
 }
 QFrame#metricSlot { background: transparent; border: none; }
 QFrame#fanCard:hover { border-color: #4e8e91; background: #192836; }
+QFrame#zoneTile {
+    background: #172838; border: 1px solid #334658; border-radius: 9px;
+}
+QFrame#zoneTile[selected="true"] {
+    background: #1a3940; border-color: #36a4a6;
+}
+QFrame#zonePixels {
+    background: #344d5d; border: none; border-radius: 4px;
+}
+QFrame#zonePixels[selected="true"] {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 #279aab,stop:0.45 #62c5c4,stop:1 #1e748d);
+}
 QFrame#systemBanner { background: #102a30; border-color: #2e6a69; }
 QFrame#systemBanner[state="warning"] { background: #292518; border-color: #8b7441; }
 QFrame#systemBanner[state="critical"] { background: #30202a; border-color: #a75b69; }
@@ -800,8 +813,8 @@ class DashboardShell(QWidget):
 
     def _create_argb(self, rgb_box, scenes: Iterable[str]) -> None:
         page, layout = self._content(
-            "ARGB",
-            "Ефекти, інтеграція OpenRGB і редактор сцен — без змішування з охолодженням.",
+            "Підсвітка ARGB",
+            "Вибери зону й ефект. Розташування зон показано схематично.",
         )
         self.argb_workspace_tabs = QTabWidget()
         self.argb_workspace_tabs.setObjectName("argbWorkspaceTabs")
@@ -811,48 +824,110 @@ class DashboardShell(QWidget):
         scenes_page = QWidget()
         scenes_layout = QVBoxLayout(scenes_page)
         scenes_layout.setContentsMargins(0, 12, 0, 0)
-        scenes_layout.setSpacing(12)
+        scenes_layout.setSpacing(13)
+
+        zone_map = QFrame()
+        zone_map.setObjectName("quietCard")
+        map_layout = QVBoxLayout(zone_map)
+        map_layout.setContentsMargins(17, 15, 17, 15)
+        map_layout.setSpacing(12)
+        map_layout.addWidget(_label("8 НЕЗАЛЕЖНИХ ЗОН", "sectionLabel"))
+        map_grid = QGridLayout()
+        map_grid.setContentsMargins(0, 0, 0, 0)
+        map_grid.setHorizontalSpacing(9)
+        map_grid.setVerticalSpacing(9)
+        self.argb_zone_tiles: dict[int, tuple[QFrame, QFrame]] = {}
+        for ch in range(1, 9):
+            tile = QFrame()
+            tile.setObjectName("zoneTile")
+            tile.setProperty("selected", False)
+            line = QHBoxLayout(tile)
+            line.setContentsMargins(10, 9, 10, 9)
+            line.setSpacing(9)
+            pick = QPushButton(f"ARGB {ch:02d}")
+            pick.setProperty("role", "ghost")
+            pick.setFixedWidth(84)
+            pick.setToolTip(f"Вибрати канал ARGB {ch} без зміни світлодіодів")
+            pick.clicked.connect(
+                lambda _checked=False, zone=ch: self.zone_box.setCurrentIndex(zone - 1)
+            )
+            line.addWidget(pick)
+            strip = QFrame()
+            strip.setObjectName("zonePixels")
+            strip.setProperty("selected", False)
+            strip.setFixedHeight(9)
+            strip.setMinimumWidth(35)
+            line.addWidget(strip, 1)
+            self.argb_zone_tiles[ch] = (tile, strip)
+            map_grid.addWidget(tile, (ch - 1) // 2, (ch - 1) % 2)
+        map_grid.setColumnStretch(0, 1)
+        map_grid.setColumnStretch(1, 1)
+        map_layout.addLayout(map_grid)
+        map_layout.addWidget(_label(
+            "Схема вибору каналів · кольори не зчитуються з фізичних LED.",
+            "minor", True,
+        ))
 
         select = QFrame()
         select.setObjectName("quietCard")
-        bar = QVBoxLayout(select)
-        bar.setContentsMargins(17, 13, 17, 13)
-        bar.setSpacing(11)
-        fields = QHBoxLayout()
-        fields.setSpacing(12)
-        fields.addWidget(_label("Канал", "labelTitle"))
+        control = QVBoxLayout(select)
+        control.setContentsMargins(17, 15, 17, 15)
+        control.setSpacing(9)
+        control.addWidget(_label("СЦЕНА", "sectionLabel"))
+        control.addWidget(_label("Канал", "labelTitle"))
         self.zone_box = QComboBox()
         self.zone_box.setMinimumWidth(110)
         for ch in range(1, 9):
             self.zone_box.addItem(f"ARGB {ch}", ch)
         self.zone_box.currentIndexChanged.connect(self._zone_changed)
-        fields.addWidget(self.zone_box)
-        fields.addSpacing(12)
-        fields.addWidget(_label("Ефект", "labelTitle"))
+        control.addWidget(self.zone_box)
+        control.addWidget(_label("Ефект", "labelTitle"))
         self.scene_box = QComboBox()
         self.scene_box.addItems(list(scenes))
         self.scene_box.setMinimumWidth(170)
-        fields.addWidget(self.scene_box, 1)
-        bar.addLayout(fields)
-        actions = QHBoxLayout()
-        self.scope_one = QRadioButton("Лише ця зона")
+        control.addWidget(self.scene_box)
+        self.scope_one = QRadioButton("Лише вибрана зона")
         self.scope_all = QRadioButton("Усі 8 зон")
         self.scope_one.setChecked(True)
-        actions.addWidget(self.scope_one)
-        actions.addWidget(self.scope_all)
-        actions.addStretch(1)
-        apply_button = QPushButton("Застосувати")
+        control.addWidget(self.scope_one)
+        control.addWidget(self.scope_all)
+        apply_button = QPushButton("Застосувати ефект")
         apply_button.setProperty("role", "primary")
         apply_button.clicked.connect(self._apply_scene)
-        actions.addWidget(apply_button)
-        bar.addLayout(actions)
-        scenes_layout.addWidget(select)
+        control.addWidget(apply_button)
+        control.addStretch(1)
 
-        rgb_box.setTitle("Ручне керування кольором")
-        for label in rgb_box.findChildren(QLabel):
-            label.setWordWrap(True)
-            label.setMinimumWidth(0)
-        scenes_layout.addWidget(rgb_box)
+        work = QGridLayout()
+        work.setContentsMargins(0, 0, 0, 0)
+        work.setHorizontalSpacing(13)
+        work.addWidget(zone_map, 0, 0)
+        work.addWidget(select, 0, 1)
+        work.setColumnStretch(0, 7)
+        work.setColumnStretch(1, 4)
+        scenes_layout.addLayout(work)
+
+        # All original manual controls remain wired to the controller;
+        # move only their widgets out of the formerly sprawling rgb_box.
+        rgb_layout = rgb_box.layout()
+        manual_row = rgb_layout.takeAt(0).layout()
+        if manual_row is None:
+            raise RuntimeError("Manual ARGB controls were not found")
+        quick = QFrame()
+        quick.setObjectName("quietCard")
+        quick_layout = QVBoxLayout(quick)
+        quick_layout.setContentsMargins(17, 14, 17, 14)
+        quick_layout.setSpacing(9)
+        quick_layout.addWidget(_label("ШВИДКІ КОМАНДИ", "sectionLabel"))
+        quick_actions = QHBoxLayout()
+        quick_actions.setSpacing(9)
+        _move_controls(manual_row, quick_actions)
+        quick_layout.addLayout(quick_actions)
+        scenes_layout.addWidget(quick)
+        scenes_layout.addWidget(_label(
+            "Ефекти надсилаються на контролер після застосування. "
+            "Умовні смужки вище позначають вибір, а не фактичну підсвітку.",
+            "minor", True,
+        ))
         scenes_layout.addStretch(1)
         self.argb_workspace_tabs.addTab(scenes_page, "Ефекти")
 
@@ -860,27 +935,32 @@ class DashboardShell(QWidget):
         openrgb_layout = QVBoxLayout(openrgb_page)
         openrgb_layout.setContentsMargins(0, 12, 0, 0)
         openrgb_layout.setSpacing(12)
-        native_row = QFrame()
-        native_row.setObjectName("quietCard")
-        native_layout = QVBoxLayout(native_row)
-        native_layout.setContentsMargins(17, 13, 17, 13)
-        native_layout.setSpacing(7)
+        native = QFrame()
+        native.setObjectName("quietCard")
+        native_layout = QVBoxLayout(native)
+        native_layout.setContentsMargins(17, 15, 17, 15)
+        native_layout.setSpacing(8)
+        native_layout.addWidget(_label("OPENRGB SDK", "sectionLabel"))
         self.native_checkbox = QCheckBox("Native OpenRGB SDK · 8 зон")
         self.native_checkbox.toggled.connect(self.controller.toggle_native_openrgb)
         native_layout.addWidget(self.native_checkbox)
         native_layout.addWidget(_label(
-            "Локальний OpenRGB SDK: 127.0.0.1, порт 6743. "
-            "Додай Remote SDK server у налаштуваннях OpenRGB.",
+            "Локальний сервер 127.0.0.1:6743. У OpenRGB увімкни Remote SDK server.",
             "minor", True,
         ))
-        openrgb_layout.addWidget(native_row)
+        openrgb_layout.addWidget(native)
+        rgb_box.setTitle("E1.31 / DDP · USB-міст і параметри передачі")
+        for label in rgb_box.findChildren(QLabel):
+            label.setWordWrap(True)
+            label.setMinimumWidth(0)
+        openrgb_layout.addWidget(rgb_box)
         note = QFrame()
         note.setObjectName("quietCard")
         foot = QVBoxLayout(note)
-        foot.setContentsMargins(17, 13, 17, 13)
+        foot.setContentsMargins(17, 14, 17, 14)
         foot.addWidget(_label(
-            "USB-місцева передача OpenRGB через E1.31: 127.0.0.1, Universes 1–8. "
-            "Прямий Wi-Fi E1.31/DDP налаштовується у вкладці ESP32.",
+            "Вісім E1.31 Universes (1–8) → 8 зон, DMX Start 1. "
+            "Для прямого Wi-Fi E1.31/DDP відкрий налаштування ESP32.",
             "minor", True,
         ))
         openrgb_layout.addWidget(note)
@@ -890,6 +970,7 @@ class DashboardShell(QWidget):
         studio_page = QWidget()
         studio_layout = QVBoxLayout(studio_page)
         studio_layout.setContentsMargins(0, 12, 0, 0)
+        studio_layout.setSpacing(9)
         self.studio = ArgbStudioPanel(self.controller)
         studio_layout.addWidget(self.studio)
         studio_layout.addStretch(1)
@@ -897,7 +978,17 @@ class DashboardShell(QWidget):
 
         layout.addWidget(self.argb_workspace_tabs, 1)
         layout.addStretch(1)
+        self._refresh_argb_zone_tiles()
         self._add_page("argb", page)
+
+    def _refresh_argb_zone_tiles(self) -> None:
+        for ch, (tile, strip) in self.argb_zone_tiles.items():
+            active = self.zone_box.currentData() == ch
+            for widget in (tile, strip):
+                if widget.property("selected") != active:
+                    widget.setProperty("selected", active)
+                    widget.style().unpolish(widget)
+                    widget.style().polish(widget)
 
     def _create_pc(self, pc_box: QGroupBox) -> None:
         page, layout = self._content(
@@ -1138,10 +1229,12 @@ class DashboardShell(QWidget):
             self.zone_box.blockSignals(True)
             self.zone_box.setCurrentIndex(index)
             self.zone_box.blockSignals(False)
+            self._refresh_argb_zone_tiles()
 
     def _zone_changed(self, index: int) -> None:
         if 0 <= index < 8:
             self.controller.fan_box.setCurrentIndex(index)
+            self._refresh_argb_zone_tiles()
 
     def _apply_scene(self) -> None:
         self.controller.apply_argb_scene(
