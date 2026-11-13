@@ -124,6 +124,12 @@ class DashboardSmokeTests(unittest.TestCase):
         self.window.handle_line(
             "CH 1 FAN=55% RPM=1200 TEMP=450 MODE=auto SENSOR=ok TYPE=3 FAULT=0"
         )
+        self.assertIn("Перевіряємо канали", shell.health_title.text())
+        for channel in range(2, 9):
+            self.window.handle_line(
+                f"CH {channel} FAN=55% RPM=1200 TEMP=450 "
+                "MODE=auto SENSOR=ok TYPE=3 FAULT=0"
+            )
         self.assertIn("працює", shell.health_title.text())
         self.window.handle_line(
             "CH 1 FAN=100% RPM=1200 TEMP=980 MODE=auto SENSOR=ok TYPE=3 FAULT=1"

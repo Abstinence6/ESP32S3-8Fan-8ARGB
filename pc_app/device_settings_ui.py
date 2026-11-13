@@ -427,8 +427,11 @@ class DeviceSettingsPanel(QWidget):
         if self._active is not None or self._verify is not None:
             return
         if not operations:
-            self._wifi_dirty = False
-            self._mqtt_dirty = False
+            # Preserve unsaved input in other tabs while refreshing this one.
+            if verify == "wifi":
+                self._wifi_dirty = False
+            elif verify == "mqtt":
+                self._mqtt_dirty = False
             self._refresh_dirty_tabs()
             self._state_label("Зміни не потрібні · зчитую поточний стан")
             self.refresh_all()

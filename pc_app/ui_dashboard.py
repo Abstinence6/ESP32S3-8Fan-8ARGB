@@ -580,9 +580,13 @@ class DashboardShell(QWidget):
                 title = f"Захисне охолодження · {stale} каналів"
                 detail = "Немає свіжої температури на частині каналів — застосовується fail-safe."
                 state = "warning"
+            elif count < 8:
+                title = f"Перевіряємо канали · {count}/8"
+                detail = "Стан решти вентиляторів ще не отримано. Оцінка охолодження неповна."
+                state = "idle"
             else:
                 title = "Охолодження працює"
-                detail = f"Отримано дані {count} із 8 каналів · налаштування доступні в розділі «Вентилятори»."
+                detail = "Усі 8 каналів передають актуальний стан · параметри доступні в «Вентиляторах»."
                 state = "normal"
         self.health_title.setText(title)
         self.health_description.setText(detail)
