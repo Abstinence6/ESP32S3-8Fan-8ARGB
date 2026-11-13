@@ -58,6 +58,9 @@ class MaintenancePanel(QGroupBox):
         restore.clicked.connect(self.import_settings)
         backup_row.addWidget(restore)
         backup_row.addStretch(1)
+        history_button = QPushButton("Експорт історії вентиляторів за 7 днів (CSV)…")
+        history_button.clicked.connect(self.controller.export_history_csv)
+        backup_row.addWidget(history_button)
         layout.addLayout(backup_row)
 
         flash_row = QHBoxLayout()
