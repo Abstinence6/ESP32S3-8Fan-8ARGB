@@ -180,7 +180,9 @@ class DeviceSettingsPanel(QWidget):
                       "TCP/1883 без TLS — лише довірена локальна мережа. "
                       "Вимкнення Discovery очищує retained-записи після зв’язку з MQTT.")
         note.setWordWrap(True)
-        mqtt_form.addRow("", note)
+        note.setMinimumWidth(0)
+        note.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        mqtt_form.addRow(note)
         self.mqtt_host.textEdited.connect(self._mark_mqtt_dirty)
         self.mqtt_user.textEdited.connect(self._mark_mqtt_dirty)
         self.mqtt_password.textEdited.connect(self._mark_mqtt_dirty)
@@ -234,7 +236,9 @@ class DeviceSettingsPanel(QWidget):
                           "Яскравість активна до перезапуску ESP32. "
                           "Бюджет струму — програмна оцінка, не заміна запобіжника.")
         rgb_note.setWordWrap(True)
-        rgb_form.addRow("", rgb_note)
+        rgb_note.setMinimumWidth(0)
+        rgb_note.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        rgb_form.addRow(rgb_note)
         self.tabs.addTab(rgb_box, "ARGB")
 
         fan_box = QWidget()
@@ -282,18 +286,22 @@ class DeviceSettingsPanel(QWidget):
         links = QHBoxLayout()
         sensor_link = QPushButton("DS18B20 / джерела температур…")
         sensor_link.clicked.connect(lambda: self.controller.dashboard.show_page("sensors"))
+        sensor_link.setMaximumWidth(250)
+        sensor_link.setProperty("role", "ghost")
         links.addWidget(sensor_link)
         power_link = QPushButton("Живлення ПК / PWR_SW…")
         power_link.clicked.connect(lambda: self.controller.dashboard.show_page("pc"))
+        power_link.setMaximumWidth(235)
+        power_link.setProperty("role", "ghost")
         links.addWidget(power_link)
-        root.addLayout(links)
+        links.addStretch(1)
         limitations = QLabel(
             "GPIO-розводка, схема живлення вентиляторів, фізичний fail-ON, "
             "увімкнення драйвера DC PWM і PWR_SW задаються апаратно/під час "
             "компіляції, а не небезпечним записом довільних GPIO з Windows."
         )
         limitations.setWordWrap(True)
-        root.addWidget(limitations)
+        limitations.setProperty("role", "minor")
 
         self.action_footer = QFrame()
         self.action_footer.setObjectName("settingsActionFooter")
@@ -318,7 +326,11 @@ class DeviceSettingsPanel(QWidget):
             pane_layout.addStretch(1)
             self.action_stack.addWidget(pane)
         footer_layout.addWidget(self.action_stack)
+        # Put the important action immediately below the active form.
+        # Related navigation and hardware disclaimer remain secondary.
         root.addWidget(self.action_footer)
+        root.addLayout(links)
+        root.addWidget(limitations)
         root.addStretch(1)
         self._action_buttons = (
             self.refresh_button, self.wifi_save, self.wifi_disable,
