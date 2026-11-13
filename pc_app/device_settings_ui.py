@@ -469,9 +469,10 @@ class DeviceSettingsPanel(QWidget):
              ("MQTT TX COMMIT", "OK MQTT_TX")]
             if self.serial_version >= 7 else [("MQTT CLEAR", "OK MQTT_SAVED")]
         )
-        self._start(operations, "mqtt",
-                    {"host": "", "username": "", "enabled": False, "port": 1883,
-                     "allow_temperatures": False, "discovery": True})
+        expected = {"host": "", "username": "", "enabled": False, "port": 1883}
+        if self.serial_version >= 7:
+            expected.update({"allow_temperatures": False, "discovery": True})
+        self._start(operations, "mqtt", expected)
 
     def save_argb(self) -> None:
         ch = self.rgb_zone.currentData()

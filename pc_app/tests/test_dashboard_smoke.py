@@ -124,6 +124,44 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertIn("підтвердив", panel.result.text())
         self.assertEqual(panel.mqtt_password.text(), "")
 
+    def test_v7_atomic_mqtt_uses_one_commit_and_verified_readback(self):
+        panel = self.window.dashboard.device_settings
+        sent = []
+        self.window.send = lambda command: sent.append(command) or True
+        panel.set_connected(True)
+        panel.set_version(8, 7)
+        self.window.handle_line("WIFI_CONFIG ENABLED=0 CONNECTED=0 SSID_HEX=- PASSWORD_SET=0 IP=-")
+        self.window.handle_line(
+            "MQTT_CONFIG ENABLED=0 CONNECTED=0 HOST_HEX=- PORT=1883 "
+            "USER_HEX=- AUTH=0 DISCOVERY=1 TEMP_ALLOW=0 STORAGE_OK=1 TOPIC=esp32fan/demo"
+        )
+        panel.mqtt_host.setText("broker.local")
+        panel.mqtt_enabled.setChecked(True)
+        panel.mqtt_temperature.setChecked(True)
+        panel.save_mqtt()
+        self.assertEqual(sent[-1], "MQTT TX START")
+        self.window.handle_line("OK MQTT_TX")
+        self.assertEqual(sent[-1], "MQTT TX BROKER broker.local 1883")
+        self.window.handle_line("OK MQTT_TX")
+        self.assertEqual(sent[-1], "MQTT TX FLAGS 1 1 1")
+        self.window.handle_line("OK MQTT_TX")
+        self.assertEqual(sent[-1], "MQTT TX COMMIT")
+        self.window.handle_line("OK MQTT_TX")
+        self.assertEqual(sent[-1], "MQTT CONFIG?")
+        from device_config_protocol import encode_value
+        self.window.handle_line(
+            "MQTT_CONFIG ENABLED=1 CONNECTED=0 HOST_HEX="
+            + encode_value("broker.local", 63)
+            + " PORT=1883 USER_HEX=- AUTH=0 DISCOVERY=1 TEMP_ALLOW=1 "
+              "STORAGE_OK=1 TOPIC=esp32fan/demo"
+        )
+        self.assertIn("підтвердив", panel.result.text())
+        self.assertTrue(panel.mqtt_save.isEnabled())
+        # Repeating identical settings must not begin a new NVS transaction.
+        sent.clear()
+        panel.save_mqtt()
+        self.assertNotIn("MQTT TX START", sent)
+
     def test_old_firmware_disables_unavailable_configuration(self):
         panel = self.window.dashboard.device_settings
         panel.set_connected(True)
@@ -243,7 +281,7 @@ class DashboardSmokeTests(unittest.TestCase):
             "HEALTH 1 TYPE=3 DETECTED=255 PWM=100 RPM=900 "
             "TACH=seen TACH_VALID=1 SENSOR=ok FAULT=0 DC_READY=0 MODE=auto"
         )
-        self.assertIn("заблоковано", shell.diagnostics.table.item(0, 4).text())
+        self.assertIn("заблоковано", shell.diagnostics.table.item(0, 7).text())
 
     def test_manual_curve_edits_disable_automatic_profiles(self):
         box = self.window.dashboard.settings_panel.auto_profiles
