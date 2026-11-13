@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 PAGES = (
     ("overview", "◉  Огляд", "Огляд системи", "Стан охолодження та підсвітки з одного погляду"),
     ("fans", "≋  Вентилятори", "Вентилятори", "Температурні криві, швидкість і джерела даних"),
+    ("sensors", "◉  Датчики", "Датчики обладнання", "Температура, частоти, споживання, оберти"),
     ("argb", "✦  ARGB", "Підсвітка", "Сцени для восьми незалежних зон та OpenRGB"),
     ("pc", "⏻  Живлення ПК", "Живлення ПК", "Керування кнопкою PWR_SW з перевіркою стану"),
     ("service", "⚙  Сервіс", "Додаткові налаштування", "Калібрування, конфігурація та діагностика"),
@@ -90,6 +91,9 @@ QScrollBar:vertical { background: #182131; width: 10px; border: 0; }
 QScrollBar::handle:vertical { background: #465a73; border-radius: 4px; min-height: 28px; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
 QSplitter::handle { background: #202d40; width: 6px; }
+QTabWidget::pane { border: 1px solid #304054; border-radius: 8px; background: #141d2a; }
+QTabBar::tab { padding: 10px 18px; border-radius: 7px 7px 0 0; background: #202d3e; color: #aebdd1; }
+QTabBar::tab:selected { background: #2d4a69; color: #ffffff; font-weight: 650; }
 """
 
 
@@ -178,10 +182,11 @@ class DashboardShell(QWidget):
 
         self._create_overview()
         self._create_fans(table_box, choose_row, curve_box, history_box)
+        self._create_sensors(sensors_box)
         self._create_argb(rgb_box, scenes)
         self._create_pc(pc_box)
         self._create_service(
-            calibration_box, sensors_box, hardware_rgb, config_files,
+            calibration_box, hardware_rgb, config_files,
             preset_row, diagnostic_row,
         )
         self._create_logs(log_box)
@@ -456,8 +461,30 @@ class DashboardShell(QWidget):
             box.addLayout(target)
         return group
 
+    def _create_sensors(self, sensors_box) -> None:
+        page, layout = self._content(
+            "Датчики обладнання",
+            "Усі доступні дані NWinfo. Температури можна використовувати для кривих; "
+            "інші параметри наведено лише для моніторингу.",
+        )
+        sensors_box.setTitle("Температури та інші показники")
+        sensors_box.setMinimumHeight(460)
+        layout.addWidget(sensors_box, 1)
+        endpoint = QGroupBox("Локальне опитування NWinfo")
+        ep = QHBoxLayout(endpoint)
+        ep.setContentsMargins(16, 20, 16, 12)
+        ep.addWidget(_label(
+            "CPU · GPU · RAM · SSD · Intel / AMD · без LHM", "minor"
+        ), 1)
+        scan = QPushButton("Оновити датчики")
+        scan.clicked.connect(self.controller.refresh_temperatures)
+        ep.addWidget(scan)
+        ep.addWidget(self.controller.sensor_status)
+        layout.addWidget(endpoint)
+        self._add_page("sensors", page)
+
     def _create_service(
-        self, calibration_box, sensors_box, hardware_rgb, config_files,
+        self, calibration_box, hardware_rgb, config_files,
         preset_row, diagnostic_row,
     ) -> None:
         page, layout = self._content(
@@ -482,18 +509,6 @@ class DashboardShell(QWidget):
         advanced = self._service_group("Діагностика та MQTT / Home Assistant", diagnostic_row)
         layout.addWidget(advanced)
 
-        sensors_box.setTitle("NWinfo · доступні температурні датчики")
-        sensors_box.setMinimumHeight(235)
-        layout.addWidget(sensors_box)
-        endpoint = QGroupBox("Сервер датчиків")
-        ep = QHBoxLayout(endpoint)
-        ep.setContentsMargins(16, 20, 16, 12)
-        ep.addWidget(_label("Локальні CPU / GPU / SSD · без вебсервера", "minor"), 1)
-        scan = QPushButton("Оновити датчики")
-        scan.clicked.connect(self.controller.refresh_temperatures)
-        ep.addWidget(scan)
-        ep.addWidget(self.controller.sensor_status)
-        layout.addWidget(endpoint)
         layout.addStretch(1)
         self._add_page("service", page)
 
@@ -562,10 +577,10 @@ class DashboardShell(QWidget):
         self.connection_text.style().unpolish(self.connection_text)
         self.connection_text.style().polish(self.connection_text)
 
-    def set_sensor_count(self, count: int, available: bool = True) -> None:
+    def set_sensor_count(self, count: int, available: bool = True, metric_count: int = 0) -> None:
         self.summary_temp.setText(
-            f"{count} температур" if count else
-            "Немає температур" if available else "Датчики недоступні"
+            f"{count} температур · {metric_count} інших" if count else
+            f"0 температур · {metric_count} інших" if available else "Датчики недоступні"
         )
 
     def set_bridge_state(self, enabled: bool, frames: int = 0) -> None:

@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QSplitter, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
     QColorDialog, QCheckBox, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem,
     QFileDialog,
-    QHeaderView, QAbstractItemView,
+    QHeaderView, QAbstractItemView, QTabWidget,
 )
 
 from monitor import (
@@ -205,13 +205,26 @@ class FanArgbWindow(QMainWindow):
 
         sensors_box = QGroupBox("Усі доступні температурні датчики ПК")
         sensors_layout = QVBoxLayout(sensors_box)
+        self.sensor_search = QLineEdit()
+        self.sensor_search.setPlaceholderText("Пошук датчиків: CPU, GPU, NVMe, RAM, Power…")
+        self.sensor_search.setClearButtonEnabled(True)
+        self.sensor_search.textChanged.connect(self._filter_sensor_rows)
+        sensors_layout.addWidget(self.sensor_search)
+        self.sensor_tabs = QTabWidget()
         self.sensor_table = QTableWidget(0, 3)
-        self.sensor_table.setHorizontalHeaderLabels(["Датчик / обладнання", "°C", "SensorId"])
+        self.sensor_table.setHorizontalHeaderLabels(["Температурний датчик / пристрій", "°C", "SensorId"])
         self.sensor_table.verticalHeader().setVisible(False)
         self.sensor_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.sensor_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.sensor_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        sensors_layout.addWidget(self.sensor_table)
+        self.sensor_tabs.addTab(self.sensor_table, "Температури")
+        self.metric_table = QTableWidget(0, 4)
+        self.metric_table.setHorizontalHeaderLabels(["Показник / пристрій", "Значення", "Одиниці", "Категорія"])
+        self.metric_table.verticalHeader().setVisible(False)
+        self.metric_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.metric_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.sensor_tabs.addTab(self.metric_table, "Інші показники")
+        sensors_layout.addWidget(self.sensor_tabs)
         left_layout.addWidget(sensors_box, 1)
 
         right = QWidget()
@@ -727,9 +740,11 @@ class FanArgbWindow(QMainWindow):
                 self.log(issue)
             self._last_sensor_issue = issue
         self.dashboard.set_sensor_count(
-            len(self.temperatures), available=ready
+            len(self.temperatures), available=ready,
+            metric_count=len(self.sensor_sampler.metrics),
         )
         self._update_sensor_table()
+        self._update_metric_table()
         self._update_source_boxes()
         self._update_secondary_box()
 
@@ -760,6 +775,30 @@ class FanArgbWindow(QMainWindow):
         for row, sensor in enumerate(self.temperatures):
             for col, value in enumerate((sensor.name, f"{sensor.celsius:.1f}", sensor.sensor_id)):
                 self.sensor_table.setItem(row, col, QTableWidgetItem(value))
+
+    def _update_metric_table(self) -> None:
+        """Show power, clocks, voltage, RPM and load as read-only telemetry."""
+        metrics = self.sensor_sampler.metrics
+        self.metric_table.setRowCount(len(metrics))
+        for row, metric in enumerate(metrics):
+            columns = (
+                metric.name, f"{metric.value:.1f}", metric.unit, metric.kind,
+            )
+            for col, value in enumerate(columns):
+                self.metric_table.setItem(row, col, QTableWidgetItem(value))
+        self.sensor_tabs.setTabText(0, f"Температури · {len(self.temperatures)}")
+        self.sensor_tabs.setTabText(1, f"Інші показники · {len(metrics)}")
+        self._filter_sensor_rows()
+
+    def _filter_sensor_rows(self, _text: str = "") -> None:
+        query = self.sensor_search.text().strip().casefold()
+        for table in (self.sensor_table, self.metric_table):
+            for row in range(table.rowCount()):
+                searchable = " ".join(
+                    table.item(row, col).text() if table.item(row, col) else ""
+                    for col in range(table.columnCount())
+                ).casefold()
+                table.setRowHidden(row, bool(query and query not in searchable))
 
     def _update_source_boxes(self) -> None:
         for ch, box in enumerate(self.source_boxes, start=1):

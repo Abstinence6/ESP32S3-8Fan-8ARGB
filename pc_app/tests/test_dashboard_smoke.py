@@ -61,7 +61,7 @@ class DashboardSmokeTests(unittest.TestCase):
         self.app.processEvents()
         output = Path("dist/ui-preview")
         output.mkdir(parents=True, exist_ok=True)
-        for key in ("overview", "fans", "argb", "pc", "service", "logs"):
+        for key in ("overview", "fans", "sensors", "argb", "pc", "service", "logs"):
             self.window.dashboard.show_page(key)
             self.app.processEvents()
             target = output / f"{key}.png"
@@ -70,7 +70,7 @@ class DashboardSmokeTests(unittest.TestCase):
 
     def test_navigation_and_existing_controls(self):
         shell = self.window.dashboard
-        self.assertEqual(shell.stack.count(), 6)
+        self.assertEqual(shell.stack.count(), 7)
         self.assertEqual(len(shell.fan_cards), 8)
         self.assertEqual(shell.page_index["overview"], shell.stack.currentIndex())
         shell.open_fan(6)
@@ -80,7 +80,11 @@ class DashboardSmokeTests(unittest.TestCase):
         shell.show_page("service")
         service = shell.stack.widget(shell.page_index["service"]).widget()
         self.assertTrue(service.isAncestorOf(self.window.cal_progress))
-        self.assertTrue(service.isAncestorOf(self.window.sensor_table))
+        shell.show_page("sensors")
+        sensors = shell.stack.widget(shell.page_index["sensors"]).widget()
+        self.assertTrue(sensors.isAncestorOf(self.window.sensor_table))
+        self.assertTrue(sensors.isAncestorOf(self.window.metric_table))
+        self.assertEqual(shell.stack.currentIndex(), shell.page_index["sensors"])
         shell.show_page("logs")
         logs = shell.stack.widget(shell.page_index["logs"]).widget()
         self.assertTrue(logs.isAncestorOf(self.window.log_text))
@@ -107,6 +111,40 @@ class DashboardSmokeTests(unittest.TestCase):
         ]
         self.assertTrue(any("Intel Core" in x for x in names))
         self.assertTrue(any("AMD Radeon" in x for x in names))
+
+    def test_additional_metrics_are_display_only_and_searchable(self):
+        from concurrent.futures import Future
+        from monitor import TemperatureSensor
+        from nwinfo_sensors import HardwareMetric
+        metric = HardwareMetric(
+            "nwinfo/gpu/radeon/fan%20speed",
+            "GPU / Radeon / Fan Speed", 1450, "RPM", "fan",
+        )
+        sampler = self.window.sensor_sampler
+        sampler._initialized = True
+        sampler._last_poll_at = 100.0
+        sampler._metric_latest = {"GPU": (100.0, [metric])}
+        future = Future()
+        future.set_result([
+            TemperatureSensor("nwinfo/gpu/radeon/temperature", "GPU / Radeon / Temperature", 61.4),
+        ])
+        self.window.temperature_future = future
+        self.window.apply_temperature_result()
+        self.assertEqual(self.window.sensor_table.rowCount(), 1)
+        self.assertEqual(self.window.metric_table.rowCount(), 1)
+        self.assertEqual(self.window.metric_table.item(0, 2).text(), "RPM")
+        self.assertIn("1 інших", self.window.dashboard.summary_temp.text())
+        source_labels = [
+            self.window.source_boxes[0].itemText(i)
+            for i in range(self.window.source_boxes[0].count())
+        ]
+        self.assertTrue(any("Temperature" in item for item in source_labels))
+        self.assertFalse(any("Fan Speed" in item for item in source_labels))
+        self.window.sensor_search.setText("Fan Speed")
+        self.assertTrue(self.window.sensor_table.isRowHidden(0))
+        self.assertFalse(self.window.metric_table.isRowHidden(0))
+        self.window.sensor_search.clear()
+        self.assertFalse(self.window.sensor_table.isRowHidden(0))
 
     def test_nwinfo_timeout_does_not_discard_valid_gpu_telemetry(self):
         from concurrent.futures import Future
