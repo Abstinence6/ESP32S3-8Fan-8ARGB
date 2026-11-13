@@ -32,6 +32,11 @@ class DeviceSettingsPanel(QWidget):
         self._wifi_dirty = False
         self._mqtt_dirty = False
         self._loading = False
+        self._wifi_known = False
+        self._mqtt_known = False
+        self._rgb_known = False
+        self._fan_known = False
+        self._argb_verified: set[str] = set()
         self._operations: deque[tuple[str, str]] = deque()
         self._active: tuple[str, str] | None = None
         self._verify: str | None = None
@@ -248,6 +253,10 @@ class DeviceSettingsPanel(QWidget):
             self.version = 0
             self.wifi_config.clear()
             self.mqtt_config.clear()
+            self._wifi_dirty = False
+            self._mqtt_dirty = False
+            self._wifi_known = self._mqtt_known = False
+            self._rgb_known = self._fan_known = False
             self.wifi_password.clear()
             self.mqtt_password.clear()
             self.wifi_status.setText("ESP32 не підключено")
@@ -267,9 +276,18 @@ class DeviceSettingsPanel(QWidget):
 
     def _update_buttons(self) -> None:
         ready = self.connected and self.version >= 8
-        working = self._active is not None or bool(self._operations)
-        for button in self._action_buttons:
-            button.setEnabled(ready and not working)
+        working = (self._active is not None or bool(self._operations) or
+                   self._verify is not None)
+        self.refresh_button.setEnabled(ready and not working)
+        for button, known in (
+            (self.wifi_save, self._wifi_known),
+            (self.wifi_disable, self._wifi_known),
+            (self.mqtt_save, self._mqtt_known),
+            (self.mqtt_reset, self._mqtt_known),
+            (self.rgb_save, self._rgb_known),
+            (self.fan_save, self._fan_known),
+        ):
+            button.setEnabled(ready and not working and known)
 
     def refresh_all(self) -> None:
         if not self.connected or self.version < 8:
@@ -300,7 +318,7 @@ class DeviceSettingsPanel(QWidget):
         if not self.connected or self.version < 8:
             QMessageBox.warning(self, "Налаштування ESP32", "Спочатку підключи ESP32 з прошивкою v8+.")
             return
-        if self._active is not None:
+        if self._active is not None or self._verify is not None:
             return
         if not operations:
             self._state_label("Зміни не потрібні · зчитую поточний стан")
@@ -308,6 +326,7 @@ class DeviceSettingsPanel(QWidget):
             return
         self._verify = verify
         self._expected = expected
+        self._argb_verified.clear()
         self._operations = deque(operations)
         self._state_label("Запис налаштувань в ESP32…")
         self._send_next()
@@ -328,6 +347,7 @@ class DeviceSettingsPanel(QWidget):
             elif kind == "fan":
                 self.controller.send(f"CONFIG {self.fan_zone.currentData()}")
             self._verify = "pending_" + str(kind)
+            self.ack_timer.start(5000)
             self._update_buttons()
             return
         command, ack = self._operations.popleft()
@@ -350,6 +370,7 @@ class DeviceSettingsPanel(QWidget):
         self._update_buttons()
 
     def _complete(self, success: bool) -> None:
+        self.ack_timer.stop()
         self._active = None
         self._operations.clear()
         self._verify = None
@@ -483,6 +504,8 @@ class DeviceSettingsPanel(QWidget):
             self._fail("Некоректна відповідь Wi-Fi від ESP32")
             return
         self.wifi_config = new
+        self._wifi_known = True
+        self._update_buttons()
         self.wifi_status.setText(
             ("Підключено · " + str(new["ip"]) if new["connected"] else
              "Збережено, очікує мережу" if new["enabled"] else
@@ -513,6 +536,8 @@ class DeviceSettingsPanel(QWidget):
             self._fail("Некоректна відповідь MQTT від ESP32")
             return
         self.mqtt_config = new
+        self._mqtt_known = True
+        self._update_buttons()
         self.mqtt_status.setText(
             ("Підключено до брокера" if new["connected"] else
              "Налаштовано, офлайн" if new["enabled"] else "Вимкнено")
@@ -540,6 +565,8 @@ class DeviceSettingsPanel(QWidget):
         except (ValueError, KeyError):
             return
         if ch == self.rgb_zone.currentData():
+            self._rgb_known = True
+            self._update_buttons()
             self.rgb_count.setValue(pixels)
             self.rgb_reverse.setChecked(reverse)
             self.rgb_brightness.setValue(brightness)
@@ -547,8 +574,10 @@ class DeviceSettingsPanel(QWidget):
             if (pixels != self._expected.get("leds") or
                     reverse != self._expected.get("reverse")):
                 self._complete(False)
-            elif self.rgb_budget.value() == self._expected.get("budget"):
-                self._complete(True)
+            else:
+                self._argb_verified.add("strip")
+                if "budget" in self._argb_verified:
+                    self._complete(True)
 
     def _on_argb_status(self, data: dict[str, str]) -> None:
         try:
@@ -559,9 +588,12 @@ class DeviceSettingsPanel(QWidget):
         self.rgb_budget.setValue(budget)
         self.argb_status.setText(f"{budget} мА · поточна оцінка {requested} мА")
         if self._verify == "pending_argb":
-            # STRIPCFG may arrive before or after ARGBSTATUS.
             if budget != self._expected.get("budget"):
                 self._complete(False)
+            else:
+                self._argb_verified.add("budget")
+                if "strip" in self._argb_verified:
+                    self._complete(True)
 
     def on_fan_config(self, line: str) -> None:
         parts = line.split()
@@ -576,6 +608,8 @@ class DeviceSettingsPanel(QWidget):
         except (ValueError, KeyError):
             return
         if ch == self.fan_zone.currentData():
+            self._fan_known = True
+            self._update_buttons()
             self.fan_ppr.setValue(ppr)
             self.fan_critical.setValue(crit)
             self.fan_stall.setValue(stall)
