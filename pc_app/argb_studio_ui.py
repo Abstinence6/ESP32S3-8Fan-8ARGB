@@ -88,6 +88,8 @@ class ArgbStudioPanel(QGroupBox):
             return
         if self.controller.bridge_checkbox.isChecked():
             self.controller.bridge_checkbox.setChecked(False)
+        if self.controller.dashboard.native_checkbox.isChecked():
+            self.controller.dashboard.native_checkbox.setChecked(False)
         self.started = time.monotonic()
         self.next_zone = 1
         self.active = True
