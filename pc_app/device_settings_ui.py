@@ -12,7 +12,7 @@ from collections import deque
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget,
+    QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget, QTabWidget,
 )
 
 try:
@@ -65,9 +65,19 @@ class DeviceSettingsPanel(QWidget):
         refresh_row.addWidget(self.result, 1)
         root.addLayout(refresh_row)
 
+        # One settings category at a time, without the long dense scrolling form.
+        self._tab_keys = ("wifi", "mqtt", "argb", "fan")
+        self.tabs = QTabWidget(self)
+        self.tabs.setObjectName("esp32ConfigTabs")
+        self.tabs.setDocumentMode(True)
+        self.tabs.tabBar().setExpanding(False)
+        root.addWidget(self.tabs)
+
         # Wi-Fi is persisted to ESP32 NVS, not to Windows QSettings.
-        wifi_box = QGroupBox("Wi-Fi · підключення контролера")
+        wifi_box = QWidget()
         wifi_form = QFormLayout(wifi_box)
+        wifi_form.setContentsMargins(17, 20, 17, 16)
+        wifi_form.setSpacing(12)
         self.wifi_status = QLabel("Немає даних")
         self.wifi_status.setWordWrap(True)
         wifi_form.addRow("Стан:", self.wifi_status)
@@ -77,8 +87,15 @@ class DeviceSettingsPanel(QWidget):
         wifi_form.addRow("SSID:", self.wifi_ssid)
         self.wifi_password = QLineEdit()
         self.wifi_password.setEchoMode(QLineEdit.EchoMode.Password)
-        self.wifi_password.setPlaceholderText("Залишити порожнім — не змінювати існуючий ключ")
+        self.wifi_password.setPlaceholderText("Порожній — зберегти пароль лише при незмінному SSID")
         wifi_form.addRow("Пароль:", self.wifi_password)
+        self.wifi_reveal = QCheckBox("Показати пароль")
+        self.wifi_reveal.toggled.connect(
+            lambda visible: self.wifi_password.setEchoMode(
+                QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password
+            )
+        )
+        wifi_form.addRow("", self.wifi_reveal)
         self.wifi_open = QCheckBox("Мережа без пароля (відкрита)")
         wifi_form.addRow("", self.wifi_open)
         wifi_actions = QHBoxLayout()
@@ -87,16 +104,19 @@ class DeviceSettingsPanel(QWidget):
         self.wifi_save.clicked.connect(self.save_wifi)
         wifi_actions.addWidget(self.wifi_save)
         self.wifi_disable = QPushButton("Вимкнути й очистити Wi-Fi")
+        self.wifi_disable.setProperty("role", "danger")
         self.wifi_disable.clicked.connect(self.disable_wifi)
         wifi_actions.addWidget(self.wifi_disable)
         wifi_form.addRow("", wifi_actions)
         self.wifi_ssid.textEdited.connect(self._mark_wifi_dirty)
         self.wifi_password.textEdited.connect(self._mark_wifi_dirty)
         self.wifi_open.toggled.connect(self._toggle_open_wifi)
-        root.addWidget(wifi_box)
+        self.tabs.addTab(wifi_box, "Wi-Fi")
 
-        mqtt_box = QGroupBox("MQTT · Home Assistant Discovery")
+        mqtt_box = QWidget()
         mqtt_form = QFormLayout(mqtt_box)
+        mqtt_form.setContentsMargins(17, 20, 17, 16)
+        mqtt_form.setSpacing(12)
         self.mqtt_status = QLabel("Немає даних")
         self.mqtt_status.setWordWrap(True)
         mqtt_form.addRow("Стан:", self.mqtt_status)
@@ -116,6 +136,13 @@ class DeviceSettingsPanel(QWidget):
         self.mqtt_password.setEchoMode(QLineEdit.EchoMode.Password)
         self.mqtt_password.setPlaceholderText("Порожній — зберегти пароль, якщо користувач той самий")
         mqtt_form.addRow("Пароль:", self.mqtt_password)
+        self.mqtt_reveal = QCheckBox("Показати пароль")
+        self.mqtt_reveal.toggled.connect(
+            lambda visible: self.mqtt_password.setEchoMode(
+                QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password
+            )
+        )
+        mqtt_form.addRow("", self.mqtt_reveal)
         self.mqtt_enabled = QCheckBox("Увімкнути MQTT на ESP32")
         self.mqtt_discovery = QCheckBox("Публікувати Home Assistant MQTT Discovery")
         mqtt_form.addRow("", self.mqtt_enabled)
@@ -128,12 +155,13 @@ class DeviceSettingsPanel(QWidget):
         self.mqtt_save.clicked.connect(self.save_mqtt)
         mqtt_actions.addWidget(self.mqtt_save)
         self.mqtt_reset = QPushButton("Очистити MQTT у ESP32")
+        self.mqtt_reset.setProperty("role", "danger")
         self.mqtt_reset.clicked.connect(self.reset_mqtt)
         mqtt_actions.addWidget(self.mqtt_reset)
         mqtt_form.addRow("", mqtt_actions)
         note = QLabel("MQTT працює напряму з ESP32 після налаштування. "
                       "TCP/1883 без TLS — лише довірена локальна мережа. "
-                      "Вимкнення Discovery не видаляє вже опубліковані retained entities.")
+                      "Вимкнення Discovery очищує retained-записи після зв’язку з MQTT.")
         note.setWordWrap(True)
         mqtt_form.addRow("", note)
         self.mqtt_host.textEdited.connect(self._mark_mqtt_dirty)
@@ -143,11 +171,13 @@ class DeviceSettingsPanel(QWidget):
         self.mqtt_enabled.toggled.connect(self._mark_mqtt_dirty)
         self.mqtt_discovery.toggled.connect(self._mark_mqtt_dirty)
         self.mqtt_temperature.toggled.connect(self._mark_mqtt_dirty)
-        root.addWidget(mqtt_box)
+        self.tabs.addTab(mqtt_box, "MQTT / HA")
 
         # Per-zone ARGB hardware settings, fetched from the actual controller.
-        rgb_box = QGroupBox("ARGB · параметри стрічок у ESP32")
+        rgb_box = QWidget()
         rgb_form = QFormLayout(rgb_box)
+        rgb_form.setContentsMargins(17, 20, 17, 16)
+        rgb_form.setSpacing(12)
         self.argb_status = QLabel("Немає даних")
         rgb_form.addRow("Ліміт струму:", self.argb_status)
         self.rgb_zone = QComboBox()
@@ -180,10 +210,12 @@ class DeviceSettingsPanel(QWidget):
                           "Бюджет струму — програмна оцінка, не заміна запобіжника.")
         rgb_note.setWordWrap(True)
         rgb_form.addRow("", rgb_note)
-        root.addWidget(rgb_box)
+        self.tabs.addTab(rgb_box, "ARGB")
 
-        fan_box = QGroupBox("Вентилятори · апаратні пороги та TACH")
+        fan_box = QWidget()
         fan_form = QFormLayout(fan_box)
+        fan_form.setContentsMargins(17, 20, 17, 16)
+        fan_form.setSpacing(12)
         self.fan_zone = QComboBox()
         for ch in range(1, 9):
             self.fan_zone.addItem(f"Fan {ch}", ch)
@@ -212,7 +244,7 @@ class DeviceSettingsPanel(QWidget):
         fans_page.clicked.connect(lambda: self.controller.dashboard.show_page("fans"))
         fan_actions.addWidget(fans_page)
         fan_form.addRow("", fan_actions)
-        root.addWidget(fan_box)
+        self.tabs.addTab(fan_box, "TACH / пороги")
 
         links = QHBoxLayout()
         sensor_link = QPushButton("DS18B20 / джерела температур…")
@@ -233,7 +265,32 @@ class DeviceSettingsPanel(QWidget):
             self.refresh_button, self.wifi_save, self.wifi_disable,
             self.mqtt_save, self.mqtt_reset, self.rgb_save, self.fan_save,
         )
+        self._editors = {
+            "wifi": (self.wifi_ssid, self.wifi_password, self.wifi_reveal, self.wifi_open),
+            "mqtt": (self.mqtt_host, self.mqtt_port, self.mqtt_user,
+                     self.mqtt_password, self.mqtt_reveal, self.mqtt_enabled,
+                     self.mqtt_discovery, self.mqtt_temperature),
+            "argb": (self.rgb_count, self.rgb_reverse, self.rgb_brightness, self.rgb_budget),
+            "fan": (self.fan_ppr, self.fan_critical, self.fan_stall),
+        }
+        previous_tab = str(controller.settings.value("esp32SettingsTab", "wifi"))
+        self.select_tab(previous_tab)
+        self.tabs.currentChanged.connect(
+            lambda index: controller.settings.setValue(
+                "esp32SettingsTab", self._tab_keys[index]
+            )
+        )
         self.set_connected(False)
+
+    def select_tab(self, key: str) -> bool:
+        if key not in self._tab_keys:
+            return False
+        self.tabs.setCurrentIndex(self._tab_keys.index(key))
+        return True
+
+    def _refresh_dirty_tabs(self) -> None:
+        self.tabs.setTabText(0, "Wi-Fi •" if self._wifi_dirty else "Wi-Fi")
+        self.tabs.setTabText(1, "MQTT / HA •" if self._mqtt_dirty else "MQTT / HA")
 
     def _mark_wifi_dirty(self, *_args) -> None:
         if not self._loading:
