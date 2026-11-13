@@ -108,6 +108,20 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertTrue(any("Intel Core" in x for x in names))
         self.assertTrue(any("AMD Radeon" in x for x in names))
 
+    def test_nwinfo_timeout_does_not_discard_valid_gpu_telemetry(self):
+        from concurrent.futures import Future
+        from monitor import TemperatureSensor
+        self.window.sensor_sampler.problems["CPU"] = "тайм-аут 7 с"
+        result = Future()
+        result.set_result([
+            TemperatureSensor("nwinfo/gpu/amd/temperature", "GPU / AMD / Temperature", 65.4)
+        ])
+        self.window.temperature_future = result
+        self.window.apply_temperature_result()
+        self.assertEqual(self.window.sensor_table.rowCount(), 1)
+        self.assertIn("частково", self.window.sensor_status.text())
+        self.assertIn("CPU", self.window.sensor_status.toolTip())
+
     def test_telemetry_updates_overview_and_pc_gates(self):
         self.window.handle_line(
             "CH 3 FAN=55% RPM=1200 TEMP=430 MODE=auto SENSOR=ok TYPE=3 FAULT=0"

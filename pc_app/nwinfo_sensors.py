@@ -13,6 +13,8 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from urllib.parse import quote
 from typing import Any
 
@@ -134,29 +136,43 @@ def locate_nwinfo() -> Path:
     )
 
 
-def fetch_temperatures(timeout: float = 4.0) -> list[TemperatureSensor]:
+def fetch_temperatures(
+    timeout: float = 4.0,
+    providers: tuple[str, ...] = ("CPU", "GPU", "SMART"),
+) -> list[TemperatureSensor]:
     """Run local built-in hardware providers in a separate process.
 
     Does not use the NWinfo LHM/HWINFO/GPU-Z providers. Running subprocess in
     the existing executor means a driver/SDK delay never blocks the Qt GUI.
     """
+    if not providers or any(provider not in _PROVIDERS for provider in providers):
+        raise ValueError("NWinfo: невідоме джерело датчиків")
     executable = locate_nwinfo()
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    commands = [
+        str(executable), "--format=JSON", "--cp=UTF8",
+        "--temp-unit=C", "--hide-sensitive",
+    ]
+    # AMD/NVIDIA/Intel GPU sensors use vendor drivers and do not need
+    # NWinfo's low-level MSR driver. Avoid its slow boot/security path.
+    if providers == ("GPU",):
+        commands.append("--driver=NONE")
+    commands.append("--sensors=" + ",".join(providers))
     try:
         completed = subprocess.run(
-            [
-                str(executable), "--format=JSON", "--cp=UTF8",
-                "--temp-unit=C", "--hide-sensitive",
-                "--sensors=CPU,GPU,SMART",
-            ],
+            commands,
             cwd=str(executable.parent), capture_output=True,
             timeout=timeout, check=True, creationflags=flags,
         )
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("NWinfo перевищив час очікування. Перевір доступ до датчиків.") from exc
+        raise RuntimeError(
+            f"NWinfo [{','.join(providers)}] перевищив час очікування ({timeout:g} с)"
+        ) from exc
     except subprocess.CalledProcessError as exc:
         details = (exc.stderr or b"").decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"NWinfo завершився з кодом {exc.returncode}: {details[:180]}") from exc
+        raise RuntimeError(
+            f"NWinfo [{','.join(providers)}] завершився з кодом {exc.returncode}: {details[:180]}"
+        ) from exc
     try:
         data = json.loads(completed.stdout.decode("utf-8-sig"))
     except (UnicodeError, json.JSONDecodeError) as exc:
@@ -164,3 +180,91 @@ def fetch_temperatures(timeout: float = 4.0) -> list[TemperatureSensor]:
     if not _find_sensor_section(data):
         raise RuntimeError("NWinfo не надав групу Sensors (драйвер/права/сумісність)")
     return parse_nwinfo_temperatures(data)
+
+
+class NwinfoSensorSampler:
+    """Asynchronous, independent CPU/GPU/SMART probes.
+
+    One hung SMART/CPU call never blocks GPU updates or the Qt/event loop.
+    Only recently confirmed temperatures are exposed; stale readings expire
+    *before* the ESP's 10-second temperature watchdog.
+    """
+
+    # A CPU ring-0 driver may take well over four seconds on first use.
+    # All timeouts are per provider; a hung CPU never blocks a fast GPU.
+    _timeout = {"GPU": 8.0, "CPU": 15.0, "SMART": 5.0}
+    _frequency = {"GPU": 2.0, "CPU": 2.0, "SMART": 3.0}
+    _max_age = 7.0
+    _retry_delay = 8.0
+
+    def __init__(self, executor=None):
+        self._owns_executor = executor is None
+        self._executor = executor if executor is not None else ThreadPoolExecutor(
+            max_workers=3, thread_name_prefix="NWinfoProvider"
+        )
+        self._inflight: dict[str, Future] = {}
+        self._next_scan: dict[str, float] = {}
+        self._latest: dict[str, tuple[float, list[TemperatureSensor]]] = {}
+        self._initialized = False
+        self._ever_valid = False
+        self._closed = False
+        self.problems: dict[str, str] = {}
+
+    def poll(self, now: float | None = None) -> list[TemperatureSensor] | None:
+        """Return fresh values, [] when unavailable, or None while first probing.
+
+        Call every ~2 seconds from the GUI/agent's existing worker. This does
+        *not* wait for a Windows sensor subprocess to exit.
+        """
+        if self._closed:
+            return []
+        now = time.monotonic() if now is None else now
+        if not self._initialized:
+            self._next_scan = {"GPU": now, "CPU": now, "SMART": now + 5.0}
+            self._initialized = True
+
+        for provider, future in tuple(self._inflight.items()):
+            if not future.done():
+                continue
+            del self._inflight[provider]
+            try:
+                readings = future.result()
+                if readings:
+                    self._latest[provider] = (now, readings)
+                    self._ever_valid = True
+                    self.problems.pop(provider, None)
+                    self._next_scan[provider] = now + self._frequency[provider]
+                else:
+                    self.problems[provider] = "показань немає"
+                    self._next_scan[provider] = now + self._retry_delay
+            except Exception as exc:
+                self.problems[provider] = str(exc)
+                self._next_scan[provider] = now + self._retry_delay
+
+        for provider in ("GPU", "CPU", "SMART"):
+            if provider not in self._inflight and now >= self._next_scan[provider]:
+                self._inflight[provider] = self._executor.submit(
+                    fetch_temperatures,
+                    self._timeout[provider],
+                    (provider,),
+                )
+
+        fresh = [
+            sensor
+            for stamp, values in self._latest.values()
+            if 0 <= now - stamp < self._max_age
+            for sensor in values
+        ]
+        if fresh:
+            return sorted(fresh, key=lambda s: s.name.casefold())
+        # Only initial discovery is pending; do not mistake it for failure.
+        if not self._ever_valid and self._inflight:
+            return None
+        # After a former valid sample expires, return [] so neither GUI nor
+        # background agent can continue using or forwarding stale temperatures.
+        return []
+
+    def close(self) -> None:
+        self._closed = True
+        if self._owns_executor:
+            self._executor.shutdown(wait=False, cancel_futures=True)

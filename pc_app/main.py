@@ -31,7 +31,7 @@ from monitor import (
     GROUP_AVG, GROUP_MAX, GROUP_WEIGHTED, MAX_ALL,
     TemperatureSensor, resolve_temperature,
 )
-from nwinfo_sensors import fetch_temperatures
+from nwinfo_sensors import NwinfoSensorSampler
 from sacn_bridge import E131Listener, SACN_PORT, SERIAL_BAUD, encode_rgb_frame
 from protocol import validate_curve, DEFAULT_CURVE, make_curve_command, make_temperature_command, parse_curve, parse_status
 from serial_owner import SerialProxyClient
@@ -81,7 +81,8 @@ class FanArgbWindow(QMainWindow):
             except (ValueError, TypeError):
                 self.sensor_groups[ch] = []
         self.led_counts: list[int] | None = None  # do not stream until ESP confirms sizes
-        self.temperature_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="NWinfo")
+        self.sensor_sampler = NwinfoSensorSampler()
+        self.temperature_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="NWinfoResults")
         self._last_sensor_issue: str | None = None
         self.temperature_future: Future | None = None
         self.sacn = E131Listener()
@@ -675,7 +676,7 @@ class FanArgbWindow(QMainWindow):
     def refresh_temperatures(self) -> None:
         # A separate worker runs bundled NWinfo; the Qt GUI stays responsive.
         if self.temperature_future is None:
-            self.temperature_future = self.temperature_executor.submit(fetch_temperatures, 4.0)
+            self.temperature_future = self.temperature_executor.submit(self.sensor_sampler.poll)
 
     def apply_temperature_result(self) -> None:
         future = self.temperature_future
@@ -685,15 +686,33 @@ class FanArgbWindow(QMainWindow):
         ready = False
         issue: str | None = None
         try:
-            self.temperatures = future.result()
+            sample = future.result()
+            if sample is None:
+                self.sensor_status.setText("NWinfo · опитування CPU / GPU…")
+                self.sensor_status.setStyleSheet("color: #edba6d")
+                return
+            self.temperatures = sample
             ready = True
+            provider_issues = self.sensor_sampler.problems
+            details = "; ".join(f"{p}: {v}" for p, v in sorted(provider_issues.items()))
             if self.temperatures:
-                self.sensor_status.setText(f"NWinfo · {len(self.temperatures)} температур")
-                self.sensor_status.setStyleSheet("color: #70cda6")
-                self.sensor_status.setToolTip("Локальне читання CPU / GPU / SSD, без вебсервера")
+                self.sensor_status.setText(
+                    f"NWinfo · {len(self.temperatures)} температур" +
+                    (" · частково" if provider_issues else "")
+                )
+                self.sensor_status.setStyleSheet(
+                    "color: #edba6d" if provider_issues else "color: #70cda6"
+                )
+                self.sensor_status.setToolTip(
+                    details or "Локальне читання CPU / GPU / SSD без вебсервера"
+                )
+                if provider_issues:
+                    issue = "Недоступні окремі датчики: " + details
             else:
-                issue = ("NWinfo не отримав температур. Для CPU може знадобитися "
-                         "запуск із правами адміністратора та дозволений драйвер.")
+                issue = (
+                    "NWinfo не надав справних температур. " +
+                    (details or "Перевір драйвери CPU/GPU та права доступу.")
+                )
                 self.sensor_status.setText("NWinfo · немає температур")
                 self.sensor_status.setStyleSheet("color: #edba6d")
                 self.sensor_status.setToolTip(issue)
@@ -1303,6 +1322,7 @@ class FanArgbWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         self.sacn.stop()
         self.temperature_executor.shutdown(wait=False, cancel_futures=True)
+        self.sensor_sampler.close()
         self.disconnect()
         self.settings.sync()
         super().closeEvent(event)
