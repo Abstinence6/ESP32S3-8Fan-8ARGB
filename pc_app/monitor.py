@@ -17,6 +17,7 @@ class TemperatureSensor:
 
 DEFAULT_LHM_URL = "http://127.0.0.1:8085/data.json"
 MAX_ALL = "__MAX_ALL__"
+MAX_CPU_GPU = "__MAX_CPU_GPU__"
 GROUP_AVG = "__GROUP_AVG__"
 GROUP_MAX = "__GROUP_MAX__"
 GROUP_WEIGHTED = "__GROUP_WEIGHTED__"
@@ -70,6 +71,14 @@ def resolve_temperature(
     """
     if assignment == MAX_ALL:
         return max((sensor.celsius for sensor in sensors), default=None)
+    if assignment == MAX_CPU_GPU:
+        return max(
+            (sensor.celsius for sensor in sensors
+             if sensor.sensor_id.casefold().startswith(("nwinfo/cpu/", "nwinfo/gpu/"))
+             or any(tag in sensor.name.casefold() for tag in
+                    ("cpu", "gpu", "intel core", "amd radeon", "nvidia"))),
+            default=None,
+        )
     if assignment in (GROUP_AVG, GROUP_MAX, GROUP_WEIGHTED):
         chosen = set(group_ids)
         if not chosen:
