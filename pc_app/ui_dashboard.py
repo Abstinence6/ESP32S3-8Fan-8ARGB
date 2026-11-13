@@ -13,6 +13,7 @@ from hardware_sensor_ui import HardwareSensorPanel
 from argb_studio_ui import ArgbStudioPanel
 from maintenance_ui import MaintenancePanel
 from diagnostics_ui import DiagnosticPanel
+from sensor_manager_ui import SensorManagerPanel
 from PySide6.QtWidgets import (
     QButtonGroup, QComboBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
     QLabel, QLayout, QPushButton, QRadioButton, QScrollArea, QSplitter,
@@ -490,6 +491,8 @@ class DashboardShell(QWidget):
         layout.addWidget(endpoint)
         self.hardware_sensor = HardwareSensorPanel(self.controller)
         layout.addWidget(self.hardware_sensor)
+        self.sensor_manager = SensorManagerPanel(self.controller)
+        layout.addWidget(self.sensor_manager)
         self._add_page("sensors", page)
 
     def _create_service(
