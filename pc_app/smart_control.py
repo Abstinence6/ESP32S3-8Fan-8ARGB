@@ -70,13 +70,15 @@ class AutoProfileSelector:
         self.candidate_since: float = 0.0
         self.last_applied: float = -1e12
 
-    def recommend(self, gpu_load: float | None, hour: int) -> str:
+    def recommend(self, gpu_load: float | None, hour: int) -> str | None:
         if not 0 <= hour <= 23:
             raise ValueError("Invalid local hour")
-        if gpu_load is not None and (not math.isfinite(gpu_load) or not 0 <= gpu_load <= 100):
-            gpu_load = None
-        gaming = (gpu_load is not None and gpu_load >= self.high_load or
-                  self.current == "Performance" and gpu_load is not None and gpu_load >= self.low_load)
+        # Missing or stale GPU metrics are not a signal to enter Silent mode.
+        # Keep existing curves unchanged until a real utilization value returns.
+        if gpu_load is None or not math.isfinite(gpu_load) or not 0 <= gpu_load <= 100:
+            return None
+        gaming = (gpu_load >= self.high_load or
+                  self.current == "Performance" and gpu_load >= self.low_load)
         if gaming:
             return "Performance"
         if hour >= 23 or hour < 7:
@@ -85,6 +87,9 @@ class AutoProfileSelector:
 
     def consider(self, gpu_load: float | None, hour: int, now: float) -> str | None:
         desired = self.recommend(gpu_load, hour)
+        if desired is None:
+            self.candidate = None
+            return None
         if desired == self.current:
             self.candidate = None
             return None
