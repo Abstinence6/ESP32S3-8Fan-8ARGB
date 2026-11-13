@@ -64,6 +64,12 @@ QFrame#zonePixels[selected="true"] {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
         stop:0 #279aab,stop:0.45 #62c5c4,stop:1 #1e748d);
 }
+QFrame#settingsActionFooter {
+    background: #182b37; border: 1px solid #335162; border-radius: 10px;
+}
+QFrame#settingsActionFooter QLabel {
+    color: #a8bac7; font-weight: 650;
+}
 QFrame#systemBanner { background: #102a30; border-color: #2e6a69; }
 QFrame#systemBanner[state="warning"] { background: #292518; border-color: #8b7441; }
 QFrame#systemBanner[state="critical"] { background: #30202a; border-color: #a75b69; }
@@ -605,6 +611,7 @@ class DashboardShell(QWidget):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._reflow_fan_cards()
+        self._reflow_device_settings()
 
     def _update_cooling_health(self) -> None:
         if not self.is_connected:
@@ -1110,13 +1117,71 @@ class DashboardShell(QWidget):
     def _create_device_settings(self) -> None:
         page, layout = self._content(
             "Налаштування ESP32-S3",
-            "Усі змінювані параметри зчитуються й записуються через USB до NVS "
-            "контролера. Паролі не зберігаються на ПК.",
+            "Конфігурація контролера через USB · збереження лише після підтвердження.",
         )
         self.device_settings = DeviceSettingsPanel(self.controller)
-        self.device_settings.setMaximumWidth(925)
-        layout.addWidget(self.device_settings, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        self.device_settings.setMinimumWidth(0)
+        self.device_settings.setMaximumWidth(16777215)
+        self.device_settings.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
+        )
+
+        self._esp_help_card = QFrame()
+        self._esp_help_card.setObjectName("quietCard")
+        self._esp_help_card.setMinimumWidth(250)
+        self._esp_help_card.setMaximumWidth(310)
+        self._esp_help_card.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+        )
+        guide = QVBoxLayout(self._esp_help_card)
+        guide.setContentsMargins(17, 17, 17, 17)
+        guide.setSpacing(11)
+        guide.addWidget(_label("ЯК ЦЕ ПРАЦЮЄ", "sectionLabel"))
+        guide.addWidget(_label("1. Зчитай стан", "labelTitle"))
+        guide.addWidget(_label(
+            "Параметри ESP32 читаються через USB. Поля блокуються, "
+            "доки відповідь не отримана.", "minor", True,
+        ))
+        guide.addWidget(_label("2. Зміни потрібне", "labelTitle"))
+        guide.addWidget(_label(
+            "Перемикай вкладки без застосування інших параметрів. "
+            "Зміни Wi-Fi та MQTT позначаються крапкою.", "minor", True,
+        ))
+        guide.addWidget(_label("3. Підтвердь запис", "labelTitle"))
+        guide.addWidget(_label(
+            "Кнопка збереження внизу застосовує лише поточну категорію. "
+            "Результат перевіряється повторним читанням.", "minor", True,
+        ))
+        guide.addSpacing(5)
+        guide.addWidget(_label("ВАЖЛИВО", "sectionLabel"))
+        guide.addWidget(_label(
+            "Паролі не записуються в налаштування Windows. "
+            "GPIO, MOSFET та апаратний fail-ON не змінюються звідси.",
+            "minor", True,
+        ))
+        diagnostics = QPushButton("Перевірити діагностику")
+        diagnostics.setProperty("role", "ghost")
+        diagnostics.clicked.connect(lambda: self.show_page("service"))
+        guide.addWidget(diagnostics)
+
+        self.esp_settings_columns = QHBoxLayout()
+        self.esp_settings_columns.setContentsMargins(0, 0, 0, 0)
+        self.esp_settings_columns.setSpacing(15)
+        self.esp_settings_columns.addWidget(
+            self.device_settings, 4, Qt.AlignmentFlag.AlignTop
+        )
+        self.esp_settings_columns.addWidget(
+            self._esp_help_card, 1, Qt.AlignmentFlag.AlignTop
+        )
+        layout.addLayout(self.esp_settings_columns)
+        layout.addStretch(1)
         self._add_page("esp32", page)
+        self._reflow_device_settings()
+
+    def _reflow_device_settings(self) -> None:
+        if hasattr(self, "_esp_help_card"):
+            # The help rail is optional; never squeeze settings on 1080px screens.
+            self._esp_help_card.setVisible(self.width() >= 1260)
 
     def _create_service(
         self, calibration_box, hardware_rgb, config_files,
