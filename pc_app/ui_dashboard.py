@@ -131,7 +131,8 @@ QScrollBar:vertical { background: #111c29; width: 10px; border: 0; }
 QScrollBar::handle:vertical { background: #486275; border-radius: 5px; min-height: 28px; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 QSplitter::handle { background: #273846; width: 5px; }
-QTabWidget::pane { border: 0; background: transparent; top: -1px; }
+QTabWidget::pane { border: 0; background: transparent; top: 0; }
+QTabBar::base { border: 0; background: transparent; }
 QTabBar::tab {
     padding: 10px 15px; margin-right: 5px; border-radius: 7px;
     background: #192634; color: #aebdca;
@@ -550,7 +551,7 @@ class DashboardShell(QWidget):
         if not hasattr(self, "_fan_grid"):
             return
         available = max(0, self.width() - 252)
-        columns = 4 if available >= 1000 else 3 if available >= 770 else 2
+        columns = 4 if available >= 1000 else 3 if available >= 870 else 2
         if columns != self._fan_grid_columns:
             self._fan_grid_columns = columns
             for frame in self._fan_frames.values():
