@@ -6,6 +6,7 @@ Interactive logon and Highest run level; no SYSTEM account or password.
 from __future__ import annotations
 import base64
 import ctypes
+import ntpath
 import os
 from pathlib import Path
 import subprocess
@@ -22,7 +23,7 @@ def build_install_script(exe_path: str, mode: str) -> str:
     if mode not in {"gui", "agent"}:
         raise ValueError("Only gui and agent modes are valid")
     path = Path(exe_path)
-    if not path.is_absolute() or path.suffix.lower() != ".exe":
+    if not (path.is_absolute() or ntpath.isabs(exe_path)) or path.suffix.lower() != ".exe":
         raise ValueError("Autostart requires an absolute path to a packaged EXE")
     executable = ps_quote(str(path))
     name = ps_quote(TASK_NAME)
