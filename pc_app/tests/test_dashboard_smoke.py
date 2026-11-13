@@ -61,7 +61,7 @@ class DashboardSmokeTests(unittest.TestCase):
         self.app.processEvents()
         output = Path("dist/ui-preview")
         output.mkdir(parents=True, exist_ok=True)
-        for key in ("overview", "fans", "sensors", "argb", "pc", "service", "logs"):
+        for key in ("overview", "fans", "sensors", "argb", "pc", "esp32", "service", "logs"):
             self.window.dashboard.show_page(key)
             self.app.processEvents()
             target = output / f"{key}.png"
@@ -70,7 +70,7 @@ class DashboardSmokeTests(unittest.TestCase):
 
     def test_navigation_and_existing_controls(self):
         shell = self.window.dashboard
-        self.assertEqual(shell.stack.count(), 7)
+        self.assertEqual(shell.stack.count(), 8)
         self.assertEqual(len(shell.fan_cards), 8)
         self.assertEqual(shell.page_index["overview"], shell.stack.currentIndex())
         shell.open_fan(6)
