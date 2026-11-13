@@ -65,7 +65,21 @@ For **each** fan, the `Датчик для кривої` selector offers:
 
 Select a fan, press **Вибрати датчики групи**, check the desired sensor IDs, and choose AVG/MAX in its source selector. The group is saved **on the PC** using QSettings (stable NWinfo-based device/attribute IDs), while the five-point fan curve itself remains in ESP32 NVS. If a group is empty **or any selected sensor disappears**, the GUI stops sending temperatures for that fan. The ESP then switches that automatic fan to 100% after the normal 10-second watchdog timeout. No fictional temperature, zero substitute, or silently partial average is used.
 
-NWinfo is executed in a background worker with a timeout so driver/API delays never freeze the Qt GUI or the OpenRGB lighting bridge. The old LHM sensor IDs are **not equivalent** to NWinfo IDs: if you previously selected individual sensors, choose their NWinfo counterparts again. Until then the unavailable assignment prevents updates and the firmware retains its 10-second 100% fail-safe.
+NWinfo runs as **independent asynchronous GPU, CPU and SMART probes**. A slow
+SMART disk or CPU driver can time out without hiding fresh GPU readings. The
+GPU-only provider runs with `--driver=NONE` (vendor driver APIs do not need
+NWinfo's ring-0 driver), while CPU is allowed a longer initialization window.
+Each source has a retry delay. A reading older than **7 seconds** is discarded,
+so the firmware's 10-second missing-temperature fail-safe still operates.
+The GUI displays `частково` and per-provider errors if some readings fail.
+
+If the application reports a CPU timeout but GPU temperatures are present,
+try its **Сервіс → Оновити датчики** action. On Windows you can also test
+`nwinfo.exe --format=JSON --driver=NONE --sensors=GPU` versus
+`nwinfo.exe --format=JSON --sensors=CPU` using the official bundled tool.
+Do not disable Windows driver security protections to gain CPU sensor access.
+
+NWinfo runs in background workers so a nonresponsive provider does not freeze the UI or OpenRGB lighting bridge. The old LHM sensor IDs are **not equivalent** to NWinfo IDs: if you previously selected individual sensors, choose their NWinfo counterparts again. Until then the unavailable assignment prevents updates and the firmware retains its 10-second 100% fail-safe.
 
 ## OpenRGB and alternative E1.31 transmitters
 
