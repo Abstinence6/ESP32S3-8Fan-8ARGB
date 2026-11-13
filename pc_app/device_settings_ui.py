@@ -295,17 +295,25 @@ class DeviceSettingsPanel(QWidget):
     def _mark_wifi_dirty(self, *_args) -> None:
         if not self._loading:
             self._wifi_dirty = True
+            self._refresh_dirty_tabs()
 
     def _toggle_open_wifi(self, checked: bool) -> None:
-        self.wifi_password.setEnabled(not checked)
+        self._update_buttons()
         self._mark_wifi_dirty()
 
     def _mark_mqtt_dirty(self, *_args) -> None:
         if not self._loading:
             self._mqtt_dirty = True
+            self._refresh_dirty_tabs()
 
     def _state_label(self, message: str) -> None:
         self.result.setText(message)
+        role = "negative" if message.startswith("⚠") else (
+            "positive" if message.startswith("✓") else "minor"
+        )
+        self.result.setProperty("role", role)
+        self.result.style().unpolish(self.result)
+        self.result.style().polish(self.result)
 
     def set_connected(self, connected: bool) -> None:
         self.connected = bool(connected)
@@ -327,6 +335,20 @@ class DeviceSettingsPanel(QWidget):
             self._rgb_known = self._fan_known = False
             self.wifi_password.clear()
             self.mqtt_password.clear()
+            self._loading = True
+            self.wifi_ssid.clear()
+            self.wifi_open.setChecked(False)
+            self.mqtt_host.clear()
+            self.mqtt_user.clear()
+            self.mqtt_port.setValue(1883)
+            self.mqtt_enabled.setChecked(False)
+            self.mqtt_discovery.setChecked(False)
+            self.mqtt_temperature.setChecked(False)
+            self.wifi_reveal.setChecked(False)
+            self.mqtt_reveal.setChecked(False)
+            self._loading = False
+            self._refresh_dirty_tabs()
+            self._state_label("ESP32 не підключено · зміни недоступні")
             self.wifi_status.setText("ESP32 не підключено")
             self.mqtt_status.setText("ESP32 не підключено")
         self._update_buttons()
@@ -347,6 +369,15 @@ class DeviceSettingsPanel(QWidget):
         ready = self.connected and self.version >= 8
         working = (self._active is not None or bool(self._operations) or
                    self._verify is not None)
+        self.tabs.setEnabled(not working)
+        known = {"wifi": self._wifi_known, "mqtt": self._mqtt_known,
+                 "argb": self._rgb_known, "fan": self._fan_known}
+        for group, editors in self._editors.items():
+            for editor in editors:
+                editor.setEnabled(ready and known[group] and not working)
+        self.wifi_password.setEnabled(
+            ready and self._wifi_known and not working and not self.wifi_open.isChecked()
+        )
         self.refresh_button.setEnabled(ready and not working)
         self.rgb_zone.setEnabled(ready and not working)
         self.fan_zone.setEnabled(ready and not working)
@@ -398,6 +429,7 @@ class DeviceSettingsPanel(QWidget):
         if not operations:
             self._wifi_dirty = False
             self._mqtt_dirty = False
+            self._refresh_dirty_tabs()
             self._state_label("Зміни не потрібні · зчитую поточний стан")
             self.refresh_all()
             return
@@ -474,6 +506,7 @@ class DeviceSettingsPanel(QWidget):
             QMessageBox.warning(self, "Wi-Fi", str(exc))
             return
         self.wifi_password.clear()
+        self.wifi_reveal.setChecked(False)
         self._start([(command, "OK WIFI_SET")], "wifi", {"ssid": ssid, "enabled": True})
 
     def disable_wifi(self) -> None:
@@ -510,6 +543,7 @@ class DeviceSettingsPanel(QWidget):
             "allow_temperatures": self.mqtt_temperature.isChecked(),
         }
         self.mqtt_password.clear()
+        self.mqtt_reveal.setChecked(False)
         ack = "OK MQTT_TX" if self.serial_version >= 7 else "OK MQTT_SAVED"
         self._start([(cmd, ack) for cmd in commands], "mqtt", expected)
 
@@ -639,6 +673,7 @@ class DeviceSettingsPanel(QWidget):
         if self._verify == "pending_wifi":
             good = all(new.get(k) == v for k, v in self._expected.items())
             self._wifi_dirty = False
+            self._refresh_dirty_tabs()
             self._complete(good)
 
     def _on_mqtt_config(self, data: dict[str, str]) -> None:
@@ -676,6 +711,7 @@ class DeviceSettingsPanel(QWidget):
         if self._verify == "pending_mqtt":
             good = all(new.get(k) == v for k, v in self._expected.items())
             self._mqtt_dirty = False
+            self._refresh_dirty_tabs()
             self._complete(good)
 
     def _on_strip_config(self, data: dict[str, str]) -> None:
