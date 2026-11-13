@@ -178,6 +178,14 @@ void SerialConsole::handleLine(char* line) {
         serial_.println(F("OK PC_PULSE_STARTED"));
         return;
     }
+    if (strcmp(command, "VERSION?") == 0) {
+        if (!noMore()) return error();
+        serial_.print(F("FW VERSION=6 SERIAL=4 DC_READY="));
+        serial_.print(board::kDcSupplyPwmValidated ? 1 : 0);
+        serial_.print(F(" DS18B20="));
+        serial_.println(hw_ && hw_->enabled() ? 1 : 0);
+        return;
+    }
     if (strcmp(command, "HTEMP?") == 0) {
         if (!noMore()) return error();
         if (!hw_) { serial_.println(F("HTEMP ENABLED=0 VALID=0")); return; }
@@ -565,7 +573,7 @@ void SerialConsole::handleLine(char* line) {
 void SerialConsole::printHelp() {
     serial_.println(F("Channels: 1..8, temperatures: deci-Celsius, e.g. 455 = 45.5 C"));
     serial_.println(F("PING | STATUS | HEALTH [ch] | SELFTEST [CANCEL] | HELP | LEDS | PC STATUS|ON|OFF|FORCE"));
-    serial_.println(F("HTEMP? | HTMODE? <ch> | HTMODE <ch> PC|LOCAL|BACKUP (optional DS18B20)"));
+    serial_.println(F("VERSION? | HTEMP? | HTMODE? <ch> | HTMODE <ch> PC|LOCAL|BACKUP"));
     serial_.println(F("MQTT? | MQTT HOST <broker> <port> | MQTT AUTH <user> <pass> | MQTT ON|OFF"));
     serial_.println(F("TEMP <ch> <0..1250> | AUTO <ch> | ALLAUTO"));
     serial_.println(F("FAN <ch> <0..100> | ALLFAN <0..100> (manual override)"));
