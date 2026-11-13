@@ -37,6 +37,7 @@ from sacn_bridge import E131Listener, SACN_PORT, SERIAL_BAUD, encode_rgb_frame
 from protocol import validate_curve, DEFAULT_CURVE, make_curve_command, make_temperature_command, parse_curve, parse_status
 from serial_owner import SerialProxyClient
 from serial_tx import SerialTransmitter
+from port_recovery import PortRecovery
 from profiles import PRESETS
 from config_presets import (RGB_SCENES, FAN_CURVES, commands as preset_commands,
                             create_configuration, from_json as parse_configuration,
@@ -58,6 +59,8 @@ class FanArgbWindow(QMainWindow):
         self.settings = QSettings("FanARGB", "FanARGBControl")
         self.port: Optional[serial.Serial | SerialProxyClient] = None
         self.tx: SerialTransmitter | None = None
+        self.recovery = PortRecovery()
+        self._reconnect_armed = False
         self.read_buffer = ""
         self.temperatures: list[TemperatureSensor] = []
         self.curves = {ch: list(DEFAULT_CURVE) for ch in range(1, 9)}
@@ -118,6 +121,9 @@ class FanArgbWindow(QMainWindow):
         self.tx_timer = QTimer(self)
         self.tx_timer.timeout.connect(self.flush_serial_tx)
         self.tx_timer.start(25)
+        self.reconnect_timer = QTimer(self)
+        self.reconnect_timer.timeout.connect(self._try_reconnect)
+        self.reconnect_timer.start(5000)
         self.temperature_timer = QTimer(self)
         self.temperature_timer.timeout.connect(self.refresh_temperatures)
         self.temperature_timer.start(2000)
@@ -535,18 +541,25 @@ class FanArgbWindow(QMainWindow):
 
     def toggle_serial(self) -> None:
         if self.port:
-            self.disconnect()
+            self.disconnect(manual=True)
             return
         port_name = self.port_box.currentData()
         if not port_name:
             QMessageBox.warning(self, "COM порт", "Підключи ESP32-S3 та вибери COM порт")
             return
+        self.connect_to_port(str(port_name))
+
+    def connect_to_port(self, port_name: str, quiet: bool = False) -> bool:
+        if self.port:
+            return True
         try:
             try:
                 self.port = SerialProxyClient(port_name)
                 using_agent = True
             except (OSError, ConnectionError):
-                self.port = serial.Serial(port_name, SERIAL_BAUD, timeout=0, write_timeout=0.3)
+                self.port = serial.Serial(
+                    port_name, SERIAL_BAUD, timeout=0, write_timeout=0.3
+                )
                 using_agent = False
             self.tx = SerialTransmitter(self.port)
             self.led_counts = None
@@ -554,12 +567,34 @@ class FanArgbWindow(QMainWindow):
             self.connect_button.setText("Від'єднати")
             self.dashboard.set_connected(True, port_name)
             self.statusBar().showMessage(f"ESP: {port_name} підключено")
-            self.log(f"Підключено до {port_name} ({'через фоновий агент' if using_agent else 'COM напряму'})")
-            # Opening a serial port can reset an ESP board; wait for the boot message.
+            self.log(
+                f"Підключено до {port_name} "
+                f"({'через агента' if using_agent else 'COM напряму'})"
+            )
+            if not quiet or self.recovery.identity is None:
+                # Identity is recorded only after an explicit user-selected port.
+                self.recovery.remember(list_ports.comports(), port_name)
+            self._reconnect_armed = True
             QTimer.singleShot(2200, self.read_device_state)
+            return True
         except (serial.SerialException, OSError) as exc:
             self.port = None
-            QMessageBox.critical(self, "Serial", str(exc))
+            self.tx = None
+            if quiet:
+                self.log(f"Перепідключення ESP не вдалося: {exc}")
+            else:
+                QMessageBox.warning(self, "Serial", str(exc))
+            return False
+
+    def _try_reconnect(self) -> None:
+        if self.port or not self._reconnect_armed:
+            return
+        ports = list(list_ports.comports())
+        target = self.recovery.find(ports)
+        if not target:
+            return
+        self.refresh_ports()
+        self.connect_to_port(target, quiet=True)
 
     def read_device_state(self) -> None:
         if not self.port:
@@ -588,7 +623,9 @@ class FanArgbWindow(QMainWindow):
             self.send("MQTT?")
             self.send("HTEMP?")
 
-    def disconnect(self) -> None:
+    def disconnect(self, manual: bool = False) -> None:
+        if manual:
+            self._reconnect_armed = False
         if self.port:
             try:
                 self.port.close()
@@ -1668,7 +1705,7 @@ class FanArgbWindow(QMainWindow):
         self.temperature_executor.shutdown(wait=False, cancel_futures=True)
         self.sensor_sampler.close()
         self.telemetry.close()
-        self.disconnect()
+        self.disconnect(manual=True)
         self.settings.sync()
         super().closeEvent(event)
 
