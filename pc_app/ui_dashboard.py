@@ -9,6 +9,7 @@ from collections.abc import Iterable
 import time
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from settings_widgets import DesktopSettingsPanel
 from hardware_sensor_ui import HardwareSensorPanel
 from argb_studio_ui import ArgbStudioPanel
@@ -19,94 +20,137 @@ from sensor_manager_ui import SensorManagerPanel
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
     QLabel, QLayout, QPushButton, QRadioButton, QScrollArea, QSplitter,
-    QStackedWidget, QVBoxLayout, QWidget,
+    QStackedWidget, QVBoxLayout, QWidget, QDialog, QLineEdit, QListWidget,
+    QListWidgetItem,
 )
 
 
 PAGES = (
-    ("overview", "◉  Огляд", "Огляд системи", "Стан охолодження та підсвітки з одного погляду"),
-    ("fans", "≋  Вентилятори", "Вентилятори", "Температурні криві, швидкість і джерела даних"),
-    ("sensors", "◉  Датчики", "Датчики обладнання", "Температура, частоти, споживання, оберти"),
-    ("argb", "✦  ARGB", "Підсвітка", "Сцени для восьми незалежних зон та OpenRGB"),
-    ("pc", "⏻  Живлення ПК", "Живлення ПК", "Керування кнопкою PWR_SW з перевіркою стану"),
-    ("esp32", "⚙  ESP32", "Конфігурація контролера", "Wi-Fi, MQTT, Home Assistant, ARGB та TACH"),
-    ("service", "⚙  Сервіс", "Додаткові налаштування", "Калібрування, конфігурація та діагностика"),
-    ("logs", "☷  Логи", "Журнал подій", "Повідомлення контролера та ручні команди"),
+    ("overview", "Огляд", "Огляд системи", "Поточний стан охолодження"),
+    ("fans", "Вентилятори", "Вентилятори", "Криві, швидкість, режими"),
+    ("sensors", "Датчики", "Датчики обладнання", "Температури та телеметрія"),
+    ("argb", "Підсвітка", "Підсвітка ARGB", "Сцени та OpenRGB"),
+    ("pc", "Живлення ПК", "Живлення ПК", "Керування PWR_SW"),
+    ("esp32", "Контролер ESP32", "Налаштування ESP32", "Wi-Fi, MQTT і TACH"),
+    ("service", "Сервіс", "Сервіс", "Діагностика й калібрування"),
+    ("logs", "Журнал", "Журнал подій", "Повідомлення й консоль"),
 )
 
+# Restrained slate/teal design system. All information remains real hardware data.
 STYLE = """
 QMainWindow, QWidget#dashboardRoot, QScrollArea, QScrollArea > QWidget > QWidget {
-    background: #10141d; color: #e8edf7;
+    background: #0d141d; color: #e8edf4;
 }
-QWidget { color: #e8edf7; font-size: 10pt; }
-QFrame#sidebar { background: #151b27; border-right: 1px solid #2b3545; }
-QFrame#topbar { background: #141b27; border-bottom: 1px solid #2b3545; }
+QWidget { color: #e8edf4; font-family: "Segoe UI"; font-size: 10pt; }
+QFrame#sidebar { background: #121d28; border-right: 1px solid #263646; }
+QFrame#topbar { background: #111a25; border-bottom: 1px solid #263646; }
 QFrame#summaryCard, QFrame#fanCard, QFrame#quietCard {
-    background: #1b2432; border: 1px solid #2b3749; border-radius: 12px;
+    background: #172332; border: 1px solid #2b3d4f; border-radius: 12px;
 }
-QFrame#fanCard:hover { border: 1px solid #4b7695; }
-QLabel[role="brand"] { font-size: 19pt; font-weight: 750; color: #f1f6ff; }
-QLabel[role="pageTitle"] { font-size: 22pt; font-weight: 700; color: #f1f6ff; }
-QLabel[role="bigNumber"] { font-size: 21pt; font-weight: 750; color: #f5f8ff; }
-QLabel[role="minor"] { font-size: 9pt; color: #9babbd; }
-QLabel[role="labelTitle"] { font-size: 10pt; font-weight: 650; color: #eaf1fd; }
-QLabel[role="positive"] { color: #70cda6; font-weight: 600; }
-QLabel[role="caution"] { color: #edba6d; font-weight: 600; }
-QLabel[role="negative"] { color: #f18b92; font-weight: 600; }
+QFrame#fanCard:hover { border-color: #5b8792; background: #192939; }
+QFrame#systemBanner {
+    background: #152c33; border: 1px solid #37616a; border-radius: 14px;
+}
+QFrame#systemBanner[state="warning"] {
+    background: #30291e; border-color: #80673c;
+}
+QFrame#systemBanner[state="critical"] {
+    background: #35222a; border-color: #995b69;
+}
+QFrame#systemBanner[state="idle"] {
+    background: #1a2532; border-color: #415263;
+}
+QLabel[role="brand"] { font-size: 19pt; font-weight: 700; color: #f4f9fb; }
+QLabel[role="pageTitle"] { font-size: 20pt; font-weight: 700; color: #f4f8fc; }
+QLabel[role="bannerTitle"] { font-size: 18pt; font-weight: 700; color: #eef8fa; }
+QLabel[role="bigNumber"] { font-size: 20pt; font-weight: 700; color: #f4f9fc; }
+QLabel[role="minor"] { font-size: 9pt; color: #a9bacb; }
+QLabel[role="sectionLabel"] { font-size: 9pt; font-weight: 650; color: #849aaf; }
+QLabel[role="labelTitle"] { font-size: 10pt; font-weight: 650; color: #edf4f9; }
+QLabel[role="positive"] { color: #79d7b6; font-weight: 650; }
+QLabel[role="caution"] { color: #f1c47a; font-weight: 650; }
+QLabel[role="negative"] { color: #ff9ba8; font-weight: 650; }
 QGroupBox {
-    background: #1b2432; border: 1px solid #2b3749; border-radius: 12px;
-    margin-top: 19px; padding-top: 12px; font-weight: 650;
+    background: #172332; border: 1px solid #2b3d4f; border-radius: 12px;
+    margin-top: 18px; padding-top: 13px; font-weight: 650;
 }
-QGroupBox::title { subcontrol-origin: margin; left: 14px; top: 1px; padding: 0 4px; color: #e8eff8; }
+QGroupBox::title {
+    subcontrol-origin: margin; left: 16px; top: 1px; padding: 0 5px;
+    color: #e4eef5;
+}
 QPushButton {
-    background: #29364a; color: #eef4fd; border: 1px solid #394d65;
-    border-radius: 8px; padding: 8px 13px; min-height: 23px;
+    background: #253648; color: #e9f1f6; border: 1px solid #3b5266;
+    border-radius: 8px; padding: 7px 12px; min-height: 23px;
 }
-QPushButton:hover { background: #34465e; border-color: #55718f; }
-QPushButton:pressed { background: #263b55; }
-QPushButton:disabled { background: #222935; color: #718093; border-color: #303b48; }
-QPushButton[role="primary"] { background: #236d99; border-color: #368dbb; color: white; font-weight: 650; }
-QPushButton[role="primary"]:hover { background: #2d83b5; }
-QPushButton[role="danger"] { background: #522b38; border-color: #8d4654; color: #ffd3d7; }
-QPushButton[role="danger"]:hover { background: #713544; }
+QPushButton:hover { background: #32495d; border-color: #6a91a3; }
+QPushButton:pressed { background: #20313e; }
+QPushButton:focus { border-color: #74ced1; }
+QPushButton:disabled {
+    background: #202b36; color: #8b9ba9; border-color: #313e4b;
+}
+QPushButton[role="primary"] {
+    background: #147a80; border-color: #299da1; color: #ffffff; font-weight: 650;
+}
+QPushButton[role="primary"]:hover { background: #228d94; }
+QPushButton[role="danger"] {
+    background: #512e39; border-color: #925560; color: #ffd8dd;
+}
+QPushButton[role="danger"]:hover { background: #70414d; }
 QPushButton[role="nav"] {
-    background: transparent; border: none; border-radius: 9px;
-    padding: 11px 15px; text-align: left; font-weight: 550; color: #aebdd1;
+    background: transparent; border: 1px solid transparent;
+    border-radius: 8px; padding: 10px 13px;
+    text-align: left; font-weight: 500; color: #b6c7d5;
 }
-QPushButton[role="nav"]:hover { background: #222e40; color: white; }
+QPushButton[role="nav"]:hover { background: #203242; color: #ffffff; }
 QPushButton[role="nav"]:checked {
-    background: #203a55; color: #a9defb; font-weight: 700;
-    border-left: 3px solid #4ca7dc;
+    background: #19404b; color: #c2f5f0; font-weight: 700;
+    border-left: 3px solid #6bd3d0;
 }
 QComboBox, QLineEdit, QSpinBox {
-    background: #141d2a; color: #eef4fc; border: 1px solid #394a61;
-    border-radius: 7px; padding: 7px 9px; min-height: 23px;
-    selection-background-color: #256b94;
+    background: #111e2b; color: #eaf2f8; border: 1px solid #3a5165;
+    border-radius: 8px; padding: 6px 9px; min-height: 23px;
+    selection-background-color: #296d75;
 }
-QComboBox:hover, QLineEdit:focus, QSpinBox:focus { border-color: #58a5d3; }
+QComboBox:focus, QLineEdit:focus, QSpinBox:focus {
+    border-color: #70d0d2;
+}
+QComboBox QAbstractItemView {
+    background: #1c2c3b; color: #eaf2f8;
+    selection-background-color: #235966;
+}
 QSpinBox::up-button, QSpinBox::down-button {
-    background: #29364a; border: 1px solid #394d65; width: 18px;
+    background: #26394b; border: 1px solid #3e5366; width: 17px;
 }
-QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: #34465e; }
-QComboBox QAbstractItemView { background: #1d2939; color: #eef4fc; selection-background-color: #315a80; }
 QTableWidget, QTextEdit, QListWidget {
-    background: #141d2a; alternate-background-color: #1c2737;
-    color: #e9eff7; gridline-color: #2a394d; border: 1px solid #304054;
-    border-radius: 8px; selection-background-color: #284c6e;
+    background: #111e2b; alternate-background-color: #1a2938;
+    color: #eaf2f8; gridline-color: #273b4f;
+    border: 1px solid #304457; border-radius: 8px;
+    selection-background-color: #245b67;
 }
 QHeaderView::section {
-    background: #253246; color: #cbd9e9; padding: 7px;
-    border: 0px; border-right: 1px solid #36465b;
+    background: #1f3041; color: #cbdce8; padding: 8px;
+    border: 0; border-right: 1px solid #33485b;
 }
 QCheckBox, QRadioButton { spacing: 8px; }
-QStatusBar { background: #151d29; color: #9eafc2; border-top: 1px solid #263447; }
-QScrollBar:vertical { background: #182131; width: 10px; border: 0; }
-QScrollBar::handle:vertical { background: #465a73; border-radius: 4px; min-height: 28px; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
-QSplitter::handle { background: #202d40; width: 6px; }
-QTabWidget::pane { border: 1px solid #304054; border-radius: 8px; background: #141d2a; }
-QTabBar::tab { padding: 10px 18px; border-radius: 7px 7px 0 0; background: #202d3e; color: #aebdd1; }
-QTabBar::tab:selected { background: #2d4a69; color: #ffffff; font-weight: 650; }
+QStatusBar {
+    background: #111a25; color: #aebfce; border-top: 1px solid #283848;
+}
+QScrollBar:vertical { background: #121f2d; width: 11px; border: 0; }
+QScrollBar::handle:vertical {
+    background: #476176; border-radius: 5px; min-height: 28px;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QSplitter::handle { background: #243646; width: 5px; }
+QTabWidget::pane {
+    border: 1px solid #304457; border-radius: 9px; background: #172332;
+}
+QTabBar::tab {
+    padding: 10px 16px; border-radius: 7px 7px 0 0;
+    background: #1c2a39; color: #afc4d2;
+}
+QTabBar::tab:hover { background: #274151; }
+QTabBar::tab:selected { background: #216270; color: #ffffff; font-weight: 650; }
+QDialog { background: #14202e; }
 """
 
 
@@ -180,6 +224,9 @@ class DashboardShell(QWidget):
         self.current_pc_state = "unknown"
         self.current_pc_busy = False
         self.pc_state_updated_at = 0.0
+        self._fan_statuses: dict[int, object] = {}
+        self._fan_grid_columns = 0
+        self._fan_frames: dict[int, QFrame] = {}
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -208,44 +255,147 @@ class DashboardShell(QWidget):
         self.show_page("overview")
         self.set_connected(False)
         self.controller.setStyleSheet(STYLE)
+        self._shortcuts: list[QShortcut] = []
+        for index, (key, _caption, _title, _hint) in enumerate(PAGES, 1):
+            shortcut = QShortcut(QKeySequence(f"Ctrl+{index}"), self)
+            shortcut.activated.connect(lambda selected=key: self.show_page(selected))
+            self._shortcuts.append(shortcut)
+        palette_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
+        palette_shortcut.activated.connect(self.open_command_palette)
+        self._shortcuts.append(palette_shortcut)
+        self._reflow_fan_cards()
+
+    def create_command_palette(self) -> QDialog:
+        """Read-only quick navigation. Commands never write to hardware."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Швидкий перехід · FanARGB")
+        dialog.setMinimumWidth(470)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 17)
+        layout.setSpacing(12)
+        layout.addWidget(_label("Куди перейти?", "bannerTitle"))
+        search = QLineEdit()
+        search.setPlaceholderText("Введи розділ, номер вентилятора або MQTT…")
+        search.setClearButtonEnabled(True)
+        search.setAccessibleName("Пошук розділів FanARGB")
+        layout.addWidget(search)
+        results = QListWidget()
+        results.setAlternatingRowColors(True)
+        results.setMinimumHeight(260)
+        results.setAccessibleName("Результати швидкого переходу")
+        layout.addWidget(results)
+        layout.addWidget(_label("Enter — перейти  ·  Esc — закрити  ·  Ctrl+1…8 — розділи", "minor"))
+        choices = []
+        for key, caption, _title, hint in PAGES:
+            choices.append((caption, hint, lambda destination=key: self.show_page(destination)))
+        for channel in range(1, 9):
+            choices.append((
+                f"Вентилятор {channel}", "Відкрити криву й керування",
+                lambda ch=channel: self.open_fan(ch),
+            ))
+        for key, caption in (
+            ("wifi", "Wi-Fi ESP32"), ("mqtt", "MQTT і Home Assistant"),
+            ("argb", "ARGB у ESP32"), ("fan", "TACH і пороги"),
+        ):
+            choices.append((
+                caption, "Конфігурація контролера",
+                lambda section=key: self._open_device_tab(section),
+            ))
+
+        visible_actions: list[object] = []
+
+        def refill(query: str) -> None:
+            results.clear()
+            visible_actions.clear()
+            tokens = query.casefold().split()
+            for caption, hint, action in choices:
+                haystack = f"{caption} {hint}".casefold()
+                if not all(token in haystack for token in tokens):
+                    continue
+                results.addItem(f"{caption}     ·     {hint}")
+                visible_actions.append(action)
+            if results.count():
+                results.setCurrentRow(0)
+
+        def activate() -> None:
+            index = results.currentRow()
+            if 0 <= index < len(visible_actions):
+                visible_actions[index]()
+                dialog.accept()
+
+        search.textChanged.connect(refill)
+        search.returnPressed.connect(activate)
+        results.itemActivated.connect(lambda _item: activate())
+        dialog.search = search
+        dialog.results = results
+        dialog.activate_selection = activate
+        refill("")
+        return dialog
+
+    def open_command_palette(self) -> None:
+        palette = self.create_command_palette()
+        palette.search.setFocus()
+        palette.exec()
+
+    def _open_device_tab(self, key: str) -> None:
+        self.show_page("esp32")
+        self.device_settings.select_tab(key)
 
     def _sidebar(self) -> QWidget:
         panel = QFrame()
         panel.setObjectName("sidebar")
-        panel.setFixedWidth(208)
+        panel.setFixedWidth(202)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(15, 26, 15, 18)
-        layout.setSpacing(6)
+        layout.setContentsMargins(15, 25, 15, 19)
+        layout.setSpacing(5)
         layout.addWidget(_label("FanARGB", "brand"))
-        layout.addWidget(_label("ESP32-S3  /  CONTROL", "minor"))
-        layout.addSpacing(26)
-        for key, caption, _title, _subtitle in PAGES:
+        layout.addWidget(_label("COOLING  /  LIGHTING", "sectionLabel"))
+        layout.addSpacing(21)
+        sections = {
+            "overview": "РОБОЧИЙ ПРОСТІР",
+            "pc": "КОНТРОЛЕР",
+            "service": "ІНСТРУМЕНТИ",
+        }
+        for index, (key, caption, title, _subtitle) in enumerate(PAGES, 1):
+            if key in sections:
+                layout.addSpacing(15 if key != "overview" else 2)
+                layout.addWidget(_label(sections[key], "sectionLabel"))
             button = QPushButton(caption)
             button.setProperty("role", "nav")
             button.setCheckable(True)
-            button.setMinimumHeight(42)
-            button.clicked.connect(lambda checked=False, selected=key: self.show_page(selected))
+            button.setMinimumHeight(41)
+            button.setToolTip(f"{title}  ·  Ctrl+{index}")
+            button.setAccessibleName(title)
+            button.clicked.connect(
+                lambda checked=False, selected=key: self.show_page(selected)
+            )
             layout.addWidget(button)
             self.nav[key] = button
         layout.addStretch(1)
-        layout.addWidget(_label("8 вентиляторів · 8 ARGB", "minor"))
-        layout.addWidget(_label("Локальне керування", "minor"))
+        layout.addWidget(_label("Ctrl+K  ·  швидкий перехід", "minor"))
+        layout.addWidget(_label("Керування тільки локально", "minor"))
         return panel
 
     def _topbar(self, refresh_ports: QPushButton) -> QWidget:
         panel = QFrame()
         panel.setObjectName("topbar")
         layout = QHBoxLayout(panel)
-        layout.setContentsMargins(24, 12, 24, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(23, 11, 23, 11)
+        layout.setSpacing(9)
         self.connection_text = _label("●  Не підключено", "caution")
+        self.connection_text.setToolTip("ESP32-S3 через USB. При втраті температур діє fail-safe.")
         layout.addWidget(self.connection_text)
         layout.addStretch(1)
-        layout.addWidget(_label("Порт:", "minor"))
-        self.controller.port_box.setMinimumWidth(180)
+        search = QPushButton("Перейти…  Ctrl+K")
+        search.setToolTip("Знайти розділ, вентилятор або сторінку налаштувань")
+        search.clicked.connect(self.open_command_palette)
+        layout.addWidget(search)
+        self.controller.port_box.setMinimumWidth(130)
+        self.controller.port_box.setMaximumWidth(225)
+        self.controller.port_box.setToolTip("Оберіть фізичний порт ESP32-S3")
         layout.addWidget(self.controller.port_box)
         refresh_ports.setText("Оновити")
-        refresh_ports.setToolTip("Оновити список COM-портів")
+        refresh_ports.setToolTip("Оновити список доступних USB/COM-портів")
         layout.addWidget(refresh_ports)
         self.controller.connect_button.setProperty("role", "primary")
         layout.addWidget(self.controller.connect_button)
@@ -271,46 +421,83 @@ class DashboardShell(QWidget):
         lay.setContentsMargins(17, 14, 17, 15)
         lay.setSpacing(8)
         lay.addWidget(_label(title, "minor"))
-        value = _label(initial, "labelTitle")
+        value = _label(initial, "labelTitle", True)
         lay.addWidget(value)
         lay.addWidget(_label(subtitle, "minor"))
         return card, value
 
     def _create_overview(self) -> None:
         page, layout = self._content(
-            "Огляд системи",
-            "Головне без зайвих налаштувань. Натисни на вентилятор, щоб змінити його параметри.",
+            "Огляд",
+            "Стан охолодження в реальному часі. Для редагування відкрий потрібний вентилятор.",
         )
+        banner = QFrame()
+        banner.setObjectName("systemBanner")
+        banner.setProperty("state", "idle")
+        self.system_banner = banner
+        info = QHBoxLayout(banner)
+        info.setContentsMargins(23, 17, 23, 18)
+        info.setSpacing(17)
+        left = QVBoxLayout()
+        left.setSpacing(5)
+        self.health_title = _label("Контролер не підключено", "bannerTitle")
+        self.health_description = _label(
+            "Вибери USB/COM-порт і підключи ESP32 для перегляду стану.", "minor", True
+        )
+        left.addWidget(self.health_title)
+        left.addWidget(self.health_description)
+        info.addLayout(left, 1)
+        right = QVBoxLayout()
+        right.setSpacing(5)
+        right.addWidget(_label("КОНТРОЛЕР", "sectionLabel"))
+        self.summary_esp = _label("Не підключено", "labelTitle", True)
+        self.summary_esp.setAlignment(Qt.AlignmentFlag.AlignRight)
+        right.addWidget(self.summary_esp)
+        info.addLayout(right)
+        layout.addWidget(banner)
+
         summary = QGridLayout()
-        summary.setHorizontalSpacing(12)
-        summary.setVerticalSpacing(12)
+        summary.setHorizontalSpacing(11)
+        summary.setVerticalSpacing(11)
         for card_index, (key, title, hint) in enumerate((
-            ("esp", "ESP32-S3", "Підключення контролера"),
-            ("temp", "Датчики ПК", "Локально · CPU / GPU / SSD"),
-            ("rgb", "ARGB / OpenRGB", "Приймання E1.31"),
+            ("temp", "Датчики", "Температури ПК · NWinfo"),
+            ("rgb", "Підсвітка", "ARGB / OpenRGB"),
             ("mqtt", "MQTT", "Home Assistant"),
-            ("pc", "Живлення ПК", "PWR_SW · опція"),
+            ("pc", "Живлення ПК", "PWR_SW"),
         )):
             card, value = self._summary_card(title, "—", hint)
             setattr(self, f"summary_{key}", value)
-            summary.addWidget(card, card_index // 3, card_index % 3)
+            summary.addWidget(card, 0, card_index)
+            summary.setColumnStretch(card_index, 1)
         layout.addLayout(summary)
+
         heading = QHBoxLayout()
-        heading.addWidget(_label("Вентилятори · 8 каналів", "labelTitle"))
+        heading.addWidget(_label("8 вентиляторів", "labelTitle"))
         heading.addStretch(1)
-        shortcut = QPushButton("Відкрити налаштування")
+        details = QCheckBox("Показати джерела")
+        details.setToolTip("Показати під кожним вентилятором джерело температури")
+        self.show_sources = details
+        details.setChecked(
+            str(self.controller.settings.value("showFanSources", "false")).lower()
+            in ("true", "1")
+        )
+        details.toggled.connect(self._toggle_sources)
+        heading.addWidget(details)
+        shortcut = QPushButton("Усі налаштування")
         shortcut.clicked.connect(lambda: self.show_page("fans"))
         heading.addWidget(shortcut)
         layout.addLayout(heading)
         grid = QGridLayout()
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(12)
+        grid.setHorizontalSpacing(11)
+        grid.setVerticalSpacing(11)
+        self._fan_grid = grid
         for ch in range(1, 9):
             frame = QFrame()
             frame.setObjectName("fanCard")
+            frame.setToolTip(f"Вентилятор {ch} · відкрий налаштування для деталей")
             box = QVBoxLayout(frame)
-            box.setContentsMargins(17, 14, 17, 13)
-            box.setSpacing(9)
+            box.setContentsMargins(16, 13, 16, 13)
+            box.setSpacing(7)
             title = QHBoxLayout()
             title.addWidget(_label(f"FAN {ch:02d}", "labelTitle"))
             title.addStretch(1)
@@ -321,30 +508,88 @@ class DashboardShell(QWidget):
             box.addWidget(rpm)
             metrics = _label("— %  ·  — °C", "minor")
             box.addWidget(metrics)
-            source = _label("Джерело: не вибрано", "minor")
-            source.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-            source.setToolTip("Джерело температури для автоматичного керування")
+            source = _label("Джерело: не вибрано", "minor", True)
+            source.setVisible(details.isChecked())
+            source.setToolTip("Джерело температури цього вентилятора")
             box.addWidget(source)
-            action = QPushButton("Налаштувати  →")
-            action.clicked.connect(lambda checked=False, channel=ch: self.open_fan(channel))
+            action = QPushButton("Відкрити налаштування")
+            action.setToolTip(f"Редагувати криву, TACH і PWM вентилятора {ch}")
+            action.clicked.connect(
+                lambda checked=False, channel=ch: self.open_fan(channel)
+            )
             box.addWidget(action)
-            grid.addWidget(frame, (ch - 1) // 3, (ch - 1) % 3)
+            self._fan_frames[ch] = frame
             self.fan_cards[ch] = {
                 "rpm": rpm, "metrics": metrics, "source": source, "state": state,
             }
         layout.addLayout(grid)
-        note = QFrame()
-        note.setObjectName("quietCard")
-        nlay = QHBoxLayout(note)
-        nlay.setContentsMargins(17, 12, 17, 12)
-        nlay.addWidget(_label(
-            "Автоматичне охолодження: якщо температури перестають надходити, "
-            "контролер переходить у захисний режим для відповідного вентилятора.",
+        safety = _label(
+            "Без актуальної температури контролер перемикається на захисне охолодження. "
+            "Робота силового ключа при скиданні ESP32 потребує апаратної перевірки.",
             "minor", True,
-        ))
-        layout.addWidget(note)
+        )
+        safety.setToolTip("Програмний fail-safe не гарантує живлення вентилятора при знеструмленні MCU")
+        layout.addWidget(safety)
         layout.addStretch(1)
         self._add_page("overview", page)
+        self._reflow_fan_cards()
+
+    def _toggle_sources(self, checked: bool) -> None:
+        for labels in self.fan_cards.values():
+            labels["source"].setVisible(checked)
+        self.controller.settings.setValue("showFanSources", checked)
+
+    def _reflow_fan_cards(self) -> None:
+        if not hasattr(self, "_fan_grid"):
+            return
+        # Width includes the 202px sidebar and 50px workspace margins.
+        available = max(0, self.width() - 260)
+        columns = 4 if available >= 1080 else 3 if available >= 680 else 2
+        if columns == self._fan_grid_columns:
+            return
+        self._fan_grid_columns = columns
+        for frame in self._fan_frames.values():
+            self._fan_grid.removeWidget(frame)
+        for ch, frame in self._fan_frames.items():
+            self._fan_grid.addWidget(frame, (ch - 1) // columns, (ch - 1) % columns)
+        for col in range(4):
+            self._fan_grid.setColumnStretch(col, 1 if col < columns else 0)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._reflow_fan_cards()
+
+    def _update_cooling_health(self) -> None:
+        if not self.is_connected:
+            title = "Контролер не підключено"
+            detail = "Підключи ESP32 через USB. Без температур ПК контролер використовує захисний режим."
+            state = "idle"
+        elif not self._fan_statuses:
+            title = "Читаємо стан охолодження…"
+            detail = "З'єднання встановлено. Очікуємо перші дані від вентилятора."
+            state = "idle"
+        else:
+            faults = sum(bool(s.fault) for s in self._fan_statuses.values())
+            stale = sum(not bool(s.fresh) for s in self._fan_statuses.values())
+            count = len(self._fan_statuses)
+            if faults:
+                title = f"Потрібна увага · {faults} каналів"
+                detail = "Виявлено аварійні стани. Відкрий Сервіс → Діагностика для перевірки."
+                state = "critical"
+            elif stale:
+                title = f"Захисне охолодження · {stale} каналів"
+                detail = "Немає свіжої температури на частині каналів — застосовується fail-safe."
+                state = "warning"
+            else:
+                title = "Охолодження працює"
+                detail = f"Отримано дані {count} із 8 каналів · налаштування доступні в розділі «Вентилятори»."
+                state = "normal"
+        self.health_title.setText(title)
+        self.health_description.setText(detail)
+        if self.system_banner.property("state") != state:
+            self.system_banner.setProperty("state", state)
+            self.system_banner.style().unpolish(self.system_banner)
+            self.system_banner.style().polish(self.system_banner)
 
     def _create_fans(self, table_box, choose_row, curve_box, history_box) -> None:
         page, layout = self._content(
@@ -585,6 +830,7 @@ class DashboardShell(QWidget):
         if key not in self.page_index:
             raise KeyError(f"Unknown page: {key}")
         self.stack.setCurrentIndex(self.page_index[key])
+        self.stack.widget(self.page_index[key]).verticalScrollBar().setValue(0)
         for name, button in self.nav.items():
             button.setChecked(name == key)
 
@@ -616,6 +862,7 @@ class DashboardShell(QWidget):
             self.connection_text.setProperty("role", "positive")
             self.summary_esp.setText(port_name or "Підключено")
         else:
+            self._fan_statuses.clear()
             self.connection_text.setText("●  ESP32 не підключено")
             self.connection_text.setProperty("role", "caution")
             self.summary_esp.setText("Не підключено")
@@ -625,6 +872,10 @@ class DashboardShell(QWidget):
                 labels["rpm"].setText("— RPM")
                 labels["metrics"].setText("— %  ·  — °C")
                 labels["state"].setText("Немає даних")
+                labels["state"].setProperty("role", "minor")
+                labels["state"].style().unpolish(labels["state"])
+                labels["state"].style().polish(labels["state"])
+        self._update_cooling_health()
         self._update_pc_buttons()
         self.device_settings.set_connected(connected)
         self.connection_text.style().unpolish(self.connection_text)
@@ -657,6 +908,7 @@ class DashboardShell(QWidget):
         labels = self.fan_cards.get(channel)
         if labels is None:
             return
+        self._fan_statuses[channel] = status
         labels["rpm"].setText(f"{status.rpm} RPM" if status.rpm_feedback else "— RPM")
         temp = f"{status.deci_c / 10:.1f} °C" if status.fresh else "— °C"
         labels["metrics"].setText(f"{status.pwm}% PWM  ·  {temp}")
@@ -672,12 +924,16 @@ class DashboardShell(QWidget):
         state = labels["state"]
         state.style().unpolish(state)
         state.style().polish(state)
+        self._update_cooling_health()
 
     def set_fan_source(self, channel: int, source_name: str) -> None:
         labels = self.fan_cards.get(channel)
         if labels:
             labels["source"].setText(f"Джерело: {source_name}")
             labels["source"].setToolTip(source_name)
+            self._fan_frames[channel].setToolTip(
+                f"Вентилятор {channel} · {source_name}"
+            )
 
     def update_pc_state(self, status: str) -> None:
         self.pc_state_updated_at = time.monotonic()
