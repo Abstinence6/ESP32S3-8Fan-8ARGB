@@ -72,6 +72,8 @@ def mqtt_commands(*, host: str, port: int, username: str, password: str,
         raise ValueError("Введи MQTT broker перед увімкненням")
     if not 1 <= port <= 65535:
         raise ValueError("MQTT порт повинен бути 1–65535")
+    if not username and password:
+        raise ValueError("Вкажи MQTT користувача, перш ніж вводити пароль")
     if len(username.encode("utf-8")) >= 32:
         raise ValueError("MQTT ім’я користувача завелике (макс. 31 байт)")
     if len(password.encode("utf-8")) >= 64:
