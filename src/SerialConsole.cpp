@@ -763,7 +763,7 @@ void SerialConsole::printHelp() {
     serial_.println(F("VERSION? | HTEMP? | HTLIST? | HTSCAN | HTMAP? <ch> | HTMAP <ch> AUTO|ROMHEX"));
     serial_.println(F("HTMODE? <ch> | HTMODE <ch> PC|LOCAL|BACKUP"));
     serial_.println(F("MQTT CONFIG? | MQTT BROKER <host> <port> | MQTT AUTHHEX <userHex|-> <passHex|-> | MQTT HA ON|OFF | MQTT TEMP ON|OFF | MQTT ON|OFF | MQTT CLEAR"));
-    serial_.println(F("MQTT TX START | BROKER <host> <port> | AUTHHEX <userHex|-> <passHex|-> | FLAGS <on> <ha> <temp> | CLEAR | COMMIT | CANCEL")"));
+    serial_.println(F("MQTT TX START | BROKER <host> <port> | AUTHHEX <userHex|-> <passHex|-> | FLAGS <on> <ha> <temp> | CLEAR | COMMIT | CANCEL"));
     serial_.println(F("TEMP <ch> <0..1250> | AUTO <ch> | ALLAUTO"));
     serial_.println(F("FAN <ch> <0..100> | ALLFAN <0..100> (manual override)"));
     serial_.println(F("CURVE? <ch> | CURVE <ch> <T1> <PWM1> ... <T5> <PWM5>"));
