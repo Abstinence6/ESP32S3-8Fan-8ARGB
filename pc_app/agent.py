@@ -100,6 +100,9 @@ def run_agent() -> int:
     temp_future: Future | None = None
     temp_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="SensorAgent")
     sensor_sampler = NwinfoSensorSampler()
+    stored_providers = str(settings.value("nwinfoProviders", ""))
+    if stored_providers:
+        sensor_sampler.set_enabled(set(stored_providers.split(",")))
     smooth_filter = SafeTemperatureFilter()
     next_connect = 0.0
     query_due = 0.0
