@@ -61,6 +61,7 @@ class FanArgbWindow(QMainWindow):
         self.fan_pid_enabled = {ch: False for ch in range(1, 9)}
         self.fan_dual_enabled = {ch: False for ch in range(1, 9)}
         self.history: dict[int, deque] = {ch: deque(maxlen=3600) for ch in range(1, 9)}
+        self.power_history = deque(maxlen=3600)
         self.cal_points: dict[int, dict[int, int]] = {ch: {} for ch in range(1, 9)}
         self.current_fan = 1
         self.target_items: list[pg.TargetItem] = []
@@ -328,14 +329,39 @@ class FanArgbWindow(QMainWindow):
         calibration_layout.addWidget(self.rpm_plot, 1)
         right_layout.addWidget(calibration_box, 1)
 
-        history_box = QGroupBox("Історія — PWM / RPM")
+        history_box = QGroupBox("Історія — PWM / RPM / температури / потужність")
         history_layout = QVBoxLayout(history_box)
-        self.history_plot = pg.PlotWidget()
-        self.history_plot.setMaximumHeight(130)
-        self.history_plot.setLabel("bottom", "Час", units="с")
-        self.history_plot.showGrid(x=True, y=True, alpha=0.2)
-        self.history_pwm_curve = self.history_plot.plot(pen=pg.mkPen("#6cbce5", width=2), name="PWM")
-        history_layout.addWidget(self.history_plot)
+        self.history_tabs = QTabWidget()
+        self.history_plots = {}
+        for key, label, unit in (
+            ("pwm", "PWM", "%"), ("rpm", "RPM", "RPM"),
+            ("temp", "Температура", "°C"), ("power", "Потужність", "Вт"),
+        ):
+            plot = pg.PlotWidget()
+            plot.setMinimumHeight(190)
+            plot.setLabel("bottom", "Час", units="с")
+            plot.setLabel("left", label, units=unit)
+            plot.showGrid(x=True, y=True, alpha=0.2)
+            self.history_plots[key] = plot
+            self.history_tabs.addTab(plot, label)
+        self.history_plot = self.history_plots["pwm"]
+        self.history_pwm_curve = self.history_plot.plot(
+            pen=pg.mkPen("#6cbce5", width=2), name="PWM"
+        )
+        self.history_rpm_curve = self.history_plots["rpm"].plot(
+            pen=pg.mkPen("#8cdb98", width=2)
+        )
+        self.history_temperature_curve = self.history_plots["temp"].plot(
+            pen=pg.mkPen("#e6ae6d", width=2)
+        )
+        self.cpu_power_curve = self.history_plots["power"].plot(
+            pen=pg.mkPen("#80b7eb", width=2), name="CPU W"
+        )
+        self.gpu_power_curve = self.history_plots["power"].plot(
+            pen=pg.mkPen("#e8a073", width=2), name="GPU W"
+        )
+        self.history_plots["power"].addLegend()
+        history_layout.addWidget(self.history_tabs)
         hist_row = QHBoxLayout()
         export_button = QPushButton("Зберегти історію CSV…")
         export_button.clicked.connect(self.export_history)
@@ -767,6 +793,17 @@ class FanArgbWindow(QMainWindow):
         )
         self._update_sensor_table()
         self._update_metric_table()
+        watts = self.sensor_sampler.metrics
+        cpu_w = [m.value for m in watts if m.unit == "W" and
+                 ("cpu" in m.name.casefold() or "intel" in m.name.casefold()
+                  or "zen" in m.name.casefold())]
+        gpu_w = [m.value for m in watts if m.unit == "W" and
+                 "gpu" in m.name.casefold()]
+        self.power_history.append((
+            time.time(), max(cpu_w) if cpu_w else float("nan"),
+            max(gpu_w) if gpu_w else float("nan"),
+        ))
+        self._refresh_history()
         self._update_source_boxes()
         self._update_secondary_box()
 
@@ -1065,9 +1102,18 @@ class FanArgbWindow(QMainWindow):
 
     def _refresh_history(self) -> None:
         hist = list(self.history[self.current_fan])
-        if not hist: return
-        origin = hist[0][0]
-        self.history_pwm_curve.setData([ts-origin for ts, *_ in hist], [pwm for _,pwm,_,_ in hist])
+        if hist:
+            origin = hist[0][0]
+            times = [row[0] - origin for row in hist]
+            self.history_pwm_curve.setData(times, [row[1] for row in hist])
+            self.history_rpm_curve.setData(times, [row[2] for row in hist])
+            self.history_temperature_curve.setData(times, [row[3] for row in hist])
+        power = list(self.power_history)
+        if power:
+            origin = power[0][0]
+            xs = [row[0] - origin for row in power]
+            self.cpu_power_curve.setData(xs, [row[1] for row in power])
+            self.gpu_power_curve.setData(xs, [row[2] for row in power])
 
     def export_history(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Експорт журналу", "fan_history.csv", "CSV (*.csv)")
