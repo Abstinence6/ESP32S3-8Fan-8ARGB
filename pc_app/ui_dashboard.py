@@ -12,6 +12,7 @@ from settings_widgets import DesktopSettingsPanel
 from hardware_sensor_ui import HardwareSensorPanel
 from argb_studio_ui import ArgbStudioPanel
 from maintenance_ui import MaintenancePanel
+from diagnostics_ui import DiagnosticPanel
 from PySide6.QtWidgets import (
     QButtonGroup, QComboBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
     QLabel, QLayout, QPushButton, QRadioButton, QScrollArea, QSplitter,
@@ -516,6 +517,8 @@ class DashboardShell(QWidget):
         layout.addWidget(combined)
         advanced = self._service_group("Діагностика та MQTT / Home Assistant", diagnostic_row)
         layout.addWidget(advanced)
+        self.diagnostics = DiagnosticPanel(self.controller)
+        layout.addWidget(self.diagnostics)
         self.settings_panel = DesktopSettingsPanel(self.controller)
         layout.addWidget(self.settings_panel)
         self.maintenance_panel = MaintenancePanel(self.controller)
