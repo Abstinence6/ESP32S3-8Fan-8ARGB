@@ -61,7 +61,7 @@ class DashboardSmokeTests(unittest.TestCase):
         self.app.processEvents()
         output = Path("dist/ui-preview")
         output.mkdir(parents=True, exist_ok=True)
-        for key in ("overview", "fans", "argb", "pc", "service", "logs"):
+        for key in ("overview", "fans", "sensors", "argb", "pc", "service", "logs"):
             self.window.dashboard.show_page(key)
             self.app.processEvents()
             target = output / f"{key}.png"
@@ -70,7 +70,7 @@ class DashboardSmokeTests(unittest.TestCase):
 
     def test_navigation_and_existing_controls(self):
         shell = self.window.dashboard
-        self.assertEqual(shell.stack.count(), 6)
+        self.assertEqual(shell.stack.count(), 7)
         self.assertEqual(len(shell.fan_cards), 8)
         self.assertEqual(shell.page_index["overview"], shell.stack.currentIndex())
         shell.open_fan(6)
@@ -80,7 +80,11 @@ class DashboardSmokeTests(unittest.TestCase):
         shell.show_page("service")
         service = shell.stack.widget(shell.page_index["service"]).widget()
         self.assertTrue(service.isAncestorOf(self.window.cal_progress))
-        self.assertTrue(service.isAncestorOf(self.window.sensor_table))
+        shell.show_page("sensors")
+        sensors = shell.stack.widget(shell.page_index["sensors"]).widget()
+        self.assertTrue(sensors.isAncestorOf(self.window.sensor_table))
+        self.assertTrue(sensors.isAncestorOf(self.window.metric_table))
+        self.assertEqual(shell.stack.currentIndex(), shell.page_index["sensors"])
         shell.show_page("logs")
         logs = shell.stack.widget(shell.page_index["logs"]).widget()
         self.assertTrue(logs.isAncestorOf(self.window.log_text))
