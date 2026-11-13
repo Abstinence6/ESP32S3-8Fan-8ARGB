@@ -1505,6 +1505,8 @@ class FanArgbWindow(QMainWindow):
         """Apply a lighting-only scene without modifying cooling NVS or fan duty."""
         if self.dashboard.studio.active:
             self.dashboard.studio.stop()
+        if self.dashboard.native_checkbox.isChecked():
+            self.dashboard.native_checkbox.setChecked(False)
         if not self.port:
             QMessageBox.warning(self, "ARGB", "Спочатку підключи ESP32-S3")
             return
