@@ -1,3 +1,14 @@
+> **Windows configuration (v8):** Connect ESP32-S3 via USB to
+> `FanARGBControl.exe`, open **ESP32 → MQTT / Home Assistant**, enter
+> broker, port, username/password, choose MQTT and Discovery, then save.
+> ESP32 confirms every operation and the GUI reads the stored state
+> back. No Serial Monitor or manual commands are needed. See
+> [PC configuration](PC_CONFIGURATION.md) for details.
+>
+> The serial commands shown below remain for testing and older firmware;
+> v8 adds `MQTT CONFIG?`, `MQTT BROKER`, `MQTT AUTHHEX`,
+> `MQTT HA ON|OFF`, and `MQTT CLEAR`.
+
 # MQTT and Home Assistant — ESP32-S3 v5
 
 MQTT is **optional and disabled until a broker is configured**. ESP32 must first connect to
