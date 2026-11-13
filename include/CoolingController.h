@@ -15,6 +15,7 @@ public:
 
     struct CurvePoint { uint8_t tempC; uint8_t pwm; };
     enum class Mode : uint8_t { Auto, Manual, Calibration, FixedRpm };
+    enum class TemperatureSource : uint8_t { None, Usb, Local, Mqtt };
     enum class Fault : uint8_t { Stall = 1, Overheat = 2, SensorTimeout = 3, CalibrationAborted = 4 };
     struct FaultRecord { uint32_t uptimeSeconds; uint8_t channel; uint8_t code; };
 
@@ -22,6 +23,11 @@ public:
     bool begin();
     void update(uint32_t nowMs);
     void setTemperature(uint8_t ch, uint16_t deciC, uint32_t nowMs, bool secondary = false);
+    void setHardwareTemperature(uint8_t ch, uint16_t deciC, uint32_t nowMs);
+    const char* temperatureSourceName(uint8_t ch, bool secondary = false) const;
+    bool hasTemperature(uint8_t ch, bool secondary = false) const;
+    uint32_t temperatureAgeMs(uint8_t ch, uint32_t nowMs, bool secondary = false) const;
+    const char* failSafeReason(uint8_t ch, uint32_t nowMs) const;
     // External MQTT telemetry is fallback-only and never overrides fresh USB/local data.
     bool setMqttTemperature(uint8_t ch, uint16_t deciC, uint32_t nowMs, bool secondary = false);
     bool setCurve(uint8_t ch, const CurvePoint* points, bool secondary = false);
@@ -119,6 +125,8 @@ private:
     static uint32_t calculateChecksum(const StoredFan& fan);
     static void makeDefault(StoredFan& fan);
     bool writeFan(uint8_t ch, StoredFan& newValue);
+    void setTemperatureFrom(uint8_t ch, uint16_t deciC, uint32_t nowMs,
+                            bool secondary, TemperatureSource source);
     bool readFan(uint8_t ch, StoredFan& fan);
     void endCalibration(bool cancelled, bool validRpm);
     void reportPoint(uint8_t ch, uint8_t step, uint16_t rpm);
@@ -134,6 +142,7 @@ private:
     Stream& events_;
     Preferences storage_;
     StoredFan saved_[board::kChannelCount] = {};
+    bool persisted_[board::kChannelCount] = {};
     Mode fanMode_[board::kChannelCount] = {};
     Mode previousCalibrationMode_ = Mode::Auto;
     uint16_t lastTemp_[board::kChannelCount] = {};
@@ -144,8 +153,8 @@ private:
     uint32_t lastTemp2Ms_[board::kChannelCount] = {};
     bool gotTemp_[board::kChannelCount] = {};
     bool gotTemp2_[board::kChannelCount] = {};
-    bool mqttPrimary_[board::kChannelCount] = {};
-    bool mqttSecondary_[board::kChannelCount] = {};
+    TemperatureSource primarySource_[board::kChannelCount] = {};
+    TemperatureSource secondarySource_[board::kChannelCount] = {};
     bool timeoutRecorded_[board::kChannelCount] = {};
     bool overheatRecorded_[board::kChannelCount] = {};
     uint8_t manualPwm_[board::kChannelCount] = {};

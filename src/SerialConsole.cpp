@@ -827,6 +827,11 @@ void SerialConsole::printHealth(uint8_t ch) {
     serial_.print(F(" TACH=")); serial_.print(tachLabel);
     serial_.print(F(" TACH_VALID=")); serial_.print(fans_.tachReliable(ch) ? 1 : 0);
     serial_.print(F(" SENSOR=")); serial_.print(sensorFresh ? F("ok") : F("stale"));
+    serial_.print(F(" SOURCE=")); serial_.print(cooling_.temperatureSourceName(ch));
+    serial_.print(F(" AGE_MS="));
+    if (cooling_.hasTemperature(ch)) serial_.print(cooling_.temperatureAgeMs(ch, now));
+    else serial_.print(F("-"));
+    serial_.print(F(" FAILSAFE=")); serial_.print(cooling_.failSafeReason(ch, now));
     serial_.print(F(" FAULT=")); serial_.print(cooling_.faulted(ch) ? 1 : 0);
     serial_.print(F(" DC_READY=")); serial_.print(fans_.dcHardwareAvailable() ? 1 : 0);
     serial_.print(F(" MODE=")); serial_.println(modeLabel);

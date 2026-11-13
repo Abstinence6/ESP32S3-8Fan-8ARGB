@@ -59,6 +59,28 @@ int main() {
     assert(Serial.out.find("ERR TYPE must be 2 or 3") != std::string::npos);
     assert(Serial.out.find("ERR fan control blocked") != std::string::npos);
 
+    // Source tracing: local and USB readings preempt remote MQTT telemetry.
+    cooling.setTemperature(3, 440, mock::currentMs);
+    assert(std::string(cooling.temperatureSourceName(3)) == "usb");
+    assert(!cooling.setMqttTemperature(3, 250, mock::currentMs + 1000U));
+    cooling.setHardwareTemperature(3, 490, mock::currentMs + 2000U);
+    assert(std::string(cooling.temperatureSourceName(3)) == "ds18b20");
+    assert(cooling.temperatureAgeMs(3, mock::currentMs + 2500U) == 500U);
+    assert(!cooling.setMqttTemperature(3, 350, mock::currentMs + 2500U));
+    assert(cooling.setMqttTemperature(3, 350, mock::currentMs + 14000U));
+    assert(std::string(cooling.temperatureSourceName(3)) == "mqtt");
+    mock::currentMs += 14000U;
+    Serial.out.clear();
+    Serial.send("HEALTH 4\n");
+    console.poll();
+    assert(Serial.out.find("SOURCE=mqtt AGE_MS=0 FAILSAFE=dc_lock") != std::string::npos);
+    mock::currentMs += CoolingController::kSensorTimeoutMs + 1U;
+    assert(std::string(cooling.failSafeReason(3, mock::currentMs)) == "sensor");
+    Serial.out.clear();
+    Serial.send("HEALTH 4\n");
+    console.poll();
+    assert(Serial.out.find("SENSOR=stale SOURCE=mqtt") != std::string::npos);
+
     // Tachometer was confirmed once; a subsequent stall must remain detectable
     // even while no PC temperatures are available and full speed is enforced.
     mock::pulse(board::kFanTachPins[0], 40);

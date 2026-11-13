@@ -8,6 +8,12 @@
 #include "PcPowerController.h"
 #include "HardwareTemperature.h"
 
+#if defined(ARDUINO_ARCH_ESP32)
+#include <esp_task_wdt.h>
+#include <esp_err.h>
+namespace { bool watchdogArmed = false; }
+#endif
+
 FanController fans;
 ArgbController leds;
 CoolingController cooling(fans, Serial);
@@ -44,6 +50,16 @@ void setup() {
     wifiRgb.begin();
     if (!mqtt.begin()) Serial.println(F("WARN: MQTT NVS unavailable"));
     console.begin();
+#if defined(ARDUINO_ARCH_ESP32)
+    // Software recovery from a stalled Arduino loop. Electrical full-speed
+    // during MCU reset still requires a physically qualified fail-ON driver.
+    const esp_err_t init = esp_task_wdt_init(8, true);
+    if (init == ESP_OK || init == ESP_ERR_INVALID_STATE) {
+        const esp_err_t add = esp_task_wdt_add(nullptr);
+        watchdogArmed = add == ESP_OK || esp_task_wdt_status(nullptr) == ESP_OK;
+    }
+    if (!watchdogArmed) Serial.println(F("WARN: loop task watchdog not armed"));
+#endif
 }
 
 void loop() {
@@ -56,5 +72,9 @@ void loop() {
     wifiRgb.update(now);
     mqtt.update(now);
     leds.update(now);
+#if defined(ARDUINO_ARCH_ESP32)
+    // Never feed before the temperature/fan safety logic and communication tasks.
+    if (watchdogArmed) esp_task_wdt_reset();
+#endif
     delay(1);
 }

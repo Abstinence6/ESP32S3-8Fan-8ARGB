@@ -74,6 +74,8 @@ void NetworkRgbBridge::connect() {
 bool NetworkRgbBridge::configure(const char* ssid, const char* password) {
     if (!ssid || !password || !ssid[0] || strlen(ssid) > 32 || strlen(password) > 64) return false;
 #if defined(ARDUINO_ARCH_ESP32)
+    if (enabled_ && !strcmp(ssid_, ssid) && !strcmp(password_, password))
+        return true; // identical NVS settings, do not disrupt active sACN/DDP
     uint8_t credentials[kSettingsSize] = {};
     memcpy(credentials, ssid, strlen(ssid));
     memcpy(credentials + sizeof(ssid_), password, strlen(password));
@@ -94,6 +96,7 @@ bool NetworkRgbBridge::reconnectExisting(const char* ssid) {
     // Never keep credentials for a different network without proof that the
     // new SSID uses the old PSK.
     if (!enabled_ || !ssid || strcmp(ssid, ssid_) != 0) return false;
+    if (connected()) return true; // KEEP with unchanged SSID must not flap Wi-Fi
     if (listening_) { sacn_.stop(); ddp_.stop(); listening_ = false; }
     WiFi.disconnect();
     connect();
@@ -105,6 +108,7 @@ bool NetworkRgbBridge::reconnectExisting(const char* ssid) {
 }
 bool NetworkRgbBridge::disable() {
 #if defined(ARDUINO_ARCH_ESP32)
+    if (!enabled_) return true;
     const uint8_t empty[kSettingsSize] = {};
     if (config_.putBytes("network", empty, sizeof(empty)) != sizeof(empty)) return false;
     if (listening_) { sacn_.stop(); ddp_.stop(); listening_ = false; }

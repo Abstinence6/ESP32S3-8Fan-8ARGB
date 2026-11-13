@@ -236,7 +236,7 @@ void HardwareTemperature::update(uint32_t nowMs, CoolingController& cooling) {
         const Probe& probe = probes_[index];
         if (probe.valid && nowMs - probe.sampleMs <= 3000U &&
             lastInjectMs_[ch] != probe.sampleMs) {
-            cooling.setTemperature(ch, probe.deciC, nowMs);
+            cooling.setHardwareTemperature(ch, probe.deciC, nowMs);
             lastInjectMs_[ch] = probe.sampleMs;
         }
     }

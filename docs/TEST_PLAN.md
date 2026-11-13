@@ -43,3 +43,16 @@ project: no hardware qualification is implied by a successful CI run.
    commands. Keep the broker on a trusted network.
 9. Test Windows GUI + background agent together. Exactly one process
    must own the USB port, while fan sensor updates continue.
+
+## v8.2 software reliability checks
+
+- [x] Host tests verify that USB and DS18B20 temperatures preempt MQTT and that
+  telemetry reports SOURCE, AGE_MS and FAILSAFE without changing fan output.
+- [x] MQTT staging tests cover no NVS writes before COMMIT, exactly one write,
+  simulated write failure, retry, reboot persistence, cancel and no-op updates.
+- [x] Python diagnostics parser tests cover source attribution, age and malformed
+  input, retaining compatibility with older HEALTH responses.
+- [ ] On real hardware, confirm WDT reset after a deliberately stalled loop,
+  log reboot reason, verify fan power is full speed **during** reset,
+  and validate boot GPIO/12 V gate behavior under brownout.
+- [ ] Qualify MOSFET driver TACH and all eight 12 V channels on the intended PCB.

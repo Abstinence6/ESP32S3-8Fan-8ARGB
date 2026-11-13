@@ -71,7 +71,11 @@ bool CoolingController::readFan(uint8_t ch, StoredFan& fan) {
             fan.pidEnabled > 1 || fan.dualEnabled > 1 ||
             (fan.fanType != 0 && fan.fanType != 2 && fan.fanType != 3 && fan.fanType != 4))
             return false;
-        if (fan.version == kVersion) return fan.fanType == 2 || fan.fanType == 3;
+        if (fan.version == kVersion) {
+            const bool supported = fan.fanType == 2 || fan.fanType == 3;
+            persisted_[ch] = supported;
+            return supported;
+        }
         // v3 -> v4: physical drive topology changed; old PWM-to-RPM samples
         // cannot be reused even if the stored connector type was 3-pin.
         const uint8_t target = fan.fanType == 2 ? 2 : 3;
@@ -117,10 +121,13 @@ bool CoolingController::writeFan(uint8_t ch, StoredFan& value) {
     value.magic = kMagic;
     value.version = kVersion;
     value.checksum = calculateChecksum(value);
+    if (persisted_[ch] && memcmp(&value, &saved_[ch], sizeof(value)) == 0)
+        return true; // unchanged NVS image; no flash write
     char key[8];
     fanKey(ch, key, sizeof(key));
     if (storage_.putBytes(key, &value, sizeof(value)) != sizeof(value)) return false;
     saved_[ch] = value;
+    persisted_[ch] = true;
     return true;
 }
 
@@ -246,29 +253,64 @@ bool CoolingController::setAuto(uint8_t ch) {
     return true;
 }
 
-void CoolingController::setTemperature(uint8_t ch, uint16_t deciC, uint32_t nowMs, bool secondary) {
+void CoolingController::setTemperatureFrom(uint8_t ch, uint16_t deciC,
+                                            uint32_t nowMs, bool secondary,
+                                            TemperatureSource source) {
     if (ch >= board::kChannelCount || deciC > 1250) return;
     uint16_t& raw = secondary ? lastTemp2_[ch] : lastTemp_[ch];
     uint16_t& filtered = secondary ? filteredTemp2_[ch] : filteredTemp_[ch];
     uint32_t& stamp = secondary ? lastTemp2Ms_[ch] : lastTempMs_[ch];
     bool& valid = secondary ? gotTemp2_[ch] : gotTemp_[ch];
-    // EMA, alpha=0.25, with immediate emergency checks on the unfiltered value.
-    filtered = valid ? static_cast<uint16_t>((3U * filtered + deciC + 2U) / 4U) : deciC;
+    // Old readings must not dilute a newly available source after expiry.
+    const bool wasFresh = valid && nowMs - stamp <= kSensorTimeoutMs;
+    filtered = wasFresh ? static_cast<uint16_t>((3U * filtered + deciC + 2U) / 4U) : deciC;
     raw = deciC;
     stamp = nowMs;
     valid = true;
-    (secondary ? mqttSecondary_[ch] : mqttPrimary_[ch]) = false;
+    (secondary ? secondarySource_[ch] : primarySource_[ch]) = source;
     timeoutRecorded_[ch] = false;
+}
+void CoolingController::setTemperature(uint8_t ch, uint16_t deciC,
+                                       uint32_t nowMs, bool secondary) {
+    setTemperatureFrom(ch, deciC, nowMs, secondary, TemperatureSource::Usb);
+}
+void CoolingController::setHardwareTemperature(uint8_t ch, uint16_t deciC, uint32_t nowMs) {
+    setTemperatureFrom(ch, deciC, nowMs, false, TemperatureSource::Local);
 }
 bool CoolingController::setMqttTemperature(uint8_t ch, uint16_t deciC,
                                             uint32_t nowMs, bool secondary) {
     if (ch >= board::kChannelCount || deciC > 1250) return false;
-    // Fresh data from USB, DS18B20 or other explicit local source wins.
-    if (temperatureFresh(ch, nowMs, secondary) &&
-        !(secondary ? mqttSecondary_[ch] : mqttPrimary_[ch])) return false;
-    setTemperature(ch, deciC, nowMs, secondary);
-    (secondary ? mqttSecondary_[ch] : mqttPrimary_[ch]) = true;
+    const TemperatureSource source = secondary ? secondarySource_[ch] : primarySource_[ch];
+    // Fresh USB or DS18B20 temperatures always preempt remote telemetry.
+    if (temperatureFresh(ch, nowMs, secondary) && source != TemperatureSource::Mqtt)
+        return false;
+    setTemperatureFrom(ch, deciC, nowMs, secondary, TemperatureSource::Mqtt);
     return true;
+}
+const char* CoolingController::temperatureSourceName(uint8_t ch, bool secondary) const {
+    if (ch >= board::kChannelCount) return "none";
+    const TemperatureSource source = secondary ? secondarySource_[ch] : primarySource_[ch];
+    switch (source) {
+        case TemperatureSource::Usb: return "usb";
+        case TemperatureSource::Local: return "ds18b20";
+        case TemperatureSource::Mqtt: return "mqtt";
+        default: return "none";
+    }
+}
+bool CoolingController::hasTemperature(uint8_t ch, bool secondary) const {
+    return ch < board::kChannelCount && (secondary ? gotTemp2_[ch] : gotTemp_[ch]);
+}
+uint32_t CoolingController::temperatureAgeMs(uint8_t ch, uint32_t nowMs, bool secondary) const {
+    if (!hasTemperature(ch, secondary)) return UINT32_MAX;
+    return nowMs - (secondary ? lastTemp2Ms_[ch] : lastTempMs_[ch]);
+}
+const char* CoolingController::failSafeReason(uint8_t ch, uint32_t nowMs) const {
+    if (ch >= board::kChannelCount) return "invalid";
+    if (faultLatched_[ch]) return "fault";
+    if (!freshPair(ch, nowMs)) return "sensor";
+    if (overTemperature(ch)) return "overheat";
+    if (!fans_.dcHardwareAvailable()) return "dc_lock";
+    return "none";
 }
 bool CoolingController::temperatureFresh(uint8_t ch, uint32_t nowMs, bool secondary) const {
     if (ch >= board::kChannelCount) return false;

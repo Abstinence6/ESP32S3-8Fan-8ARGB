@@ -32,13 +32,15 @@ class DiagnosticPanel(QGroupBox):
         save.clicked.connect(self.export)
         line.addWidget(save)
         root.addLayout(line)
-        self.table = QTableWidget(8, 5)
-        self.table.setHorizontalHeaderLabels(["Канал", "PWM", "RPM", "TACH", "Оцінка"])
+        self.table = QTableWidget(8, 8)
+        self.table.setHorizontalHeaderLabels(
+            ["Канал", "PWM", "RPM", "TACH", "Джерело", "Вік, мс", "Fail-safe", "Оцінка"]
+        )
         self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
         for i in range(8):
             self.table.setItem(i, 0, QTableWidgetItem(str(i + 1)))
-            for col in range(1, 5):
+            for col in range(1, 8):
                 self.table.setItem(i, col, QTableWidgetItem("—"))
         self.table.setMaximumHeight(300)
         root.addWidget(self.table)
@@ -48,6 +50,7 @@ class DiagnosticPanel(QGroupBox):
 
     def refresh(self) -> None:
         if self.controller.port:
+            self.records.clear()
             self.controller.send("HEALTH")
 
     def handle_line(self, line: str) -> bool:
@@ -61,7 +64,9 @@ class DiagnosticPanel(QGroupBox):
         self.records[health.channel] = health
         row = health.channel - 1
         for col, value in enumerate((
-            f"{health.pwm}%", str(health.rpm), health.tach, health.assessment,
+            f"{health.pwm}%", str(health.rpm), health.tach,
+            health.source, str(health.age_ms) if health.age_ms is not None else "—",
+            health.failsafe, health.assessment,
         ), 1):
             self.table.setItem(row, col, QTableWidgetItem(value))
         return True
