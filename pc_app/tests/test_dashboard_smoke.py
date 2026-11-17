@@ -220,6 +220,17 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertIn("Перезавантаж", panel.status.text())
         self.assertEqual(panel._saved["PWM"][0], 18)
 
+    def test_github_update_panel_does_not_auto_flash(self):
+        from github_updates import APP_VERSION
+        shell = self.window.dashboard
+        panel = shell.maintenance_panel.github_updates
+        self.assertIn("GitHub", panel.title())
+        self.assertIn(APP_VERSION, panel.status.text())
+        self.assertFalse(panel.windows_button.isEnabled())
+        self.assertFalse(panel.firmware_button.isEnabled())
+        self.assertFalse(panel.page_button.isEnabled())
+        self.assertFalse(shell.maintenance_panel.firmware_path)
+
     def test_temperature_argb_esp_readback_save_and_reload(self):
         shell = self.window.dashboard
         panel = shell.temperature_argb

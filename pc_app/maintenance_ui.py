@@ -14,10 +14,12 @@ try:
     from .config_backup import to_json, from_json, restore_settings
     from .firmware_update import inspect_firmware, flash_firmware, flash_preflight
     from .serial_owner import SerialProxyClient
+    from .github_update_ui import GitHubUpdatePanel
 except ImportError:
     from config_backup import to_json, from_json, restore_settings
     from firmware_update import inspect_firmware, flash_firmware, flash_preflight
     from serial_owner import SerialProxyClient
+    from github_update_ui import GitHubUpdatePanel
 
 
 class FlashWorker(QThread):
@@ -79,6 +81,8 @@ class MaintenancePanel(QGroupBox):
         self.progress = QProgressBar()
         self.progress.setVisible(False)
         layout.addWidget(self.progress)
+        self.github_updates = GitHubUpdatePanel(self)
+        layout.addWidget(self.github_updates)
         info = QLabel(
             "Прошивання на COM перепідключає ESP і може перервати живлення "
             "вентиляторів, якщо апаратний ключ не має перевіреного fail-ON. "
