@@ -52,5 +52,6 @@ private:
     uint16_t rgbCrc_ = 0xFFFF;
     uint16_t rgbReceivedCrc_ = 0;
     uint32_t rgbLastByteMs_ = 0;
+    uint32_t rgbFrameStartMs_ = 0;
     uint8_t rgbBuffer_[board::kMaxArgbPixelsPerFrame * 3] = {};
 };
