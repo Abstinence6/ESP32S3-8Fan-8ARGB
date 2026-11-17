@@ -29,7 +29,7 @@ class SafetyUpgrades(unittest.TestCase):
             firmware = Path(temp) / "firmware.bin"
             firmware.write_bytes(make_test_image())
             old, _ = inspect_firmware(str(firmware))
-            firmware.write_bytes(make_test_image(content=bytes([2]) * 2304))
+            firmware.write_bytes(make_test_image(content=bytes(32) + bytes.fromhex("3254cdab") + bytes([2]) * 2304))
             new, _ = inspect_firmware(str(firmware))
             self.assertNotEqual(old, new)
 

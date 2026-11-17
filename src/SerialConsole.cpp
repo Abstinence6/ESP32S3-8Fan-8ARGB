@@ -16,7 +16,9 @@ void SerialConsole::begin() {
 
 void SerialConsole::poll() {
     // Corrupt/partial packets cannot lock out normal fan and temperature commands.
-    if (rx_ != RxState::Text && millis() - rgbLastByteMs_ > 300U) resetBinary();
+    if (rx_ != RxState::Text &&
+        (millis() - rgbLastByteMs_ > 300U ||
+         millis() - rgbFrameStartMs_ > 1000U)) resetBinary();
     // Do not let sustained RGB traffic starve the main cooling loop.
     uint16_t rxBudget = 1024;
     while (rxBudget-- && serial_.available() > 0) {
@@ -98,6 +100,7 @@ void SerialConsole::handleByte(uint8_t byte) {
         rx_ = RxState::Sync;
         rgbCrc_ = 0xFFFFU;
         rgbLastByteMs_ = millis();
+        rgbFrameStartMs_ = rgbLastByteMs_;
         return;
     }
     if (byte == '\r') return;

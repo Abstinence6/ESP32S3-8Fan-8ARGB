@@ -4,7 +4,7 @@ import struct
 
 
 def make_test_image(chip_id: int = 9, content: bytes | None = None) -> bytes:
-    payload = bytes(range(256)) * 9 if content is None else content
+    payload = (bytes(32) + bytes.fromhex("3254cdab") + bytes(range(256)) * 9) if content is None else content
     header = bytearray(24)
     header[0] = 0xE9
     header[1] = 1

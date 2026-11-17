@@ -216,7 +216,7 @@ class DashboardSmokeTests(unittest.TestCase):
 
     def test_quick_navigation_and_search_palette(self):
         shell = self.window.dashboard
-        self.assertEqual(len(shell._shortcuts), 9)
+        self.assertEqual(len(shell._shortcuts), 10)
         palette = shell.create_command_palette()
         palette.search.setText("Вентилятор 6")
         self.assertGreater(palette.results.count(), 0)
@@ -567,8 +567,8 @@ class DashboardSmokeTests(unittest.TestCase):
             "CH 3 FAN=55% RPM=1200 TEMP=430 MODE=auto SENSOR=ok TYPE=3 FAULT=0"
         )
         card = self.window.dashboard.fan_cards[3]
-        self.assertEqual(card["rpm"].text(), "1200 RPM")
-        self.assertIn("55% PWM", card["metrics"].text())
+        self.assertEqual(card["rpm"].text(), "1 200 RPM")
+        self.assertIn("PWM  55%", card["metrics"].text())
         self.assertIn("43.0", card["metrics"].text())
         self.window.dashboard.set_connected(True, "COM7")
         self.window.handle_line("PC off BUSY=0")

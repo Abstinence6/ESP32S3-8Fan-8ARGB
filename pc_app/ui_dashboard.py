@@ -19,7 +19,7 @@ from diagnostics_ui import DiagnosticPanel
 from sensor_manager_ui import SensorManagerPanel
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
-    QLabel, QLayout, QPushButton, QRadioButton, QScrollArea, QSplitter,
+    QLabel, QLayout, QPushButton, QProgressBar, QRadioButton, QScrollArea, QSplitter,
     QStackedWidget, QVBoxLayout, QWidget, QDialog, QLineEdit, QListWidget,
     QListWidgetItem, QSizePolicy, QTabWidget,
 )
@@ -51,6 +51,15 @@ QFrame#metricsStrip, QFrame#fanCard, QFrame#quietCard, QFrame#systemBanner {
 }
 QFrame#metricSlot { background: transparent; border: none; }
 QFrame#fanCard:hover { border-color: #4e8e91; background: #192836; }
+QFrame#fanCard[state="critical"] { border-color: #b56a77; }
+QFrame#fanCard[state="warning"] { border-color: #ad8a52; }
+QProgressBar#fanDuty {
+    background: #293b49; color: transparent; border: 0;
+    border-radius: 4px; min-height: 7px; max-height: 7px;
+}
+QProgressBar#fanDuty::chunk { background: #55c7c0; border-radius: 4px; }
+QProgressBar#fanDuty[state="warning"]::chunk { background: #e6bd77; }
+QProgressBar#fanDuty[state="critical"]::chunk { background: #ef8797; }
 QFrame#zoneTile {
     background: #172838; border: 1px solid #334658; border-radius: 9px;
 }
@@ -113,6 +122,11 @@ QPushButton[role="ghost"] {
     text-align: left; padding: 3px 0; min-height: 20px;
 }
 QPushButton[role="ghost"]:hover { color: #c6fcf9; background: transparent; }
+QPushButton[role="filter"] { background: #1d2d3b; }
+QPushButton[role="filter"]:checked {
+    background: #3b3026; color: #ffdcab;
+    border: 1px solid #9b7443; font-weight: 650;
+}
 QPushButton[role="nav"] {
     background: transparent; border: none; border-radius: 7px;
     text-align: left; color: #aab9c6; padding: 8px 12px;
@@ -229,14 +243,17 @@ class DashboardShell(QWidget):
         self.setObjectName("dashboardRoot")
         self.nav: dict[str, QPushButton] = {}
         self.page_index: dict[str, int] = {}
-        self.fan_cards: dict[int, dict[str, QLabel]] = {}
+        self.fan_cards: dict[int, dict[str, QWidget]] = {}
         self.pc_buttons: dict[str, QPushButton] = {}
         self.is_connected = False
         self.current_pc_state = "unknown"
         self.current_pc_busy = False
         self.pc_state_updated_at = 0.0
         self._fan_statuses: dict[int, object] = {}
+        self._last_fan_update: dict[int, float] = {}
         self._fan_grid_columns = 0
+        self._fan_grid_visible: tuple[int, ...] = ()
+        self._attention_only = False
         self._fan_frames: dict[int, QFrame] = {}
 
         root = QHBoxLayout(self)
@@ -271,6 +288,9 @@ class DashboardShell(QWidget):
             shortcut = QShortcut(QKeySequence(f"Ctrl+{index}"), self)
             shortcut.activated.connect(lambda selected=key: self.show_page(selected))
             self._shortcuts.append(shortcut)
+        overview_shortcut = QShortcut(QKeySequence("Alt+Home"), self)
+        overview_shortcut.activated.connect(lambda: self.show_page("overview"))
+        self._shortcuts.append(overview_shortcut)
         palette_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
         palette_shortcut.activated.connect(self.open_command_palette)
         self._shortcuts.append(palette_shortcut)
@@ -383,7 +403,7 @@ class DashboardShell(QWidget):
             layout.addWidget(button)
             self.nav[key] = button
         layout.addStretch(1)
-        layout.addWidget(_label("Ctrl+K  ·  швидкий перехід", "minor"))
+        layout.addWidget(_label("Ctrl+K · пошук  |  Alt+Home · огляд", "minor"))
         layout.addWidget(_label("Керування тільки локально", "minor"))
         return panel
 
@@ -489,6 +509,11 @@ class DashboardShell(QWidget):
         self.summary_esp.setAlignment(Qt.AlignmentFlag.AlignRight)
         right.addWidget(self.summary_esp)
         info.addLayout(right, 0)
+        diagnostics_button = QPushButton("Діагностика")
+        diagnostics_button.setProperty("role", "ghost")
+        diagnostics_button.setToolTip("Відкрити діагностику контролера")
+        diagnostics_button.clicked.connect(lambda: self.show_page("service"))
+        right.addWidget(diagnostics_button)
         layout.addWidget(banner)
 
         telemetry = QFrame()
@@ -528,6 +553,16 @@ class DashboardShell(QWidget):
         )
         details.toggled.connect(self._toggle_sources)
         heading.addWidget(details)
+        self.attention_filter = QPushButton("Проблемні")
+        self.attention_filter.setCheckable(True)
+        self.attention_filter.setProperty("role", "filter")
+        self.attention_filter.setToolTip(
+            "Залишити на екрані канали з аварією, застарілою температурою "
+            "або ще не отриманим статусом. Фільтр не змінює керування."
+        )
+        self.attention_filter.setAccessibleName("Показати тільки проблемні вентилятори")
+        self.attention_filter.toggled.connect(self._toggle_attention_filter)
+        heading.addWidget(self.attention_filter)
         shortcut = QPushButton("Усі канали")
         shortcut.clicked.connect(lambda: self.show_page("fans"))
         heading.addWidget(shortcut)
@@ -556,6 +591,16 @@ class DashboardShell(QWidget):
             box.addWidget(rpm)
             metrics = _label("— %   ·   — °C", "minor", True)
             box.addWidget(metrics)
+            duty = QProgressBar()
+            duty.setObjectName("fanDuty")
+            duty.setRange(0, 100)
+            duty.setValue(0)
+            duty.setTextVisible(False)
+            duty.setProperty("state", "idle")
+            duty.setToolTip("PWM: немає даних")
+            duty.setAccessibleName(f"PWM вентилятора {ch}")
+            duty.setAccessibleDescription("Поточний відсоток PWM, тільки для перегляду")
+            box.addWidget(duty)
             source = _label("Джерело: не вибрано", "minor", True)
             source.setVisible(details.isChecked())
             source.setToolTip("Джерело температури цього вентилятора")
@@ -568,11 +613,25 @@ class DashboardShell(QWidget):
             self._fan_frames[ch] = frame
             self.fan_cards[ch] = {
                 "rpm": rpm, "metrics": metrics, "source": source, "state": state,
+                "bar": duty,
             }
         layout.addLayout(grid)
+        self.attention_empty_card = QFrame()
+        self.attention_empty_card.setObjectName("quietCard")
+        empty_box = QVBoxLayout(self.attention_empty_card)
+        empty_box.setContentsMargins(18, 17, 18, 17)
+        empty_box.setSpacing(4)
+        empty_box.addWidget(_label("Немає каналів для перегляду", "labelTitle"))
+        self.attention_empty_text = _label(
+            "Дані ще не отримано. Перевір підключення контролера.", "minor", True
+        )
+        empty_box.addWidget(self.attention_empty_text)
+        self.attention_empty_card.setVisible(False)
+        layout.addWidget(self.attention_empty_card)
         info_text = _label(
-            "За втрати актуальної температури прошивка переходить у fail-safe. "
-            "Гарантоване живлення вентиляторів під час reset залежить від схеми ключів.",
+            "Індикатори PWM та RPM — лише телеметрія. Фільтр «Проблемні» "
+            "не змінює керування. За втрати температури діє fail-safe; "
+            "живлення вентиляторів під час reset залежить від силової схеми.",
             "minor", True,
         )
         layout.addWidget(info_text)
@@ -585,19 +644,55 @@ class DashboardShell(QWidget):
             labels["source"].setVisible(checked)
         self.controller.settings.setValue("showFanSources", checked)
 
+    def _toggle_attention_filter(self, checked: bool) -> None:
+        """Local display filter; never sends commands to a fan."""
+        self._attention_only = bool(checked)
+        self._reflow_fan_cards()
+
+    def _refresh_attention_count(self) -> None:
+        count = sum(
+            bool(status.fault) or not bool(status.fresh)
+            for status in self._fan_statuses.values()
+        )
+        self.attention_filter.setText(
+            f"Проблемні · {count}" if count else "Проблемні · 0"
+        )
+        self.attention_filter.setToolTip(
+            f"Зафіксовано {count} проблемних каналів. "
+            "Непрочитані канали також відображаються у фільтрі."
+        )
+
     def _reflow_fan_cards(self) -> None:
         if not hasattr(self, "_fan_grid"):
             return
         available = max(0, self.width() - 252)
         columns = 4 if available >= 1000 else 3 if available >= 765 else 2
-        if columns != self._fan_grid_columns:
+        visible = tuple(
+            ch for ch in self._fan_frames
+            if not self._attention_only
+            or not self.is_connected
+            or ch not in self._fan_statuses
+            or bool(self._fan_statuses[ch].fault)
+            or not bool(self._fan_statuses[ch].fresh)
+        )
+        if columns != self._fan_grid_columns or visible != self._fan_grid_visible:
             self._fan_grid_columns = columns
+            self._fan_grid_visible = visible
             for frame in self._fan_frames.values():
                 self._fan_grid.removeWidget(frame)
-            for ch, frame in self._fan_frames.items():
-                self._fan_grid.addWidget(frame, (ch - 1) // columns, (ch - 1) % columns)
+                frame.hide()
+            for index, ch in enumerate(visible):
+                frame = self._fan_frames[ch]
+                self._fan_grid.addWidget(frame, index // columns, index % columns)
+                frame.show()
             for col in range(4):
                 self._fan_grid.setColumnStretch(col, 1 if col < columns else 0)
+        self.attention_empty_card.setVisible(self._attention_only and not visible)
+        if self._attention_only and not visible:
+            self.attention_empty_text.setText(
+                "Усі 8 вентиляторів передають актуальний стан без аварій. "
+                "Повернись до «Усі канали», щоб побачити їхні параметри."
+            )
         metrics_columns = 4 if available >= 850 else 2
         if metrics_columns != self._summary_grid_columns:
             self._summary_grid_columns = metrics_columns
@@ -1279,6 +1374,7 @@ class DashboardShell(QWidget):
         if key not in self.page_index:
             raise KeyError(f"Unknown page: {key}")
         self.stack.setCurrentIndex(self.page_index[key])
+        self.setAccessibleDescription(f"Активний розділ: {key}")
         self.stack.widget(self.page_index[key]).verticalScrollBar().setValue(0)
         for name, button in self.nav.items():
             button.setChecked(name == key)
@@ -1314,6 +1410,7 @@ class DashboardShell(QWidget):
             self.summary_esp.setText(port_name or "Підключено")
         else:
             self._fan_statuses.clear()
+            self._last_fan_update.clear()
             self.connection_text.setText("●  ESP32 не підключено")
             self.connection_text.setProperty("role", "caution")
             self.summary_esp.setText("Не підключено")
@@ -1322,11 +1419,22 @@ class DashboardShell(QWidget):
             for labels in self.fan_cards.values():
                 labels["rpm"].setText("— RPM")
                 labels["metrics"].setText("— %  ·  — °C")
+                frame = self._fan_frames[next(ch for ch, card in self.fan_cards.items() if card is labels)]
+                frame.setProperty("state", "idle")
+                frame.style().unpolish(frame)
+                frame.style().polish(frame)
+                labels["bar"].setValue(0)
+                labels["bar"].setProperty("state", "idle")
+                labels["bar"].setToolTip("PWM: немає даних")
+                labels["bar"].style().unpolish(labels["bar"])
+                labels["bar"].style().polish(labels["bar"])
                 labels["state"].setText("Немає даних")
                 labels["state"].setProperty("role", "minor")
                 labels["state"].style().unpolish(labels["state"])
                 labels["state"].style().polish(labels["state"])
         self._update_cooling_health()
+        self._refresh_attention_count()
+        self._reflow_fan_cards()
         self._refresh_fan_detail()
         self._update_pc_buttons()
         self.device_settings.set_connected(connected)
@@ -1361,9 +1469,33 @@ class DashboardShell(QWidget):
         if labels is None:
             return
         self._fan_statuses[channel] = status
-        labels["rpm"].setText(f"{status.rpm} RPM" if status.rpm_feedback else "— RPM")
+        self._last_fan_update[channel] = time.monotonic()
+        self._fan_frames[channel].setToolTip(
+            f"FAN {channel:02d} · {status.pwm}% PWM · "
+            + (f"{status.rpm} RPM" if status.rpm_feedback else "TACH недоступний")
+        )
+        labels["rpm"].setText(
+            f"{status.rpm:,} RPM".replace(",", " ") if status.rpm_feedback else "— RPM"
+        )
         temp = f"{status.deci_c / 10:.1f} °C" if status.fresh else "— °C"
-        labels["metrics"].setText(f"{status.pwm}% PWM  ·  {temp}")
+        labels["metrics"].setText(f"PWM {status.pwm:3d}%  ·  {temp}")
+        bar = labels["bar"]
+        bar.setValue(max(0, min(100, int(status.pwm))))
+        bar.setToolTip(f"PWM вентилятора {channel}: {status.pwm}%")
+        bar.setAccessibleDescription(
+            f"Канал {channel}, PWM {status.pwm} відсотків, "
+            + ("аварія" if status.fault else "захист" if not status.fresh else "норма")
+        )
+        bar_state = "critical" if status.fault else "warning" if not status.fresh else "normal"
+        if bar.property("state") != bar_state:
+            bar.setProperty("state", bar_state)
+            bar.style().unpolish(bar)
+            bar.style().polish(bar)
+        frame = self._fan_frames[channel]
+        if frame.property("state") != bar_state:
+            frame.setProperty("state", bar_state)
+            frame.style().unpolish(frame)
+            frame.style().polish(frame)
         if status.fault:
             labels["state"].setText("Аварія")
             labels["state"].setProperty("role", "negative")
@@ -1377,6 +1509,9 @@ class DashboardShell(QWidget):
         state.style().unpolish(state)
         state.style().polish(state)
         self._update_cooling_health()
+        self._refresh_attention_count()
+        if self._attention_only:
+            self._reflow_fan_cards()
         if channel == self.controller.fan_box.currentData():
             self._refresh_fan_detail()
 
