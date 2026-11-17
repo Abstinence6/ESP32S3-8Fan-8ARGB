@@ -82,7 +82,10 @@ jobs:
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME -replace '^release/', ''
-          if ($version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+
+          if ($version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
+            throw 'Invalid release version tag'
+          }
+          "APP_VERSION = '$version'" | Set-Content pc_app/_release_version.py -Encoding utf8
       - name: Unit tests
         run: python -m unittest discover -s pc_app/tests -v
       - name: Install dependencies
@@ -165,74 +168,4 @@ jobs:
             release/FanARGBControl-Windows.zip \
             release/ESP32S3-8Fan-8ARGB-firmware.zip \
             "${options[@]}" \
-            --notes "Paired ESP32-S3 firmware and Windows EXE from commit $GITHUB_SHA. Both ZIPs contain SHA256SUMS and manifest.json. Install Windows updates manually; ESP32 flashing requires validated board and physical fan fail-ON. Checksums are not digital signatures."
-) {
-            throw 'Invalid release version tag'
-          }
-          "APP_VERSION = '$version'" | Set-Content pc_app/_release_version.py -Encoding utf8
-      - name: Unit tests
-        run: python -m unittest discover -s pc_app/tests -v
-      - name: Install dependencies
-        run: python -m pip install -r pc_app/requirements.txt pyinstaller
-      - name: Smoke test Windows UI
-        shell: pwsh
-        run: |
-          $env:QT_QPA_PLATFORM = "offscreen"
-          python -m unittest pc_app.tests.test_dashboard_smoke -v
-      - name: Prepare verified NWinfo
-        shell: pwsh
-        run: ./pc_app/prepare_nwinfo.ps1 -OutputDirectory dist/nwinfo
-      - name: Build standalone Windows EXE
-        run: python -m PyInstaller --clean --noconfirm --windowed --onefile --paths pc_app --add-data "dist/nwinfo;nwinfo" --collect-all esptool --name FanARGBControl pc_app/main.py
-      - name: Verify bundled modules and NWinfo
-        run: python pc_app/verify_windows_bundle.py dist/FanARGBControl.exe
-      - name: Package Windows release
-        shell: pwsh
-        run: |
-          python scripts/build_manifest.py --component windows --directory dist --commit $env:GITHUB_SHA --file FanARGBControl.exe
-          if ($LASTEXITCODE -ne 0) { throw 'Windows manifest failed' }
-          Compress-Archive -Path @("dist/FanARGBControl.exe","dist/manifest.json","dist/SHA256SUMS") -DestinationPath dist/FanARGBControl-Windows.zip -Force
-      - uses: actions/upload-artifact@v4
-        with:
-          name: github-release-windows
-          path: dist/FanARGBControl-Windows.zip
-          if-no-files-found: error
-
-  publish:
-    needs: [firmware, windows]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Confirm version tag is reachable from main
-        shell: bash
-        run: |
-          set -euo pipefail
-          git fetch origin main
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-      - uses: actions/download-artifact@v4
-        with:
-          name: github-release-firmware
-          path: release
-      - uses: actions/download-artifact@v4
-        with:
-          name: github-release-windows
-          path: release
-      - name: Create paired GitHub Release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          test -s release/FanARGBControl-Windows.zip
-          test -s release/ESP32S3-8Fan-8ARGB-firmware.zip
-          gh release create "$GITHUB_REF_NAME" \
-            release/FanARGBControl-Windows.zip \
-            release/ESP32S3-8Fan-8ARGB-firmware.zip \
-            --verify-tag \
-            --title "FanARGBControl $GITHUB_REF_NAME" \
             --notes "Paired ESP32-S3 firmware and Windows EXE from commit $GITHUB_SHA. Both ZIPs contain SHA256SUMS and manifest.json. Install Windows updates manually; ESP32 flashing requires validated board and physical fan fail-ON. Checksums are not digital signatures."
