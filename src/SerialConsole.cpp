@@ -100,6 +100,7 @@ void SerialConsole::handleByte(uint8_t byte) {
         rx_ = RxState::Sync;
         rgbCrc_ = 0xFFFFU;
         rgbLastByteMs_ = millis();
+        rgbFrameStartMs_ = rgbLastByteMs_;
         return;
     }
     if (byte == '\r') return;
