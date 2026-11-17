@@ -22,9 +22,13 @@ except ImportError:
     from firmware_update import inspect_firmware
 
 try:
-    from ._release_version import APP_VERSION
+    # A concrete import makes PyInstaller include this module in the EXE.
+    from _release_version import APP_VERSION
 except ImportError:
-    APP_VERSION = "development"
+    try:
+        from ._release_version import APP_VERSION
+    except ImportError:
+        APP_VERSION = "development"
 
 REPO = "Abstinence6/ESP32S3-8Fan-8ARGB"
 API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
