@@ -312,11 +312,14 @@ class DeviceSettingsPanel(QWidget):
         gpio_link.setProperty("role", "ghost")
         gpio_link.clicked.connect(self.gpio_dialog.show)
         links.addWidget(gpio_link)
+        links.addStretch(1)
+        assist_links = QHBoxLayout()
         assist_link = QPushButton("CPU/GPU Power · Intake/Exhaust…")
         assist_link.setProperty("role", "ghost")
+        assist_link.setMaximumWidth(295)
         assist_link.clicked.connect(self.assist_dialog.show)
-        links.addWidget(assist_link)
-        links.addStretch(1)
+        assist_links.addWidget(assist_link)
+        assist_links.addStretch(1)
         limitations = QLabel(
             "GPIO 8 PWM / 8 TACH / 8 ARGB налаштовуються через діалог GPIO. "
             "Нова розкладка зберігається в ESP32 NVS і працює після перезапуску. "
@@ -353,6 +356,7 @@ class DeviceSettingsPanel(QWidget):
         # Related navigation and hardware disclaimer remain secondary.
         root.addWidget(self.action_footer)
         root.addLayout(links)
+        root.addLayout(assist_links)
         root.addWidget(limitations)
         root.addStretch(1)
         self._action_buttons = (
