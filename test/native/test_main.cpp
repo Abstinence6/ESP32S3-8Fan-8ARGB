@@ -97,7 +97,7 @@ int main() {
     const uint8_t invalidLength[] = {0xA5, 0x5A, 0x02, 0xFF, 0x7F};
     Serial.send(std::string(reinterpret_cast<const char*>(invalidLength), 5) + "FAN 4 0\n");
     console.poll();
-    assert(fans.getPercent(3) == 77);
+    assert(fans.getPercent(3) == 100); // rejected binary header cannot change output
     mock::currentMs += 500;
     console.poll();
     Serial.send("FAN 4 45\n");
