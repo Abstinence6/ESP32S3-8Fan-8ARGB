@@ -7,6 +7,7 @@
 #include "MqttBridge.h"
 #include "PcPowerController.h"
 #include "HardwareTemperature.h"
+#include "TemperatureArgbSettings.h"
 
 #if defined(ARDUINO_ARCH_ESP32)
 #include <esp_task_wdt.h>
@@ -20,8 +21,9 @@ CoolingController cooling(fans, Serial);
 NetworkRgbBridge wifiRgb(leds);
 PcPowerController pcPower;
 HardwareTemperature hardwareTemp;
+TemperatureArgbSettings temperatureArgbSettings;
 MqttBridge mqtt(cooling, fans, leds, wifiRgb, &pcPower);
-SerialConsole console(Serial, fans, leds, cooling, &wifiRgb, &mqtt, &pcPower, &hardwareTemp);
+SerialConsole console(Serial, fans, leds, cooling, &wifiRgb, &mqtt, &pcPower, &hardwareTemp, &temperatureArgbSettings);
 
 void setup() {
 #if !ARDUINO_USB_CDC_ON_BOOT
@@ -49,6 +51,7 @@ void setup() {
     if (!hardwareTemp.begin()) Serial.println(F("WARN: hardware DS18B20 NVS unavailable"));
     wifiRgb.begin();
     if (!mqtt.begin()) Serial.println(F("WARN: MQTT NVS unavailable"));
+    if (!temperatureArgbSettings.begin()) Serial.println(F("WARN: temperature ARGB NVS unavailable"));
     console.begin();
 #if defined(ARDUINO_ARCH_ESP32)
     // Software recovery from a stalled Arduino loop. Electrical full-speed

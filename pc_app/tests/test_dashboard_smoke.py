@@ -121,7 +121,7 @@ class DashboardSmokeTests(unittest.TestCase):
         shell = self.window.dashboard
         self.assertEqual(shell.fan_workspace_tabs.count(), 3)
         self.assertEqual(shell.sensor_workspace_tabs.count(), 3)
-        self.assertEqual(shell.argb_workspace_tabs.count(), 3)
+        self.assertEqual(shell.argb_workspace_tabs.count(), 4)
         self.assertEqual(shell.service_workspace_tabs.count(), 5)
         self.window.show()
         for width in (1080, 1510):
@@ -179,10 +179,54 @@ class DashboardSmokeTests(unittest.TestCase):
         shell.set_connected(False)
         self.assertIn("Немає", shell.fan_live_state.text())
 
+    def test_temperature_argb_esp_readback_save_and_reload(self):
+        shell = self.window.dashboard
+        panel = shell.temperature_argb
+        sent = []
+        self.window.send = lambda command: sent.append(command) or True
+        shell.set_connected(True, "COM9")
+        panel.set_version(8)
+        self.assertEqual(sent[-1], "TARGB? 1")
+        self.window.handle_line(
+            "TARGB CH=1 SOURCE_HEX=6E77696E666F2F6370752F706B67 "
+            "LOW=30 HIGH=85 BRIGHT=64 COUNT=0"
+        )
+        self.window.handle_line("TARGB_END CH=1")
+        self.assertEqual(panel.configs[1].source, "nwinfo/cpu/pkg")
+        self.assertEqual(sent[-1], "TARGB? 2")
+        # Simulate completing the eight independent readback transactions.
+        for ch in range(2, 9):
+            self.window.handle_line(
+                f"TARGB CH={ch} SOURCE_HEX=5F5F4F46465F5F "
+                "LOW=30 HIGH=85 BRIGHT=64 COUNT=0"
+            )
+            self.window.handle_line(f"TARGB_END CH={ch}")
+        self.assertTrue(panel.save_buttons[1].isEnabled() is False)
+        panel.lows[1].setValue(35)
+        self.assertIn(1, panel._dirty)
+        panel.save_zone(1)
+        self.assertEqual(sent[-1], "TARGB BEGIN 1")
+        self.window.handle_line("OK TARGB_BEGIN")
+        self.assertTrue(sent[-1].startswith("TARGB SOURCE "))
+        self.window.handle_line("OK TARGB_SOURCE")
+        self.assertEqual(sent[-1], "TARGB RANGE 35 85 64")
+        self.window.handle_line("OK TARGB_RANGE")
+        self.assertEqual(sent[-1], "TARGB COMMIT")
+        self.window.handle_line("OK TARGB_SAVED")
+        self.assertEqual(sent[-1], "TARGB? 1")
+        self.window.handle_line(
+            "TARGB CH=1 SOURCE_HEX=6E77696E666F2F6370752F706B67 "
+            "LOW=35 HIGH=85 BRIGHT=64 COUNT=0"
+        )
+        self.window.handle_line("TARGB_END CH=1")
+        self.assertIn("підтвердив", panel.status.text())
+        self.assertEqual(panel.configs[1].low_c, 35)
+        self.assertNotIn(1, panel._dirty)
+
     def test_v3_argb_zone_map_is_read_only_until_apply(self):
         shell = self.window.dashboard
         self.assertEqual(len(shell.argb_zone_tiles), 8)
-        self.assertEqual(shell.argb_workspace_tabs.count(), 3)
+        self.assertEqual(shell.argb_workspace_tabs.count(), 4)
         self.assertTrue(shell.argb_zone_tiles[1][0].property("selected"))
         shell.zone_box.setCurrentIndex(4)
         self.assertFalse(shell.argb_zone_tiles[1][0].property("selected"))

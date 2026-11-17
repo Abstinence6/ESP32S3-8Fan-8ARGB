@@ -65,6 +65,7 @@ class FanArgbWindow(QMainWindow):
         self._reconnect_armed = False
         self.read_buffer = ""
         self.temperatures: list[TemperatureSensor] = []
+        self.last_temperature_sample_at = float("-inf")
         self.curves = {ch: list(DEFAULT_CURVE) for ch in range(1, 9)}
         self.secondary_curves = {ch: list(DEFAULT_CURVE) for ch in range(1, 9)}
         self.config_types: dict[int, int] = {}
@@ -737,6 +738,8 @@ class FanArgbWindow(QMainWindow):
         if line.startswith("PONG ") and line[5:].isdigit():
             self.heartbeat.pong()
             return
+        if self.dashboard.temperature_argb.handle_line(line):
+            return
         if self.dashboard.device_settings.handle_line(line):
             return
         if self.dashboard.diagnostics.handle_line(line):
@@ -798,7 +801,9 @@ class FanArgbWindow(QMainWindow):
                     + f" · DC PWM {'дозволено' if fields.get('DC_READY') == '1' else 'заблоковано'}"
                     + f" · DS18B20 {'так' if fields.get('DS18B20') == '1' else 'ні'}"
                 )
-                self.dashboard.device_settings.set_version(version, int(fields.get("SERIAL", 5)))
+                serial_version = int(fields.get("SERIAL", 5))
+                self.dashboard.device_settings.set_version(version, serial_version)
+                self.dashboard.temperature_argb.set_version(serial_version)
             except (ValueError, KeyError):
                 self.log("Невалідна відповідь VERSION?")
             return
@@ -927,6 +932,7 @@ class FanArgbWindow(QMainWindow):
                 self.sensor_status.setStyleSheet("color: #edba6d")
                 return
             self.temperatures = sample
+            self.last_temperature_sample_at = time.monotonic()
             ready = True
             provider_issues = self.sensor_sampler.problems
             details = "; ".join(f"{p}: {v}" for p, v in sorted(provider_issues.items()))
@@ -985,6 +991,7 @@ class FanArgbWindow(QMainWindow):
         self._update_tray_tooltip()
         self._update_source_boxes()
         self._update_secondary_box()
+        self.dashboard.temperature_argb.refresh_sensors()
 
         # All group sensors must be present; otherwise ESP's 10s stale watchdog
         # falls back to 100% PWM. Temperature traffic shares USB with RGB frames.
@@ -1534,6 +1541,8 @@ class FanArgbWindow(QMainWindow):
         """Apply a lighting-only scene without modifying cooling NVS or fan duty."""
         if self.dashboard.studio.active:
             self.dashboard.studio.stop()
+        if self.dashboard.temperature_argb.active:
+            self.dashboard.temperature_argb.stop()
         if self.dashboard.native_checkbox.isChecked():
             self.dashboard.native_checkbox.setChecked(False)
         if not self.port:
@@ -1570,6 +1579,8 @@ class FanArgbWindow(QMainWindow):
         )
 
     def pick_color(self) -> None:
+        if self.dashboard.temperature_argb.active:
+            self.dashboard.temperature_argb.stop()
         color = QColorDialog.getColor(parent=self, title="ARGB — колір стрічки")
         if color.isValid():
             self.send(f"LED {self.current_fan} {color.red()} {color.green()} {color.blue()}")
@@ -1624,6 +1635,8 @@ class FanArgbWindow(QMainWindow):
         self.dashboard.device_settings.wifi_ssid.setFocus()
 
     def toggle_native_openrgb(self, enabled: bool) -> None:
+        if enabled and self.dashboard.temperature_argb.active:
+            self.dashboard.temperature_argb.stop()
         if not enabled:
             self.openrgb_native.stop()
             return
@@ -1660,6 +1673,8 @@ class FanArgbWindow(QMainWindow):
                 self.log(f"OpenRGB SDK кадр відхилено: {exc}")
 
     def toggle_sacn(self, enabled: bool) -> None:
+        if enabled and self.dashboard.temperature_argb.active:
+            self.dashboard.temperature_argb.stop()
         if enabled and self.dashboard.native_checkbox.isChecked():
             self.dashboard.native_checkbox.setChecked(False)
         if enabled and self.dashboard.studio.active:

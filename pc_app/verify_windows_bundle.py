@@ -18,6 +18,7 @@ REQUIRED = frozenset({
     "profiles", "config_presets", "agent", "ui_dashboard", "ui_dashboard_model",
     "nwinfo_sensors", "smart_control", "autostart", "settings_widgets",
     "hardware_sensor_ui", "argb_effects", "argb_studio_ui",
+    "temperature_argb", "temperature_argb_ui",
     "config_backup", "maintenance_ui", "firmware_update", "esptool",
     "tray_monitor", "serial_tx", "port_recovery", "tach_health",
     "telemetry_store", "openrgb_native", "device_config_protocol", "device_settings_ui",
