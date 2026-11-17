@@ -9,6 +9,7 @@
 #include "HardwareTemperature.h"
 #include "PinMapSettings.h"
 #include "TemperatureArgbSettings.h"
+#include "TemperaturePaletteSettings.h"
 #include <string.h>
 
 #if defined(ARDUINO_ARCH_ESP32)
@@ -24,8 +25,9 @@ NetworkRgbBridge wifiRgb(leds);
 PcPowerController pcPower;
 HardwareTemperature hardwareTemp;
 TemperatureArgbSettings temperatureArgbSettings;
+TemperaturePaletteSettings temperaturePaletteSettings;
 MqttBridge mqtt(cooling, fans, leds, wifiRgb, &pcPower);
-SerialConsole console(Serial, fans, leds, cooling, &wifiRgb, &mqtt, &pcPower, &hardwareTemp, &temperatureArgbSettings);
+SerialConsole console(Serial, fans, leds, cooling, &wifiRgb, &mqtt, &pcPower, &hardwareTemp, &temperatureArgbSettings, &temperaturePaletteSettings);
 
 void setup() {
 #if !ARDUINO_USB_CDC_ON_BOOT
@@ -56,6 +58,7 @@ void setup() {
     wifiRgb.begin();
     if (!mqtt.begin()) Serial.println(F("WARN: MQTT NVS unavailable"));
     if (!temperatureArgbSettings.begin()) Serial.println(F("WARN: temperature ARGB NVS unavailable"));
+    if (!temperaturePaletteSettings.begin()) Serial.println(F("WARN: temperature palette NVS unavailable"));
     console.begin();
 #if defined(ARDUINO_ARCH_ESP32)
     // Software recovery from a stalled Arduino loop. Electrical full-speed

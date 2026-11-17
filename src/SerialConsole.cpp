@@ -8,8 +8,8 @@
 #include <string.h>
 
 SerialConsole::SerialConsole(Stream& serial, FanController& fans, ArgbController& leds,
-                             CoolingController& cooling, NetworkRgbBridge* wifi, MqttBridge* mqtt, PcPowerController* pc, HardwareTemperature* hw, TemperatureArgbSettings* temperatureArgb)
-    : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling), wifi_(wifi), mqtt_(mqtt), pc_(pc), hw_(hw), temperatureArgb_(temperatureArgb) {}
+                             CoolingController& cooling, NetworkRgbBridge* wifi, MqttBridge* mqtt, PcPowerController* pc, HardwareTemperature* hw, TemperatureArgbSettings* temperatureArgb, TemperaturePaletteSettings* temperaturePalette)
+    : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling), wifi_(wifi), mqtt_(mqtt), pc_(pc), hw_(hw), temperatureArgb_(temperatureArgb), temperaturePalette_(temperaturePalette) {}
 
 void SerialConsole::begin() {
     serial_.println(F("8Fan/8ARGB ready | protocol v8 | type HELP"));
@@ -150,6 +150,52 @@ void SerialConsole::handleLine(char* line) {
     auto noMore = [&next]() -> bool { return next() == nullptr; };
     auto error = [this]() { serial_.println(F("ERR arguments | type HELP")); };
 
+    if (!strcmp(command, "TPAL?")) {
+        uint8_t channel = 0;
+        if (!parseByte(next(), board::kChannelCount, channel) || !channel || !noMore())
+            return error();
+        if (!temperaturePalette_) {
+            serial_.println(F("ERR TPAL unsupported")); return;
+        }
+        const auto& pal = temperaturePalette_->get(channel - 1);
+        serial_.print(F("TPAL CH=")); serial_.print(channel);
+        serial_.print(F(" COUNT=")); serial_.print(pal.count);
+        serial_.print(F(" DATA="));
+        for (uint8_t i = 0; i < pal.count; ++i) {
+            if (i) serial_.print(';');
+            const auto& p = pal.points[i];
+            serial_.print(p.tempC); serial_.print(',');
+            serial_.print(p.r); serial_.print(',');
+            serial_.print(p.g); serial_.print(',');
+            serial_.print(p.b);
+        }
+        serial_.println("");
+        return;
+    }
+    if (!strcmp(command, "TPAL")) {
+        if (!temperaturePalette_) {
+            serial_.println(F("ERR TPAL unsupported")); return;
+        }
+        if (strcmp(next(), "SET") != 0) return error();
+        uint8_t channel = 0, count = 0;
+        if (!parseByte(next(), board::kChannelCount, channel) || !channel ||
+            !parseByte(next(), TemperaturePaletteSettings::kMaxPoints, count) ||
+            count < TemperaturePaletteSettings::kMinPoints) return error();
+        TemperaturePaletteSettings::Palette candidate = {};
+        candidate.count = count;
+        for (uint8_t i = 0; i < count; ++i) {
+            auto& p = candidate.points[i];
+            if (!parseByte(next(), 125, p.tempC) || !parseByte(next(), 255, p.r) ||
+                !parseByte(next(), 255, p.g) || !parseByte(next(), 255, p.b))
+                return error();
+        }
+        if (!noMore()) return error();
+        if (!temperaturePalette_->set(channel - 1, candidate)) {
+            serial_.println(F("ERR TPAL invalid or NVS write failed")); return;
+        }
+        serial_.println(F("OK TPAL_SAVED"));
+        return;
+    }
     if (!strcmp(command, "TARGB?")) {
         uint8_t ch = 0;
         if (!parseByte(next(), board::kChannelCount, ch) || !ch || !noMore())
@@ -327,13 +373,14 @@ void SerialConsole::handleLine(char* line) {
     }
     if (strcmp(command, "VERSION?") == 0) {
         if (!noMore()) return error();
-        serial_.print(F("FW VERSION=9 SERIAL=8 DC_READY="));
+        serial_.print(F("FW VERSION=10 SERIAL=8 DC_READY="));
         serial_.print(board::kDcSupplyPwmValidated ? 1 : 0);
         serial_.print(F(" DS18B20="));
         serial_.print(hw_ && hw_->enabled() ? 1 : 0);
         serial_.print(F(" SENSORS="));
         serial_.print(hw_ ? hw_->sensorCount() : 0);
-        serial_.println(F(" GPIO_NVS=1"));
+        serial_.print(F(" GPIO_NVS=1 TPAL_NVS="));
+        serial_.println(temperaturePalette_ ? 1 : 0);
         return;
     }
     if (strcmp(command, "HTSCAN") == 0) {
@@ -906,6 +953,7 @@ void SerialConsole::printHelp() {
     serial_.println(F("Channels: 1..8, temperatures: deci-Celsius, e.g. 455 = 45.5 C"));
     serial_.println(F("PING | STATUS | HEALTH [ch] | SELFTEST [CANCEL] | HELP | LEDS | PC STATUS|ON|OFF|FORCE"));
     serial_.println(F("GPIO? | GPIO BEGIN | GPIO PWM|TACH|ARGB <ch> <pin> | GPIO COMMIT|CANCEL|FACTORY"));
+    serial_.println(F("TPAL? <ch> | TPAL SET <ch> <count> <temp> <r> <g> <b> ... (4..8 points)"));
     serial_.println(F("TARGB? <ch> | TARGB BEGIN <ch> | SOURCE <hex> | GROUP <hex> | RANGE <low> <high> <bright> | COMMIT | CANCEL"));
     serial_.println(F("VERSION? | HTEMP? | HTLIST? | HTSCAN | HTMAP? <ch> | HTMAP <ch> AUTO|ROMHEX"));
     serial_.println(F("HTMODE? <ch> | HTMODE <ch> PC|LOCAL|BACKUP"));
