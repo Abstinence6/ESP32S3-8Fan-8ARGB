@@ -237,7 +237,9 @@ class DashboardSmokeTests(unittest.TestCase):
         from PySide6.QtWidgets import QMessageBox
         from unittest.mock import patch
 
+        from unittest.mock import Mock
         self.window.pid_tune_supported = True
+        self.window.port = Mock()
         sent = []
         self.window.send = lambda command: sent.append(command) or True
         self.window.dashboard.set_connected(True, "COM7")
