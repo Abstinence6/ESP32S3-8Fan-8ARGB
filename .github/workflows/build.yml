@@ -34,7 +34,24 @@ jobs:
           BOOT_APP0="$(find "$HOME/.platformio/packages/framework-arduinoespressif32" -name boot_app0.bin -print -quit)"
           test -n "$BOOT_APP0"
           cp "$BOOT_APP0" dist/esp32s3/boot_app0.bin
-          printf '%s\n'             'ESP32-S3, PlatformIO env esp32s3; GPIO mapping documented in README.md.'             'Fresh flash: install esptool then run the command below from this folder.'             'python -m esptool --chip esp32s3 --port COMx write_flash 0x0 bootloader.bin 0x8000 partitions.bin 0xe000 boot_app0.bin 0x10000 firmware.bin'             'Existing matching partition layout: python -m esptool --chip esp32s3 --port COMx write_flash 0x10000 firmware.bin'             'IMPORTANT: GPIO35-37 are not usable on Octal-PSRAM variants. GPIO46 is a bootstrapping pin.'             'PC_POWER_ENABLED=0 and FAN_DC_PWM_VALIDATED=0 by default.'             > dist/esp32s3/FLASH.txt
+          cat > dist/esp32s3/FLASH.txt <<'EOF'
+          ESP32-S3 / PlatformIO environment: esp32s3
+          Verify the exact board, flash size, partition layout and GPIO wiring.
+          Install esptool and replace COMx with the actual serial port.
+
+          Fresh flash (bootloader, partitions, boot_app0 and application):
+          python -m esptool --chip esp32s3 --port COMx write_flash \
+            0x0 bootloader.bin 0x8000 partitions.bin \
+            0xe000 boot_app0.bin 0x10000 firmware.bin
+
+          Firmware-only update (only with matching partition layout):
+          python -m esptool --chip esp32s3 --port COMx write_flash 0x10000 firmware.bin
+
+          IMPORTANT: GPIO35-37 cannot be used on Octal-PSRAM variants.
+          GPIO46 is a bootstrapping pin: verify attached circuits at reset.
+          PC_POWER_ENABLED=0 and FAN_DC_PWM_VALIDATED=0 by default.
+          Do not enable unvalidated DC fan supply PWM.
+          EOF
       - uses: actions/upload-artifact@v4
         with:
           name: ESP32S3-8Fan-8ARGB-firmware
