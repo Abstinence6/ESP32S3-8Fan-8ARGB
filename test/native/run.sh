@@ -61,6 +61,11 @@ g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
   src/HardwareTemperature.cpp test/native/test_hw_temp.cpp -o "$out"
 "$out"
 
+# Read/write pin mapping with NVS CRC; reject reserved/duplicate GPIO.
+g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
+  test/native/mock/Arduino.cpp test/native/test_pinmap.cpp -o "$out"
+"$out"
+
 # NVS temperature ARGB: serial commands, power-cycle persistence,
 # transaction rollback and corruption fallback.
 g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \

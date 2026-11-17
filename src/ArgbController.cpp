@@ -1,4 +1,5 @@
 #include "ArgbController.h"
+#include "PinMapSettings.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -31,7 +32,7 @@ bool ArgbController::begin() {
     for (uint8_t i = 0; i < board::kChannelCount; ++i) {
         strips_[i].updateType(NEO_GRB + NEO_KHZ800);
         strips_[i].updateLength(valid ? config.counts[i] : board::kArgbLedCounts[i]);
-        strips_[i].setPin(board::kArgbDataPins[i]);
+        strips_[i].setPin(pinmap::argbPin(i));
         strips_[i].begin();
         strips_[i].setBrightness(255);
         brightness_[i] = board::kInitialArgbBrightness;

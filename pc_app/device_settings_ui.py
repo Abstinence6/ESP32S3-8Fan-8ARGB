@@ -17,8 +17,10 @@ from PySide6.QtWidgets import (
 
 try:
     from .device_config_protocol import decode_value, fields, wifi_command, mqtt_commands, mqtt_transaction_commands
+    from .gpio_settings_ui import GpioSettingsDialog
 except ImportError:
     from device_config_protocol import decode_value, fields, wifi_command, mqtt_commands, mqtt_transaction_commands
+    from gpio_settings_ui import GpioSettingsDialog
 
 
 class DeviceSettingsPanel(QWidget):
@@ -291,6 +293,7 @@ class DeviceSettingsPanel(QWidget):
         # Actions live in one consistent footer, not inside each form.
         self.tabs.addTab(fan_box, "TACH / пороги")
 
+        self.gpio_dialog = GpioSettingsDialog(self.controller, self)
         links = QHBoxLayout()
         sensor_link = QPushButton("DS18B20 / джерела температур…")
         sensor_link.clicked.connect(lambda: self.controller.dashboard.show_page("sensors"))
@@ -302,11 +305,16 @@ class DeviceSettingsPanel(QWidget):
         power_link.setMaximumWidth(235)
         power_link.setProperty("role", "ghost")
         links.addWidget(power_link)
+        gpio_link = QPushButton("GPIO / розпіновка…")
+        gpio_link.setProperty("role", "ghost")
+        gpio_link.clicked.connect(self.gpio_dialog.show)
+        links.addWidget(gpio_link)
         links.addStretch(1)
         limitations = QLabel(
-            "GPIO-розводка, схема живлення вентиляторів, фізичний fail-ON, "
-            "увімкнення драйвера DC PWM і PWR_SW задаються апаратно/під час "
-            "компіляції, а не небезпечним записом довільних GPIO з Windows."
+            "GPIO 8 PWM / 8 TACH / 8 ARGB налаштовуються через діалог GPIO. "
+            "Нова розкладка зберігається в ESP32 NVS і працює після перезапуску. "
+            "Фізична схема плати, fail-ON, DC PWM interlock, DS18B20 та PWR_SW "
+            "залишаються апаратними або компіляційними обмеженнями."
         )
         limitations.setWordWrap(True)
         limitations.setProperty("role", "minor")
@@ -417,6 +425,7 @@ class DeviceSettingsPanel(QWidget):
 
     def set_connected(self, connected: bool) -> None:
         self.connected = bool(connected)
+        self.gpio_dialog.set_connected(connected)
         if connected:
             self._state_label("ESP32 підключено · зчитування налаштувань…")
         else:
@@ -731,6 +740,8 @@ class DeviceSettingsPanel(QWidget):
                     {"channel": ch, "ppr": ppr, "crit": critical, "stall": stall})
 
     def handle_line(self, line: str) -> bool:
+        if self.gpio_dialog.handle_line(line):
+            return True
         if line.startswith("WIFI_CONFIG "):
             self._on_wifi_config(fields(line, "WIFI_CONFIG"))
             return True

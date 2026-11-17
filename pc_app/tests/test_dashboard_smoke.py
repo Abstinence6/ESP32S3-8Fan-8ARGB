@@ -179,6 +179,47 @@ class DashboardSmokeTests(unittest.TestCase):
         shell.set_connected(False)
         self.assertIn("Немає", shell.fan_live_state.text())
 
+    def test_gpio_esp_nvs_save_requires_readback_and_reboot(self):
+        from unittest.mock import patch
+        from PySide6.QtWidgets import QMessageBox
+        panel = self.window.dashboard.device_settings.gpio_dialog
+        sent = []
+        self.window.send = lambda command: sent.append(command) or True
+        self.window.dashboard.set_connected(True, "COM9")
+        panel.set_supported(True)
+        self.assertEqual(sent[-1], "GPIO?")
+        factory = {
+            "PWM": "21 35 39 42 6 16 10 14",
+            "TACH": "47 36 40 2 5 15 9 13",
+            "ARGB": "48 37 41 1 4 7 46 12",
+        }
+        for kind, pins in factory.items():
+            self.window.handle_line(f"GPIO {kind} {pins}")
+        self.window.handle_line("GPIO_END REBOOT=0")
+        self.assertTrue(panel._loaded)
+        self.assertFalse(panel.reboot_required)
+        target = panel.controls[("PWM", 1)]
+        target.setCurrentIndex(target.findData(18))
+        self.assertTrue(panel._dirty)
+        with patch.object(QMessageBox, "question",
+                          return_value=QMessageBox.StandardButton.Yes):
+            panel.save()
+        self.assertEqual(sent[-1], "GPIO BEGIN")
+        self.window.handle_line("OK GPIO_BEGIN")
+        self.assertEqual(sent[-1], "GPIO PWM 1 18")
+        self.window.handle_line("OK GPIO_PIN")
+        self.assertEqual(sent[-1], "GPIO COMMIT")
+        self.window.handle_line("OK GPIO_SAVED REBOOT_REQUIRED")
+        self.assertEqual(sent[-1], "GPIO?")
+        self.window.handle_line("GPIO PWM 18 35 39 42 6 16 10 14")
+        self.window.handle_line("GPIO TACH " + factory["TACH"])
+        self.window.handle_line("GPIO ARGB " + factory["ARGB"])
+        self.window.handle_line("GPIO_END REBOOT=1")
+        self.assertFalse(panel._dirty)
+        self.assertTrue(panel.reboot_required)
+        self.assertIn("Перезавантаж", panel.status.text())
+        self.assertEqual(panel._saved["PWM"][0], 18)
+
     def test_temperature_argb_esp_readback_save_and_reload(self):
         shell = self.window.dashboard
         panel = shell.temperature_argb
