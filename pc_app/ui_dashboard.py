@@ -1406,6 +1406,10 @@ class DashboardShell(QWidget):
             for labels in self.fan_cards.values():
                 labels["rpm"].setText("— RPM")
                 labels["metrics"].setText("— %  ·  — °C")
+                frame = self._fan_frames[next(ch for ch, card in self.fan_cards.items() if card is labels)]
+                frame.setProperty("state", "idle")
+                frame.style().unpolish(frame)
+                frame.style().polish(frame)
                 labels["bar"].setValue(0)
                 labels["bar"].setProperty("state", "idle")
                 labels["bar"].setToolTip("PWM: немає даних")
