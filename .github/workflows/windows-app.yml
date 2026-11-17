@@ -35,7 +35,13 @@ jobs:
         run: python -m PyInstaller --clean --noconfirm --windowed --onefile --paths pc_app --add-data "dist/nwinfo;nwinfo" --collect-all esptool --name FanARGBControl pc_app/main.py
       - name: Verify Windows bundle includes local modules
         run: python pc_app/verify_windows_bundle.py dist/FanARGBControl.exe
+      - name: Write Windows release checksums and manifest
+        shell: pwsh
+        run: python scripts/build_manifest.py --component windows --directory dist --commit $env:GITHUB_SHA --file FanARGBControl.exe
       - uses: actions/upload-artifact@v4
         with:
           name: FanARGBControl-Windows
-          path: dist/FanARGBControl.exe
+          path: |
+            dist/FanARGBControl.exe
+            dist/manifest.json
+            dist/SHA256SUMS
