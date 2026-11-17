@@ -648,7 +648,13 @@ class DashboardShell(QWidget):
             bool(status.fault) or not bool(status.fresh)
             for status in self._fan_statuses.values()
         )
-        self.attention_filter.setText(f"Проблемні · {count}" if count else "Проблемні")
+        self.attention_filter.setText(
+            f"Проблемні · {count}" if count else "Проблемні · 0"
+        )
+        self.attention_filter.setToolTip(
+            f"Зафіксовано {count} проблемних каналів. "
+            "Непрочитані канали також відображаються у фільтрі."
+        )
 
     def _reflow_fan_cards(self) -> None:
         if not hasattr(self, "_fan_grid"):
