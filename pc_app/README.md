@@ -289,3 +289,26 @@ Native Windows CI includes tests for fan selection/telemetry, ARGB channel
 highlighting, all four settings action-footers, 1080/1510px layout clipping
 and saves real Qt preview screenshots for visual review. The preview's
 status bar explicitly states that the measurements are demo data.
+
+
+## Оновлення з GitHub Releases
+
+У **Сервіс → Резервні копії та прошивка → Оновлення через GitHub Releases**
+натисни **Перевірити GitHub**, потім окремо завантаж Windows EXE або firmware.bin.
+Застосунок використовує стабільний реліз саме репозиторію
+Abstinence6/ESP32S3-8Fan-8ARGB і перевіряє архіви, SHA256SUMS, manifest.json
+та формат ESP32-S3 firmware image. Для нової версії Windows програми збережений
+EXE потрібно запускати вручну; старий виконуваний файл не замінюється у фоні.
+Після завантаження firmware.bin він лише з'являється у вже наявному ручному
+процесі прошивання. Перевірки стану ПК та апаратної ізоляції залишаються.
+
+GitHub Releases створюються окремим CI workflow тільки для тегів формату
+vX.Y.Z і містять **обидва** пакети із джерелами одного коміту:
+FanARGBControl-Windows.zip, ESP32S3-8Fan-8ARGB-firmware.zip.
+GitHub Actions artifacts із push не є Releases. Поки немає опублікованого
+стабільного релізу, інтерфейс повідомляє про це та не пропонує BIN/EXE.
+
+Контрольні суми захищають від пошкодження або невідповідності у пакеті,
+але **маніфест не має цифрового підпису**. Це не замінює автентифікацію
+GitHub, перевірку постачальника і відомої плати. Автоматичні перепрошивання
+та запуск завантажених EXE заборонені.
