@@ -248,6 +248,7 @@ class DashboardShell(QWidget):
         self.current_pc_busy = False
         self.pc_state_updated_at = 0.0
         self._fan_statuses: dict[int, object] = {}
+        self._last_fan_update: dict[int, float] = {}
         self._fan_grid_columns = 0
         self._fan_grid_visible: tuple[int, ...] = ()
         self._attention_only = False
@@ -651,6 +652,7 @@ class DashboardShell(QWidget):
         visible = tuple(
             ch for ch in self._fan_frames
             if not self._attention_only
+            or not self.is_connected
             or ch not in self._fan_statuses
             or bool(self._fan_statuses[ch].fault)
             or not bool(self._fan_statuses[ch].fresh)
@@ -1389,6 +1391,7 @@ class DashboardShell(QWidget):
             self.summary_esp.setText(port_name or "Підключено")
         else:
             self._fan_statuses.clear()
+            self._last_fan_update.clear()
             self.connection_text.setText("●  ESP32 не підключено")
             self.connection_text.setProperty("role", "caution")
             self.summary_esp.setText("Не підключено")
@@ -1443,6 +1446,7 @@ class DashboardShell(QWidget):
         if labels is None:
             return
         self._fan_statuses[channel] = status
+        self._last_fan_update[channel] = time.monotonic()
         labels["rpm"].setText(f"{status.rpm} RPM" if status.rpm_feedback else "— RPM")
         temp = f"{status.deci_c / 10:.1f} °C" if status.fresh else "— °C"
         labels["metrics"].setText(f"{status.pwm}% PWM  ·  {temp}")
