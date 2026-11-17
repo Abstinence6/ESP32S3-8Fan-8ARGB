@@ -162,11 +162,11 @@ void SerialConsole::handleLine(char* line) {
         serial_.print(F(" COUNT=")); serial_.print(pal.count);
         serial_.print(F(" DATA="));
         for (uint8_t i = 0; i < pal.count; ++i) {
-            if (i) serial_.print(';');
+            if (i) serial_.print(F(";"));
             const auto& p = pal.points[i];
-            serial_.print(p.tempC); serial_.print(',');
-            serial_.print(p.r); serial_.print(',');
-            serial_.print(p.g); serial_.print(',');
+            serial_.print(p.tempC); serial_.print(F(","));
+            serial_.print(p.r); serial_.print(F(","));
+            serial_.print(p.g); serial_.print(F(","));
             serial_.print(p.b);
         }
         serial_.println("");
