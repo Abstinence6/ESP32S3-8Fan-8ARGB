@@ -3,7 +3,8 @@ import hashlib
 import struct
 
 
-def make_test_image(chip_id: int = 9, content: bytes | None = None) -> bytes:
+def make_test_image(chip_id: int = 9, content: bytes | None = None,
+                    segment_address: int = 0x3C000020) -> bytes:
     payload = (bytes(32) + bytes.fromhex("3254cdab") + bytes(range(256)) * 9) if content is None else content
     header = bytearray(24)
     header[0] = 0xE9
@@ -14,7 +15,7 @@ def make_test_image(chip_id: int = 9, content: bytes | None = None) -> bytes:
     header[8] = 0xEE
     header[12:14] = struct.pack("<H", chip_id)
     header[23] = 1  # embedded SHA256
-    data = bytes(header) + struct.pack("<II", 0x3C000020, len(payload)) + payload
+    data = bytes(header) + struct.pack("<II", segment_address, len(payload)) + payload
     data += bytes((-(len(data) + 1)) % 16)
     check = 0xEF
     for value in payload:

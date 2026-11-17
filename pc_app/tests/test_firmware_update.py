@@ -28,6 +28,17 @@ class FirmwareTests(unittest.TestCase):
             path.write_bytes(make_test_image(content=bytes(range(256)) * 9))
             with self.assertRaisesRegex(ValueError, "descriptor"):
                 inspect_firmware(str(path))
+            # Descriptor-like bytes in an unrelated segment are not proof of an app.
+            path.write_bytes(make_test_image(segment_address=0x3FC00020))
+            with self.assertRaisesRegex(ValueError, "DROM"):
+                inspect_firmware(str(path))
+            # A stray signature late in DROM must not disguise a bootloader.
+            path.write_bytes(make_test_image(content=bytes(128) + bytes.fromhex("3254cdab") + bytes(2200)))
+            with self.assertRaisesRegex(ValueError, "DROM"):
+                inspect_firmware(str(path))
+            # The two known ESP-IDF app-descriptor layouts are supported.
+            path.write_bytes(make_test_image(content=bytes.fromhex("3254cdab") + bytes(2300)))
+            inspect_firmware(str(path))
             path.write_bytes(payload)
             damaged = bytearray(payload)
             damaged[100] ^= 1
