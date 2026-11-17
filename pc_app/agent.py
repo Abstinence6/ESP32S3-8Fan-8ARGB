@@ -235,7 +235,7 @@ def run_agent() -> int:
                             packet = encode_rgb_frame(ch, rgb)
                             tx.queue_rgb(ch, packet)
                     if tx is not None:
-                        tx.flush_rgb(now)
+                        tx.flush_rgb(now, max_frames=4)
                 except (serial.SerialException, OSError, ValueError) as exc:
                     log.warning("Serial disconnected: %s", exc)
                     try: output.close()

@@ -13,11 +13,16 @@ import time
 
 
 class SerialTransmitter:
-    def __init__(self, port, rgb_interval: float = 0.04):
-        if rgb_interval < 0:
-            raise ValueError("Invalid RGB interval")
+    def __init__(self, port, rgb_interval: float = 0.0, rgb_byte_rate: int = 60000):
+        # Reserve ~35% of the 921600-baud UART for cooling and status traffic.
+        if rgb_interval < 0 or rgb_byte_rate <= 0:
+            raise ValueError("Invalid RGB scheduling limits")
         self.port = port
         self.rgb_interval = rgb_interval
+        self.rgb_byte_rate = rgb_byte_rate
+        self._rgb_burst = 4 * 517  # Up to four 170-pixel RGB packets.
+        self._rgb_tokens = float(self._rgb_burst)
+        self._rgb_budget_at: float | None = None
         self.pending_rgb: OrderedDict[int, bytes] = OrderedDict()
         self.next_rgb_at = 0.0
         self._lock = threading.RLock()
@@ -59,22 +64,39 @@ class SerialTransmitter:
                 # starve other zones under sustained 8-channel streaming.
             self.pending_rgb[channel] = packet
 
-    def flush_rgb(self, now: float | None = None) -> int:
-        """Transmit at most one frame per interval; avoid starving control."""
+    def flush_rgb(self, now: float | None = None, *, max_frames: int = 1) -> int:
+        """Bound RGB throughput and batch strips without blocking control traffic."""
+        if not 1 <= max_frames <= 8:
+            raise ValueError("Invalid RGB batch size")
         if now is None:
             now = time.monotonic()
         with self._lock:
+            if self._rgb_budget_at is not None:
+                elapsed = max(0.0, now - self._rgb_budget_at)
+                self._rgb_tokens = min(float(self._rgb_burst),
+                                       self._rgb_tokens + elapsed * self.rgb_byte_rate)
+            self._rgb_budget_at = now
             if now < self.next_rgb_at or not self.pending_rgb:
                 return 0
-            channel = next(iter(self.pending_rgb))
-            packet = self.pending_rgb[channel]
-            # On a partial write/exception, caller must disconnect and drop
-            # queued frames; replaying truncated binary can desynchronize RX.
-            sent = self._write(packet)
-            del self.pending_rgb[channel]
-            self.next_rgb_at = now + self.rgb_interval
-            self.frames_sent += 1
-            return sent
+            sent_total = 0
+            for _ in range(max_frames):
+                if not self.pending_rgb:
+                    break
+                channel = next(iter(self.pending_rgb))
+                packet = self.pending_rgb[channel]
+                if len(packet) > self._rgb_tokens:
+                    break
+                # On partial write, caller disconnects and discards the queue.
+                size = self._write(packet)
+                del self.pending_rgb[channel]
+                self._rgb_tokens -= size
+                self.frames_sent += 1
+                sent_total += size
+                if self.rgb_interval:
+                    break
+            if sent_total:
+                self.next_rgb_at = now + self.rgb_interval
+            return sent_total
 
     def clear(self) -> None:
         with self._lock:

@@ -129,7 +129,7 @@ class FanArgbWindow(QMainWindow):
         self.serial_timer.start(80)
         self.tx_timer = QTimer(self)
         self.tx_timer.timeout.connect(self.flush_serial_tx)
-        self.tx_timer.start(25)
+        self.tx_timer.start(15)
         self.reconnect_timer = QTimer(self)
         self.reconnect_timer.timeout.connect(self._try_reconnect)
         self.reconnect_timer.start(5000)
@@ -714,7 +714,7 @@ class FanArgbWindow(QMainWindow):
         if self.tx is None:
             return
         try:
-            self.tx.flush_rgb()
+            self.tx.flush_rgb(max_frames=4)
         except (OSError, serial.SerialException) as exc:
             self.log(f"USB RGB: {exc}")
             self.disconnect()
