@@ -68,14 +68,42 @@ bool ArgbController::begin() {
     return true;
 }
 void ArgbController::markDirty(uint8_t ch) { dirty_[ch] = true; }
+void ArgbController::setSafetyWarning(uint8_t ch, uint8_t code) {
+    if (ch >= board::kChannelCount || code > 3 || safetyWarnings_[ch] == code) return;
+    safetyWarnings_[ch] = code;
+    markDirty(ch);
+}
+uint8_t ArgbController::safetyWarning(uint8_t ch) const {
+    return ch < board::kChannelCount ? safetyWarnings_[ch] : 0;
+}
+ArgbController::Rgb ArgbController::effectiveColor(uint8_t ch, uint16_t pixel) const {
+    // A non-destructive override on only the first three LEDs: original scene
+    // buffers remain intact and can immediately resume when the fault clears.
+    if (safetyWarnings_[ch] && warningOn_ && pixel < 3U) {
+        if (safetyWarnings_[ch] == 1) return {255, 95, 0};   // missing sensor
+        if (safetyWarnings_[ch] == 2) return {255, 0, 0};    // thermal
+        return {255, 0, 120};                                // TACH / stall
+    }
+    const uint16_t index = pixel * 3U;
+    return {frame_[ch][index], frame_[ch][index + 1], frame_[ch][index + 2]};
+}
+uint8_t ArgbController::effectiveBrightness(uint8_t ch, uint16_t pixel) const {
+    // Even an intentionally-off zone can warn. Limit indicator brightness,
+    // and apply the SAME global power budget as the underlying RGB scene.
+    if (safetyWarnings_[ch] && warningOn_ && pixel < 3U) return 64;
+    return brightness_[ch];
+}
 
 uint32_t ArgbController::estimatedFullCurrent() const {
     uint32_t total = 0;
     for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
         const uint16_t count = strips_[ch].numPixels();
         total += count; // ~1 mA idle per pixel (estimate, depends on LED model)
-        for (uint16_t i = 0; i < count * 3U; ++i)
-            total += static_cast<uint32_t>(frame_[ch][i]) * brightness_[ch] * 20U / (255U * 255U);
+        for (uint16_t i = 0; i < count; ++i) {
+            const Rgb color = effectiveColor(ch, i);
+            const uint32_t channels = static_cast<uint32_t>(color.r) + color.g + color.b;
+            total += channels * effectiveBrightness(ch, i) * 20U / (255U * 255U);
+        }
     }
     return total;
 }
@@ -86,8 +114,11 @@ uint32_t ArgbController::estimatedLimitedCurrent() const {
     for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
         const uint16_t count = strips_[ch].numPixels();
         baseline += count;
-        for (uint16_t i = 0; i < count * 3U; ++i)
-            weightedColor += static_cast<uint64_t>(frame_[ch][i]) * brightness_[ch] * 20U;
+        for (uint16_t i = 0; i < count; ++i) {
+            const Rgb color = effectiveColor(ch, i);
+            weightedColor += static_cast<uint64_t>(color.r + color.g + color.b) *
+                             effectiveBrightness(ch, i) * 20U;
+        }
     }
     return baseline + static_cast<uint32_t>(weightedColor * lastScale_ /
         (255ULL * 255ULL * 255ULL));
@@ -98,8 +129,11 @@ void ArgbController::render() {
     for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
         const uint16_t count = strips_[ch].numPixels();
         baseline += count;
-        for (uint16_t i = 0; i < count * 3U; ++i)
-            requestedColor += static_cast<uint64_t>(frame_[ch][i]) * brightness_[ch] * 20U;
+        for (uint16_t i = 0; i < count; ++i) {
+            const Rgb color = effectiveColor(ch, i);
+            requestedColor += static_cast<uint64_t>(color.r + color.g + color.b) *
+                              effectiveBrightness(ch, i) * 20U;
+        }
     }
     const uint32_t allowance = powerLimitMa_ > baseline ? powerLimitMa_ - baseline : 0;
     // RequestedColor is in units of mA * 255 * 255 (RGB channels assume 20 mA max).
@@ -118,11 +152,11 @@ void ArgbController::render() {
         renderCursor_ = (ch + 1) % board::kChannelCount;
         const uint16_t count = strips_[ch].numPixels();
         for (uint16_t i = 0; i < count; ++i) {
-            const uint16_t n = 3U * i;
-            const uint32_t multiplier = static_cast<uint32_t>(brightness_[ch]) * scale;
-            const uint8_t r = static_cast<uint8_t>(static_cast<uint32_t>(frame_[ch][n]) * multiplier / (255U * 255U));
-            const uint8_t g = static_cast<uint8_t>(static_cast<uint32_t>(frame_[ch][n+1]) * multiplier / (255U * 255U));
-            const uint8_t b = static_cast<uint8_t>(static_cast<uint32_t>(frame_[ch][n+2]) * multiplier / (255U * 255U));
+            const Rgb color = effectiveColor(ch, i);
+            const uint32_t multiplier = static_cast<uint32_t>(effectiveBrightness(ch, i)) * scale;
+            const uint8_t r = static_cast<uint8_t>(static_cast<uint32_t>(color.r) * multiplier / (255U * 255U));
+            const uint8_t g = static_cast<uint8_t>(static_cast<uint32_t>(color.g) * multiplier / (255U * 255U));
+            const uint8_t b = static_cast<uint8_t>(static_cast<uint32_t>(color.b) * multiplier / (255U * 255U));
             const uint16_t idx = reversed_[ch] ? count - i - 1 : i;
             strips_[ch].setPixelColor(idx, strips_[ch].Color(r,g,b));
         }
@@ -249,6 +283,12 @@ uint8_t ArgbController::getStoredBrightness(uint8_t ch) const {
     return ch < board::kChannelCount ? savedBrightness_[ch] : 0;
 }
 void ArgbController::update(uint32_t nowMs) {
+    const bool pulse = (nowMs / 500U) % 2U == 0;
+    if (pulse != warningOn_) {
+        warningOn_ = pulse;
+        for (uint8_t ch = 0; ch < board::kChannelCount; ++ch)
+            if (safetyWarnings_[ch]) markDirty(ch);
+    }
     // External frames and Serial commands only mark dirty; no LED show() inside
     // those handlers can monopolize the USB/TACH control loop.
     for (uint8_t ch = 0; ch < board::kChannelCount; ++ch)

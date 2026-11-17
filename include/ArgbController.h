@@ -30,6 +30,10 @@ public:
     uint8_t getBrightness(uint8_t channel) const;
     uint8_t getStoredBrightness(uint8_t channel) const;
     void update(uint32_t nowMs);
+    // Warning overlay has priority over all ARGB modes, including Off and OpenRGB.
+    // Codes: 0=none, 1=missing temperature, 2=overtemperature, 3=TACH fault.
+    void setSafetyWarning(uint8_t channel, uint8_t code);
+    uint8_t safetyWarning(uint8_t channel) const;
 
 private:
     struct Rgb { uint8_t r = 0, g = 0, b = 0; };
@@ -47,6 +51,8 @@ private:
     };
     static uint32_t checksum(const Config& config);
     static uint32_t brightnessChecksum(const BrightnessConfig& config);
+    Rgb effectiveColor(uint8_t channel, uint16_t pixel) const;
+    uint8_t effectiveBrightness(uint8_t channel, uint16_t pixel) const;
     void render();
     void drawSolid(uint8_t channel);
     void markDirty(uint8_t channel);
@@ -57,6 +63,8 @@ private:
     Rgb colors_[board::kChannelCount] = {};
     uint8_t brightness_[board::kChannelCount] = {};
     uint8_t savedBrightness_[board::kChannelCount] = {};
+    uint8_t safetyWarnings_[board::kChannelCount] = {};
+    bool warningOn_ = false;
     bool reversed_[board::kChannelCount] = {};
     bool dirty_[board::kChannelCount] = {};
     uint8_t frame_[board::kChannelCount][board::kMaxArgbPixelsPerFrame * 3] = {};

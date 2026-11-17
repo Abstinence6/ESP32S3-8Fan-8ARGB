@@ -9,6 +9,7 @@
 #include "HardwareTemperature.h"
 #include "PinMapSettings.h"
 #include "TemperatureArgbSettings.h"
+#include <string.h>
 
 #if defined(ARDUINO_ARCH_ESP32)
 #include <esp_task_wdt.h>
@@ -74,6 +75,13 @@ void loop() {
     fans.update(now);
     hardwareTemp.update(now, cooling);
     cooling.update(now);
+    for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
+        const char* reason = cooling.failSafeReason(ch, now);
+        const uint8_t warning = strcmp(reason, "overheat") == 0 ? 2 :
+            strcmp(reason, "fault") == 0 ? 3 :
+            strcmp(reason, "sensor") == 0 ? 1 : 0;
+        leds.setSafetyWarning(ch, warning);
+    }
     pcPower.update(now);
     wifiRgb.update(now);
     mqtt.update(now);
