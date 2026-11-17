@@ -12,13 +12,13 @@ changes require USB and firmware v8+; no Serial Monitor is needed.
 See [PC configuration](docs/PC_CONFIGURATION.md). GPIO/power MOSFET
 hardware and optional DC PWM/DS18B20/PWR_SW compiler flags remain
 hardware-qualified and cannot be changed arbitrarily from the PC.
-Starter firmware for **8 independent 2/3/4-pin PC fans (3-pin default)** and **8 independent 5 V addressable RGB strips** on an **ESP32-S3**. Built with **PlatformIO, Arduino-ESP32 2.0.17, and Adafruit NeoPixel**.
+Firmware for **8 independent 2/3-pin PC fans (3-pin default)** and **8 independent 5 V addressable RGB strips** on an **ESP32-S3**. Built with **PlatformIO, Arduino-ESP32 2.0.17, and Adafruit NeoPixel**.
 
-**Status:** starter/reference code, not yet tested on physical hardware. The sample pin assignment targets ESP32-S3-DevKitC-1 and MUST be checked against your actual ESP32-S3 module and PCB before powering peripherals.
+**Status:** CI-tested reference code; fan high-side switching and hardware fail-ON have NOT been qualified on physical hardware. The sample pin assignment targets ESP32-S3-DevKitC-1 and MUST be checked against your actual ESP32-S3 module and PCB before powering peripherals.
 
 ## Features
 
-- 8 independent **25 kHz / 8-bit PWM** channels via LEDC, 0..100%.
+- 8 independent **250 Hz / 8-bit supply PWM** channels via LEDC. Duty below 100% is disabled until the 12 V high-side driver is qualified.
 - 8 TACH inputs, **RPM** measured using falling-edge interrupts (default 2 pulses/revolution).
 - 8 independent WS2812B / SK6812-RGB (3-channel) LED data outputs with OpenRGB E1.31 pixel streaming (via Windows companion).
 - Independent static colors / brightness / rainbow animation, plus off.
@@ -76,12 +76,12 @@ ALLOFF
 ## Hardware rules (required)
 
 - **Never feed 5 V or 12 V to an ESP32-S3 GPIO.** Grounds must be common.
-- Each PC 4-pin fan's PWM input should be driven by a **5 V tolerant open-collector/open-drain stage** (e.g. NPN or NMOS). The default software configuration assumes this stage INVERTS the GPIO logic. The fan's own PWM pull-up sets the high level. Do not add a 12 V pull-up to this signal.
+- The supported 2/3-pin fans need a **qualified high-side 12 V power switch**, safe 3.3 V-to-gate drive and independent fail-ON circuit. Fan ground must stay connected; never connect 12 V directly to the ESP32 GPIO.
 - TACH is typically an open-collector output: add an **external ~10 kOhm pull-up to 3.3 V** for each input, not to 5/12 V.
 - Supply fans from their own correctly rated **12 V rail** (or the voltage required by the fans). Supply ARGB from a properly rated **5 V PSU**, NOT the ESP32 5 V pin.
 - Use a **74AHCT125 / 74AHCT245 level shifter at 5 V** for the 3.3 V ARGB data signals; series resistors and suitable PSU decoupling are strongly recommended.
 - A WS2812B RGB pixel can draw up to **~60 mA at full white**. At 8 x 30 pixels that can reach **~14.4 A @ 5 V**, excluding controller losses. Size PSU, cabling and injection accordingly.
-- PWM=0% does NOT guarantee that all 4-pin fan models fully stop. Power-off requires a separate switched power stage if needed. Startup defaults to 100% fan PWM (fan high speed) and ARGB off.
+- A 100% software command does NOT guarantee fan power during MCU reset or loss of supply. Qualified fail-ON hardware is mandatory. Startup demands 100% fan PWM and ARGB off.
 
 See `docs/WIRING.md` for details.
 

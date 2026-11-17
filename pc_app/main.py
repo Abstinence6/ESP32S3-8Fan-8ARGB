@@ -49,7 +49,7 @@ from smart_control import SafeTemperatureFilter, AutoProfileSelector
 from tray_monitor import FaultNotificationGate
 from tach_health import TachHealthMonitor
 from pid_autotune_ui import PidAutotuneDialog
-from cooling_assist import power_payload
+from cooling_assist import extract_power_watts, power_payload
 from telemetry_store import TelemetryStore
 
 
@@ -129,7 +129,7 @@ class FanArgbWindow(QMainWindow):
         self.serial_timer.start(80)
         self.tx_timer = QTimer(self)
         self.tx_timer.timeout.connect(self.flush_serial_tx)
-        self.tx_timer.start(25)
+        self.tx_timer.start(15)
         self.reconnect_timer = QTimer(self)
         self.reconnect_timer.timeout.connect(self._try_reconnect)
         self.reconnect_timer.start(5000)
@@ -714,7 +714,7 @@ class FanArgbWindow(QMainWindow):
         if self.tx is None:
             return
         try:
-            self.tx.flush_rgb()
+            self.tx.flush_rgb(max_frames=4)
         except (OSError, serial.SerialException) as exc:
             self.log(f"USB RGB: {exc}")
             self.disconnect()
@@ -1002,18 +1002,13 @@ class FanArgbWindow(QMainWindow):
             self.telemetry.record_metric(
                 metric.sensor_id, metric.name, metric.value, metric.unit
             )
-        cpu_w = [m.value for m in watts if m.unit == "W" and
-                 ("cpu" in m.name.casefold() or "intel" in m.name.casefold()
-                  or "zen" in m.name.casefold())]
-        gpu_w = [m.value for m in watts if m.unit == "W" and
-                 "gpu" in m.name.casefold()]
+        cpu_w, gpu_w = extract_power_watts(watts)
         self.power_history.append((
-            time.time(), max(cpu_w) if cpu_w else float("nan"),
-            max(gpu_w) if gpu_w else float("nan"),
+            time.time(), cpu_w if cpu_w is not None else float("nan"),
+            gpu_w if gpu_w is not None else float("nan"),
         ))
         if self.port and self.cooling_assist_supported:
-            self.send(power_payload(max(cpu_w) if cpu_w else None,
-                                    max(gpu_w) if gpu_w else None))
+            self.send(power_payload(cpu_w, gpu_w))
         self._refresh_history()
         self._update_tray_tooltip()
         self._update_source_boxes()

@@ -134,7 +134,7 @@ Calibration: select one fan, click **Calibrate**, confirm temporary stop at low 
 ## Safety and persistence
 
 - PC temperatures are streamed over USB every ~2 seconds; the **curve and calibration are stored on the ESP**. Sensor selection is stored locally in Windows QSettings because the PC sensor IDs belong to the host machine.
-- If NWinfo cannot access a real temperature sensor: **the app stops sending that fan's temperature**. ESP automatically sets the fan to 100% within 10 seconds (for Auto mode). Manual override intentionally bypasses automatic safety control — use carefully.
+- If NWinfo cannot access a real temperature sensor: **the app stops sending that fan's temperature**. ESP demands 100% within 10 seconds in automatic, manual and fixed-RPM modes. Electrical fail-ON still requires a qualified driver.
 - Without the GUI running, the ESP does **not** know CPU/GPU temperatures. Automatic mode remains at full speed by design; independent thermistors or coolant probes could later provide autonomous control.
 - The app only reads NWinfo-reported hardware temperatures; it never changes your motherboard's fan configuration.
 
@@ -185,7 +185,7 @@ This is **manual E1.31 integration**, not automatic HID/USB discovery in OpenRGB
 
 ## v4: enhanced cooling and optional fan connector types
 
-- Choose a fan in the GUI and set **Type: 2-pin, 3-pin (default), or 4-pin**. One PWM and one TACH ESP32-S3 GPIO per fan. There is no GPIO expander or automatic type detector. The choice must match the physical DC/PWM jumper on the PCB; the type button asks for confirmation. 2/3-pin duty under 100% remains disabled until the intelligent high-side key is verified for 25 kHz motor PWM and `FAN_DC_PWM_VALIDATED=1` is explicitly enabled in firmware. See [`docs/FAN_MODES.md`](../docs/FAN_MODES.md).
+- Choose **2-pin or 3-pin (default)**. Each fan uses a switched 12 V high-side supply and an optional TACH input; 4-pin fan PWM is no longer supported. Duty below 100% is locked until the specific hardware is qualified for **250 Hz** supply switching with independent fail-ON, then `FAN_DC_PWM_VALIDATED=1` is explicitly enabled. See [`docs/FAN_MODES.md`](../docs/FAN_MODES.md).
 - **Smart calibration** (requires valid temperatures and RPM feedback), optional PID and target RPM (not available on 2-pin), RPM/PWM live status, second temperature-based curve, and per-fan calibration migration across firmware versions.
 - Sensor sources: MAX all, one sensor, AVG/MAX of a group and weighted average with per-sensor weights (set via **Вибрати датчики групи**).
 - Named curve presets **Silent**, **Balanced**, **Performance**, and local **Custom**. Apply to all eight channels with confirmation. Curves are then stored in ESP NVS.

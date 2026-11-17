@@ -40,8 +40,11 @@ void setup() {
 #endif
     Serial.begin(board::kSerialBaud);
     // No 'while (!Serial)' here: fan control must start without a PC attached.
-    if (!pinmap::settings().begin())
-        Serial.println(F("WARN: GPIO mapping NVS unavailable, using factory pins"));
+    if (!pinmap::settings().begin()) {
+        Serial.println(F("FATAL: GPIO map NVS invalid; outputs NOT initialized"));
+        Serial.println(F("Recover with PC powered off; hardware fan fail-ON required"));
+        while (true) delay(1000);
+    }
     if (!fans.begin()) {
         Serial.println(F("FATAL: unable to configure 8 PWM channels"));
         // Leave the fan PWM outputs in their last state; do NOT start RGB.

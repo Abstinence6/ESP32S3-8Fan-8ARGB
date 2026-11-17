@@ -30,6 +30,8 @@ int main() {
     assert(lights.configureStrip(0, 170, false));
     assert(lights.getMode(0) == ArgbController::Mode::External);
     assert(!lights.configureStripAndBudget(0, 170, false, 99));
+    assert(!lights.configureStripAndBudget(0, 170, false, 1359));
+    assert(!lights.setPowerBudget(1300));
     assert(lights.powerBudget() == 1800);
 
     SerialConsole console(Serial, fans, lights, cooling);

@@ -71,14 +71,16 @@ public:
         applied_ = defaults();
         saved_ = defaults();
         if (!storage_.begin("pinmap-v1", false)) return false;
+        const size_t storedLength = storage_.getBytesLength("pins");
+        if (storedLength == 0) return true; // Fresh NVS: factory pin mapping.
         Record record = {};
-        if (storage_.getBytesLength("pins") == sizeof(record) &&
-            storage_.getBytes("pins", &record, sizeof(record)) == sizeof(record) &&
-            record.magic == kMagic && record.version == 1 &&
-            record.crc == checksum(record) && validate(record.pins)) {
-            applied_ = record.pins;
-            saved_ = record.pins;
-        }
+        if (storedLength != sizeof(record) ||
+            storage_.getBytes("pins", &record, sizeof(record)) != sizeof(record) ||
+            record.magic != kMagic || record.version != 1 ||
+            record.crc != checksum(record) || !validate(record.pins))
+            return false; // Corrupt NVS must not enable incorrect GPIO outputs.
+        applied_ = record.pins;
+        saved_ = record.pins;
         return true;
     }
     const Pins& applied() const { return applied_; }

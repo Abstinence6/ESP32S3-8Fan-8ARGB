@@ -43,6 +43,18 @@ class SerialTxTests(unittest.TestCase):
         self.assertEqual(len(channels), 80)
         self.assertEqual([channels.count(ch) for ch in range(1, 9)], [10] * 8)
 
+    def test_batched_rgb_uses_uart_budget(self):
+        port = FakePort()
+        tx = SerialTransmitter(port, rgb_interval=0, rgb_byte_rate=1000)
+        for ch in range(1, 9):
+            tx.queue_rgb(ch, encode_rgb_frame(ch, bytes([255, 255, 255]) * 170))
+        self.assertEqual(tx.flush_rgb(now=10, max_frames=8), 4 * 517)
+        self.assertEqual(tx.flush_rgb(now=10, max_frames=8), 0)
+        self.assertEqual(tx.flush_rgb(now=13, max_frames=8), 4 * 517)
+        self.assertEqual([packet[2] for packet in port.events], list(range(1, 9)))
+        with self.assertRaises(ValueError):
+            tx.flush_rgb(max_frames=0)
+
     def test_never_retry_partial_frame(self):
         port = FakePort()
         tx = SerialTransmitter(port)

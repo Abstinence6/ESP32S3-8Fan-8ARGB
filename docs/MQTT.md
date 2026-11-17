@@ -106,3 +106,10 @@ reactivating older credentials. Downgrading to old firmware may read its
 older, stale NVS settings. `STORAGE_OK=0` in `MQTT CONFIG?` flags a failed
 write or corrupted saved record. Neither the USB protocol nor TCP/1883
 provides transport encryption.
+
+## Retained temperature freshness
+
+The controller publishes `unknown` to `esp32fan/<device>/fan/<n>/temp`
+when the current temperature source exceeds its 10-second freshness window.
+This prevents external monitoring from interpreting an old retained value as
+current. The independent firmware cooling fail-safe remains unchanged.

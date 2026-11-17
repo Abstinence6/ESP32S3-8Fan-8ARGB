@@ -56,3 +56,16 @@ project: no hardware qualification is implied by a successful CI run.
   log reboot reason, verify fan power is full speed **during** reset,
   and validate boot GPIO/12 V gate behavior under brownout.
 - [ ] Qualify MOSFET driver TACH and all eight 12 V channels on the intended PCB.
+
+## Controller reliability regression checks
+
+- A saved GPIO mapping with corrupt CRC/length must stop startup before any
+  PWM/TACH/ARGB output is initialized; fresh NVS without `pins` uses the
+  factory map. Restore NVS only while the cooled PC is safely off.
+- GUI and headless agent must send the same valid CPU/GPU `PWRDATA` values;
+  missing metrics use the `65535` sentinel.
+- Eight ARGB zones are coalesced and sent with a bounded 60 kB/s RGB rate,
+  leaving serial bandwidth and write priority for control commands.
+- Reject ARGB budgets below the estimated total idle LED current; verify the
+  actual physical current separately (software limits do not replace fuses).
+- Stale temperatures must publish `unknown` to the retained MQTT topic.

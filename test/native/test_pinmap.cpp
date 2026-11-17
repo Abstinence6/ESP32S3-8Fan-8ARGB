@@ -59,7 +59,7 @@ int main() {
     const uint8_t invalid[] = {1, 2, 3, 4};
     assert(storage.putBytes("pins", invalid, sizeof(invalid)) == sizeof(invalid));
     pinmap::Settings corrupted;
-    assert(corrupted.begin());
+    assert(!corrupted.begin()); // Corrupt saved map halts normal boot.
     assert(pinmap::validate(corrupted.applied()));
     assert(corrupted.applied().pwm[0] == board::kFanPwmPins[0]);
     std::cout << "PASS: GPIO NVS validation, rollback and reboot-only apply\n";
