@@ -735,7 +735,7 @@ void SerialConsole::handleLine(char* line) {
         serial_.print(F("STRIPCFG CH=")); serial_.print(channel);
         serial_.print(F(" LEDS=")); serial_.print(leds_.pixelCount(ch));
         serial_.print(F(" REVERSE=")); serial_.print(leds_.isReversed(ch) ? 1 : 0);
-        serial_.print(F(" BRIGHT=")); serial_.println(leds_.getBrightness(ch));
+        serial_.print(F(" BRIGHT=")); serial_.println(leds_.getStoredBrightness(ch));
         return;
     }
     if (!strcmp(command, "RGBBUDGET")) {

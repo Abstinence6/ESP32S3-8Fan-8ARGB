@@ -6,6 +6,7 @@
 
 namespace {
 constexpr uint32_t kArgbMagic = 0x41524734UL; // ARG4
+constexpr uint32_t kBrightnessMagic = 0x42524731UL; // BRG1, separate CRC-checked NVS record
 constexpr uint32_t kExternalTimeoutMs = 3000;
 }
 
@@ -13,6 +14,15 @@ uint32_t ArgbController::checksum(const Config& config) {
     uint32_t hash = 2166136261UL;
     const uint8_t* data = reinterpret_cast<const uint8_t*>(&config);
     for (size_t i = 0; i < offsetof(Config, crc); ++i) {
+        hash ^= data[i];
+        hash *= 16777619UL;
+    }
+    return hash;
+}
+uint32_t ArgbController::brightnessChecksum(const BrightnessConfig& config) {
+    uint32_t hash = 2166136261UL;
+    const uint8_t* data = reinterpret_cast<const uint8_t*>(&config);
+    for (size_t i = 0; i < offsetof(BrightnessConfig, crc); ++i) {
         hash ^= data[i];
         hash *= 16777619UL;
     }
@@ -36,10 +46,23 @@ bool ArgbController::begin() {
         strips_[i].begin();
         strips_[i].setBrightness(255);
         brightness_[i] = board::kInitialArgbBrightness;
+        savedBrightness_[i] = board::kInitialArgbBrightness;
         modes_[i] = Mode::Off;
         reversed_[i] = valid && config.reversed[i] != 0;
         strips_[i].clear();
         strips_[i].show();
+    }
+    // Preserve legacy ARG4 geometry NVS layout. Brightness is a separate
+    // atomic record, avoiding any destructive migration of strip settings.
+    BrightnessConfig savedBrightness = {};
+    if (storage_.getBytesLength("brightness") == sizeof(savedBrightness) &&
+        storage_.getBytes("brightness", &savedBrightness, sizeof(savedBrightness)) == sizeof(savedBrightness) &&
+        savedBrightness.magic == kBrightnessMagic &&
+        savedBrightness.crc == brightnessChecksum(savedBrightness)) {
+        for (uint8_t i = 0; i < board::kChannelCount; ++i) {
+            brightness_[i] = savedBrightness.levels[i];
+            savedBrightness_[i] = savedBrightness.levels[i];
+        }
     }
     previousFrameMs_ = millis();
     return true;
@@ -120,6 +143,8 @@ void ArgbController::drawSolid(uint8_t ch) {
 }
 bool ArgbController::setSolid(uint8_t ch, uint8_t r, uint8_t g, uint8_t b) {
     if (ch >= board::kChannelCount) return false;
+    if (modes_[ch] == Mode::External)
+        brightness_[ch] = savedBrightness_[ch];
     modes_[ch] = Mode::Solid;
     colors_[ch].r = r; colors_[ch].g = g; colors_[ch].b = b;
     drawSolid(ch);
@@ -127,6 +152,8 @@ bool ArgbController::setSolid(uint8_t ch, uint8_t r, uint8_t g, uint8_t b) {
 }
 bool ArgbController::setOff(uint8_t ch) {
     if (ch >= board::kChannelCount) return false;
+    if (modes_[ch] == Mode::External)
+        brightness_[ch] = savedBrightness_[ch];
     modes_[ch] = Mode::Off;
     memset(frame_[ch], 0, sizeof(frame_[ch]));
     markDirty(ch);
@@ -135,6 +162,8 @@ bool ArgbController::setOff(uint8_t ch) {
 }
 bool ArgbController::setRainbow(uint8_t ch) {
     if (ch >= board::kChannelCount) return false;
+    if (modes_[ch] == Mode::External)
+        brightness_[ch] = savedBrightness_[ch];
     modes_[ch] = Mode::Rainbow;
     return true;
 }
@@ -196,6 +225,19 @@ bool ArgbController::isReversed(uint8_t ch) const { return ch < board::kChannelC
 uint16_t ArgbController::pixelCount(uint8_t ch) const { return ch < board::kChannelCount ? strips_[ch].numPixels() : 0; }
 bool ArgbController::setBrightness(uint8_t ch, uint8_t value) {
     if (ch >= board::kChannelCount) return false;
+    if (savedBrightness_[ch] != value) {
+        BrightnessConfig updated = {};
+        updated.magic = kBrightnessMagic;
+        for (uint8_t i = 0; i < board::kChannelCount; ++i)
+            updated.levels[i] = savedBrightness_[i];
+        updated.levels[ch] = value;
+        updated.crc = brightnessChecksum(updated);
+        // NVS failure cannot claim success or alter RAM; raw RGB frames
+        // never trigger these writes, avoiding flash wear.
+        if (storage_.putBytes("brightness", &updated, sizeof(updated)) != sizeof(updated))
+            return false;
+        savedBrightness_[ch] = value;
+    }
     brightness_[ch] = value;
     markDirty(ch);
     // LED output deferred to update() so fan control/serial input get priority.
@@ -203,6 +245,9 @@ bool ArgbController::setBrightness(uint8_t ch, uint8_t value) {
 }
 ArgbController::Mode ArgbController::getMode(uint8_t ch) const { return ch < board::kChannelCount ? modes_[ch] : Mode::Off; }
 uint8_t ArgbController::getBrightness(uint8_t ch) const { return ch < board::kChannelCount ? brightness_[ch] : 0; }
+uint8_t ArgbController::getStoredBrightness(uint8_t ch) const {
+    return ch < board::kChannelCount ? savedBrightness_[ch] : 0;
+}
 void ArgbController::update(uint32_t nowMs) {
     // External frames and Serial commands only mark dirty; no LED show() inside
     // those handlers can monopolize the USB/TACH control loop.

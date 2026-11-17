@@ -28,6 +28,7 @@ public:
     uint32_t estimatedLimitedCurrent() const;
     Mode getMode(uint8_t channel) const;
     uint8_t getBrightness(uint8_t channel) const;
+    uint8_t getStoredBrightness(uint8_t channel) const;
     void update(uint32_t nowMs);
 
 private:
@@ -39,7 +40,13 @@ private:
         uint16_t budgetMa;
         uint32_t crc;
     };
+    struct BrightnessConfig {
+        uint32_t magic;
+        uint8_t levels[board::kChannelCount];
+        uint32_t crc;
+    };
     static uint32_t checksum(const Config& config);
+    static uint32_t brightnessChecksum(const BrightnessConfig& config);
     void render();
     void drawSolid(uint8_t channel);
     void markDirty(uint8_t channel);
@@ -49,6 +56,7 @@ private:
     Mode modes_[board::kChannelCount] = {};
     Rgb colors_[board::kChannelCount] = {};
     uint8_t brightness_[board::kChannelCount] = {};
+    uint8_t savedBrightness_[board::kChannelCount] = {};
     bool reversed_[board::kChannelCount] = {};
     bool dirty_[board::kChannelCount] = {};
     uint8_t frame_[board::kChannelCount][board::kMaxArgbPixelsPerFrame * 3] = {};
