@@ -13,6 +13,7 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from settings_widgets import DesktopSettingsPanel
 from hardware_sensor_ui import HardwareSensorPanel
 from argb_studio_ui import ArgbStudioPanel
+from temperature_argb_ui import TemperatureArgbPanel
 from maintenance_ui import MaintenancePanel
 from device_settings_ui import DeviceSettingsPanel
 from diagnostics_ui import DiagnosticPanel
@@ -1138,6 +1139,13 @@ class DashboardShell(QWidget):
         studio_layout.addWidget(self.studio)
         studio_layout.addStretch(1)
         self.argb_workspace_tabs.addTab(studio_page, "Студія")
+
+        temperature_page = QWidget()
+        temperature_layout = QVBoxLayout(temperature_page)
+        temperature_layout.setContentsMargins(0, 12, 0, 0)
+        self.temperature_argb = TemperatureArgbPanel(self.controller)
+        temperature_layout.addWidget(self.temperature_argb)
+        self.argb_workspace_tabs.addTab(temperature_page, "Температура")
 
         layout.addWidget(self.argb_workspace_tabs, 1)
         layout.addStretch(1)
