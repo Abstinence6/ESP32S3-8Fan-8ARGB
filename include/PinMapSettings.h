@@ -42,7 +42,7 @@ inline bool allowed(uint8_t pin, uint8_t slot) {
     // slot assignments are grandfathered, never silently moved to a new role.
     if (pin >= 33 && pin <= 37 && pin != board::pinAt(slot))
         return false;
-    // GPIO46 is a strapping pin (also input-only on ESP32-S3).
+    // GPIO46 is a strapping pin; verify external reset/boot circuitry.
     // Preserve a legacy assignment only; do not allow new users of GPIO46.
     if (pin == 46 && pin != board::pinAt(slot))
         return false;
