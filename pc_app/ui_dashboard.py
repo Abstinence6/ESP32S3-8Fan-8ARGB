@@ -1447,6 +1447,10 @@ class DashboardShell(QWidget):
             return
         self._fan_statuses[channel] = status
         self._last_fan_update[channel] = time.monotonic()
+        self._fan_frames[channel].setToolTip(
+            f"FAN {channel:02d} · {status.pwm}% PWM · "
+            + (f"{status.rpm} RPM" if status.rpm_feedback else "TACH недоступний")
+        )
         labels["rpm"].setText(f"{status.rpm} RPM" if status.rpm_feedback else "— RPM")
         temp = f"{status.deci_c / 10:.1f} °C" if status.fresh else "— °C"
         labels["metrics"].setText(f"{status.pwm}% PWM  ·  {temp}")
