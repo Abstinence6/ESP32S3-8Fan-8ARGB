@@ -1,4 +1,5 @@
 #include "FanController.h"
+#include "PinMapSettings.h"
 #include <stdint.h>
 
 volatile uint32_t FanController::tachPulses_[board::kChannelCount] = {};
@@ -18,12 +19,12 @@ bool FanController::begin() {
         tachObserved_[i] = false;
         if (ledcSetup(i, board::kFanPwmFrequencyHz, board::kFanPwmResolutionBits) <= 0.0)
             return false;
-        ledcAttachPin(board::kFanPwmPins[i], i);
+        ledcAttachPin(pinmap::pwmPin(i), i);
         if (!setPercent(i, board::kInitialFanPercent)) return false;
     }
     for (uint8_t i = 0; i < board::kChannelCount; ++i) {
-        pinMode(board::kFanTachPins[i], INPUT_PULLUP);
-        attachInterruptArg(digitalPinToInterrupt(board::kFanTachPins[i]), tachInterrupt,
+        pinMode(pinmap::tachPin(i), INPUT_PULLUP);
+        attachInterruptArg(digitalPinToInterrupt(pinmap::tachPin(i)), tachInterrupt,
                            reinterpret_cast<void*>(static_cast<uintptr_t>(i)), FALLING);
     }
     previousSampleMs_ = millis();

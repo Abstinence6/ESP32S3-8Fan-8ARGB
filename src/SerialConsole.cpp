@@ -1,6 +1,7 @@
 #include "SerialConsole.h"
 #include "MqttBridge.h"
 #include "ConfigWire.h"
+#include "PinMapSettings.h"
 
 #include <ctype.h>
 #include <stdlib.h>
@@ -227,6 +228,68 @@ void SerialConsole::handleLine(char* line) {
         }
         return error();
     }
+    if (strcmp(command, "GPIO?") == 0) {
+        if (!noMore()) return error();
+        const auto& pins = pinmap::settings().saved();
+        for (uint8_t kind = 0; kind < 3; ++kind) {
+            serial_.print(F("GPIO "));
+            serial_.print(kind == 0 ? F("PWM") : kind == 1 ? F("TACH") : F("ARGB"));
+            for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
+                serial_.print(F(" "));
+                const uint8_t pin = kind == 0 ? pins.pwm[ch] :
+                                    kind == 1 ? pins.tach[ch] : pins.argb[ch];
+                serial_.print(pin);
+            }
+            serial_.println("");
+        }
+        serial_.print(F("GPIO_END REBOOT="));
+        serial_.println(pinmap::settings().rebootNeeded() ? 1 : 0);
+        return;
+    }
+    if (strcmp(command, "GPIO") == 0) {
+        char* op = next();
+        if (!op) return error();
+        for (char* c = op; *c; ++c)
+            *c = static_cast<char>(toupper(static_cast<unsigned char>(*c)));
+        const uint32_t now = millis();
+        if (!strcmp(op, "BEGIN")) {
+            if (!noMore()) return error();
+            serial_.println(pinmap::settings().start(now) ?
+                            F("OK GPIO_BEGIN") : F("ERR GPIO busy"));
+            return;
+        }
+        if (!strcmp(op, "CANCEL")) {
+            if (!noMore()) return error();
+            pinmap::settings().cancel();
+            serial_.println(F("OK GPIO_CANCELLED"));
+            return;
+        }
+        if (!strcmp(op, "COMMIT")) {
+            if (!noMore()) return error();
+            serial_.println(pinmap::settings().commit(now) ?
+                            F("OK GPIO_SAVED REBOOT_REQUIRED") :
+                            F("ERR GPIO invalid pins or storage"));
+            return;
+        }
+        if (!strcmp(op, "FACTORY")) {
+            if (!noMore()) return error();
+            serial_.println(pinmap::settings().factory(now) ?
+                            F("OK GPIO_FACTORY REBOOT_REQUIRED") :
+                            F("ERR GPIO factory storage"));
+            return;
+        }
+        if (!strcmp(op, "PWM") || !strcmp(op, "TACH") || !strcmp(op, "ARGB")) {
+            uint8_t ch = 0, gpio = 0;
+            if (!parseByte(next(), board::kChannelCount, ch) || !ch ||
+                !parseByte(next(), 48, gpio) || !noMore()) return error();
+            const uint8_t kind = !strcmp(op, "PWM") ? 0 :
+                                 !strcmp(op, "TACH") ? 1 : 2;
+            serial_.println(pinmap::settings().set(kind, ch - 1, gpio, now) ?
+                            F("OK GPIO_PIN") : F("ERR GPIO transaction"));
+            return;
+        }
+        return error();
+    }
     if (strcmp(command, "PING") == 0) {
         if (!noMore()) return error();
         serial_.println(F("PONG 5"));
@@ -269,7 +332,8 @@ void SerialConsole::handleLine(char* line) {
         serial_.print(F(" DS18B20="));
         serial_.print(hw_ && hw_->enabled() ? 1 : 0);
         serial_.print(F(" SENSORS="));
-        serial_.println(hw_ ? hw_->sensorCount() : 0);
+        serial_.print(hw_ ? hw_->sensorCount() : 0);
+        serial_.println(F(" GPIO_NVS=1"));
         return;
     }
     if (strcmp(command, "HTSCAN") == 0) {
@@ -841,6 +905,7 @@ void SerialConsole::handleLine(char* line) {
 void SerialConsole::printHelp() {
     serial_.println(F("Channels: 1..8, temperatures: deci-Celsius, e.g. 455 = 45.5 C"));
     serial_.println(F("PING | STATUS | HEALTH [ch] | SELFTEST [CANCEL] | HELP | LEDS | PC STATUS|ON|OFF|FORCE"));
+    serial_.println(F("GPIO? | GPIO BEGIN | GPIO PWM|TACH|ARGB <ch> <pin> | GPIO COMMIT|CANCEL|FACTORY"));
     serial_.println(F("TARGB? <ch> | TARGB BEGIN <ch> | SOURCE <hex> | GROUP <hex> | RANGE <low> <high> <bright> | COMMIT | CANCEL"));
     serial_.println(F("VERSION? | HTEMP? | HTLIST? | HTSCAN | HTMAP? <ch> | HTMAP <ch> AUTO|ROMHEX"));
     serial_.println(F("HTMODE? <ch> | HTMODE <ch> PC|LOCAL|BACKUP"));

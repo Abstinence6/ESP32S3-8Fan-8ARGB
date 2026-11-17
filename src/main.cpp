@@ -7,6 +7,7 @@
 #include "MqttBridge.h"
 #include "PcPowerController.h"
 #include "HardwareTemperature.h"
+#include "PinMapSettings.h"
 #include "TemperatureArgbSettings.h"
 
 #if defined(ARDUINO_ARCH_ESP32)
@@ -32,6 +33,8 @@ void setup() {
 #endif
     Serial.begin(board::kSerialBaud);
     // No 'while (!Serial)' here: fan control must start without a PC attached.
+    if (!pinmap::settings().begin())
+        Serial.println(F("WARN: GPIO mapping NVS unavailable, using factory pins"));
     if (!fans.begin()) {
         Serial.println(F("FATAL: unable to configure 8 PWM channels"));
         // Leave the fan PWM outputs in their last state; do NOT start RGB.
