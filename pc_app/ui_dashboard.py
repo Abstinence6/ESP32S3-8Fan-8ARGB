@@ -286,6 +286,9 @@ class DashboardShell(QWidget):
             shortcut = QShortcut(QKeySequence(f"Ctrl+{index}"), self)
             shortcut.activated.connect(lambda selected=key: self.show_page(selected))
             self._shortcuts.append(shortcut)
+        overview_shortcut = QShortcut(QKeySequence("Alt+Home"), self)
+        overview_shortcut.activated.connect(lambda: self.show_page("overview"))
+        self._shortcuts.append(overview_shortcut)
         palette_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
         palette_shortcut.activated.connect(self.open_command_palette)
         self._shortcuts.append(palette_shortcut)
@@ -398,7 +401,7 @@ class DashboardShell(QWidget):
             layout.addWidget(button)
             self.nav[key] = button
         layout.addStretch(1)
-        layout.addWidget(_label("Ctrl+K  ·  швидкий перехід", "minor"))
+        layout.addWidget(_label("Ctrl+K · пошук  |  Alt+Home · огляд", "minor"))
         layout.addWidget(_label("Керування тільки локально", "minor"))
         return panel
 
