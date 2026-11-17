@@ -71,7 +71,9 @@ void loop() {
     pcPower.update(now);
     wifiRgb.update(now);
     mqtt.update(now);
-    leds.update(now);
+    // Network callbacks may stamp fresh frames after the loop timestamp.
+    // Re-read time so unsigned timeout arithmetic never sees a future frame.
+    leds.update(millis());
 #if defined(ARDUINO_ARCH_ESP32)
     // Never feed before the temperature/fan safety logic and communication tasks.
     if (watchdogArmed) esp_task_wdt_reset();
