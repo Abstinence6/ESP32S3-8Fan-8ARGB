@@ -592,6 +592,7 @@ class DashboardShell(QWidget):
             duty.setProperty("state", "idle")
             duty.setToolTip("PWM: немає даних")
             duty.setAccessibleName(f"PWM вентилятора {ch}")
+            duty.setAccessibleDescription("Поточний відсоток PWM, тільки для перегляду")
             box.addWidget(duty)
             source = _label("Джерело: не вибрано", "minor", True)
             source.setVisible(details.isChecked())
@@ -1460,6 +1461,10 @@ class DashboardShell(QWidget):
         bar = labels["bar"]
         bar.setValue(max(0, min(100, int(status.pwm))))
         bar.setToolTip(f"PWM вентилятора {channel}: {status.pwm}%")
+        bar.setAccessibleDescription(
+            f"Канал {channel}, PWM {status.pwm} відсотків, "
+            + ("аварія" if status.fault else "захист" if not status.fresh else "норма")
+        )
         bar_state = "critical" if status.fault else "warning" if not status.fresh else "normal"
         if bar.property("state") != bar_state:
             bar.setProperty("state", bar_state)
