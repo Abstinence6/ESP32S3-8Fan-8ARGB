@@ -171,6 +171,21 @@ int main() {
     assert(afterReboot.hasCalibration(2));
     assert(afterReboot.rpmAt(2, 20) == cooling.rpmAt(2, 20));
     assert(afterReboot.curve(0)[0].pwm == 30);
+
+    // PPR changes invalidate stored RPM calibration (including across reboot).
+    // The physical fan PWM thresholds remain unchanged.
+    const uint8_t startPwm = afterReboot.minStartPwm(2);
+    assert(afterReboot.setPulsesPerRevolution(2, 4));
+    assert(afterReboot.pulsesPerRevolution(2) == 4);
+    assert(!afterReboot.hasCalibration(2));
+    assert(!afterReboot.closedLoop(2));
+    assert(afterReboot.rpmAt(2, 20) == 0);
+    assert(afterReboot.minStartPwm(2) == startPwm);
+    CoolingController afterPprReboot(fans, Serial);
+    assert(afterPprReboot.begin());
+    assert(afterPprReboot.pulsesPerRevolution(2) == 4);
+    assert(!afterPprReboot.hasCalibration(2));
+
     afterReboot.setTemperature(3, 450, mock::currentMs);
     mock::pulse(board::kFanTachPins[3], 40);
     mock::currentMs += 1000;
