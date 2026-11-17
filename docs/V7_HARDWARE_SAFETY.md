@@ -9,7 +9,7 @@
 3. Enter bootloader, reconnect/disconnect USB, crash the Windows agent, and simulate missing CPU temperature packets. Verify actual 12 V fan-supply behavior at every transition.
 4. Repeat with all eight channels, normal ARGB load, and worst-case fan startup surge. Check power rail sag, MOSFET heating, GPIO boot strap behavior, and tach noise.
 5. With explicitly enabled DS18B20 test firmware, disconnect each mapped probe and confirm that the fan never silently picks a different ROM address.
-6. Validate logic levels, 25 kHz PWM operation, switching transients, safe thermal limits and the independent gate pull circuitry before ever enabling DC duty below 100%.
+6. Validate logic levels, 250 Hz supply PWM operation, switching transients, safe thermal limits and the independent gate pull circuitry before ever enabling DC duty below 100%.
 
 ## Preserved defaults
 
