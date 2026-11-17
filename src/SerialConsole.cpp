@@ -337,6 +337,53 @@ void SerialConsole::handleLine(char* line) {
         }
         return error();
     }
+    if (!strcmp(command, "PWRDATA")) {
+        uint16_t cpu = 0, gpu = 0;
+        if (!parseU16(next(), UINT16_MAX, cpu) ||
+            !parseU16(next(), UINT16_MAX, gpu) || !noMore())
+            return error();
+        cooling_.setPowerTelemetry(cpu, gpu, millis());
+        serial_.println(F("OK PWRDATA")); return;
+    }
+    if (!strcmp(command, "ASSIST?")) {
+        if (!noMore()) return error();
+        const auto& cfg = cooling_.assistConfig();
+        serial_.print(F("ASSIST ENABLE=")); serial_.print(cfg.enabled);
+        serial_.print(F(" CPU_START=")); serial_.print(cfg.cpuStartW);
+        serial_.print(F(" CPU_FULL=")); serial_.print(cfg.cpuFullW);
+        serial_.print(F(" GPU_START=")); serial_.print(cfg.gpuStartW);
+        serial_.print(F(" GPU_FULL=")); serial_.print(cfg.gpuFullW);
+        serial_.print(F(" BOOST=")); serial_.print(cfg.maxPowerBoost);
+        serial_.print(F(" BIAS=")); serial_.print(cfg.intakeBias);
+        serial_.print(F(" MAP="));
+        for (uint8_t i = 0; i < board::kChannelCount; ++i) {
+            if (i) serial_.print(F(","));
+            serial_.print(cfg.role[i]);
+            serial_.print(F(":"));
+            serial_.print(cfg.source[i]);
+        }
+        serial_.println("");
+        return;
+    }
+    if (!strcmp(command, "ASSIST")) {
+        char* operation = next();
+        if (!operation || strcmp(operation, "SET") != 0) return error();
+        CoolingAssistSettings::Config cfg = CoolingAssistSettings::defaults();
+        if (!parseByte(next(), 1, cfg.enabled) ||
+            !parseU16(next(), 3000, cfg.cpuStartW) ||
+            !parseU16(next(), 3000, cfg.cpuFullW) ||
+            !parseU16(next(), 3000, cfg.gpuStartW) ||
+            !parseU16(next(), 3000, cfg.gpuFullW) ||
+            !parseByte(next(), 25, cfg.maxPowerBoost) ||
+            !parseByte(next(), 15, cfg.intakeBias)) return error();
+        for (uint8_t i = 0; i < board::kChannelCount; ++i)
+            if (!parseByte(next(), 2, cfg.role[i]) ||
+                !parseByte(next(), 3, cfg.source[i])) return error();
+        if (!noMore()) return error();
+        serial_.println(cooling_.configureAssist(cfg) ?
+                        F("OK ASSIST_SAVED") : F("ERR ASSIST invalid or NVS"));
+        return;
+    }
     if (strcmp(command, "PING") == 0) {
         if (!noMore()) return error();
         serial_.println(F("PONG 5"));
@@ -380,7 +427,9 @@ void SerialConsole::handleLine(char* line) {
         serial_.print(hw_ && hw_->enabled() ? 1 : 0);
         serial_.print(F(" SENSORS="));
         serial_.print(hw_ ? hw_->sensorCount() : 0);
-        serial_.print(F(" GPIO_NVS=1 TPAL_NVS="));
+        serial_.print(F(" GPIO_NVS=1 ASSIST_NVS="));
+        serial_.print(cooling_.assistSupported() ? 1 : 0);
+        serial_.print(F(" TPAL_NVS="));
         serial_.println(temperaturePalette_ ? 1 : 0);
         return;
     }
@@ -960,6 +1009,8 @@ void SerialConsole::printHelp() {
     serial_.println(F("HTMODE? <ch> | HTMODE <ch> PC|LOCAL|BACKUP"));
     serial_.println(F("MQTT CONFIG? | MQTT BROKER <host> <port> | MQTT AUTHHEX <userHex|-> <passHex|-> | MQTT HA ON|OFF | MQTT TEMP ON|OFF | MQTT ON|OFF | MQTT CLEAR"));
     serial_.println(F("MQTT TX START | BROKER <host> <port> | AUTHHEX <userHex|-> <passHex|-> | FLAGS <on> <ha> <temp> | CLEAR | COMMIT | CANCEL"));
+    serial_.println(F("ASSIST? | ASSIST SET <enable> <cpuStart> <cpuFull> <gpuStart> <gpuFull> <boost> <intakeBias> <role> <source> x8"));
+    serial_.println(F("PWRDATA <cpuW|65535> <gpuW|65535> (expires after 6s)"));
     serial_.println(F("TEMP <ch> <0..1250> | AUTO <ch> | ALLAUTO"));
     serial_.println(F("FAN <ch> <0..100> | ALLFAN <0..100> (manual override)"));
     serial_.println(F("CURVE? <ch> | CURVE <ch> <T1> <PWM1> ... <T5> <PWM5>"));
