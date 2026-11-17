@@ -14,10 +14,9 @@ public:
     static constexpr uint8_t kMinPoints = 4;
     static constexpr uint8_t kMaxPoints = 8;
     struct Point {
-        uint8_t tempC = 0;
-        uint8_t r = 0;
-        uint8_t g = 0;
-        uint8_t b = 0;
+        uint8_t tempC, r, g, b;
+        Point(uint8_t t = 0, uint8_t red = 0, uint8_t green = 0, uint8_t blue = 0)
+            : tempC(t), r(red), g(green), b(blue) {}
     };
     struct Palette {
         uint8_t count = 0;
@@ -27,10 +26,10 @@ public:
     static Palette defaults() {
         Palette value = {};
         value.count = 4;
-        value.points[0] = {30, 0, 100, 255};
-        value.points[1] = {49, 0, 220, 65};
-        value.points[2] = {69, 255, 190, 0};
-        value.points[3] = {85, 255, 0, 0};
+        value.points[0] = Point(30, 0, 100, 255);
+        value.points[1] = Point(49, 0, 220, 65);
+        value.points[2] = Point(69, 255, 190, 0);
+        value.points[3] = Point(85, 255, 0, 0);
         return value;
     }
     static bool valid(const Palette& v) {

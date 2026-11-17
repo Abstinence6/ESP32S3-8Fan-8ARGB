@@ -36,7 +36,11 @@ public:
     uint8_t safetyWarning(uint8_t channel) const;
 
 private:
-    struct Rgb { uint8_t r = 0, g = 0, b = 0; };
+    struct Rgb {
+        uint8_t r, g, b;
+        Rgb(uint8_t red = 0, uint8_t green = 0, uint8_t blue = 0)
+            : r(red), g(green), b(blue) {}
+    };
     struct Config {
         uint32_t magic;
         uint16_t counts[board::kChannelCount];

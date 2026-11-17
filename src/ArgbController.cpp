@@ -80,12 +80,12 @@ ArgbController::Rgb ArgbController::effectiveColor(uint8_t ch, uint16_t pixel) c
     // A non-destructive override on only the first three LEDs: original scene
     // buffers remain intact and can immediately resume when the fault clears.
     if (safetyWarnings_[ch] && warningOn_ && pixel < 3U) {
-        if (safetyWarnings_[ch] == 1) return {255, 95, 0};   // missing sensor
-        if (safetyWarnings_[ch] == 2) return {255, 0, 0};    // thermal
-        return {255, 0, 120};                                // TACH / stall
+        if (safetyWarnings_[ch] == 1) return Rgb(255, 95, 0);   // missing sensor
+        if (safetyWarnings_[ch] == 2) return Rgb(255, 0, 0);    // thermal
+        return Rgb(255, 0, 120);                                // TACH / stall
     }
     const uint16_t index = pixel * 3U;
-    return {frame_[ch][index], frame_[ch][index + 1], frame_[ch][index + 2]};
+    return Rgb(frame_[ch][index], frame_[ch][index + 1], frame_[ch][index + 2]);
 }
 uint8_t ArgbController::effectiveBrightness(uint8_t ch, uint16_t pixel) const {
     // Even an intentionally-off zone can warn. Limit indicator brightness,

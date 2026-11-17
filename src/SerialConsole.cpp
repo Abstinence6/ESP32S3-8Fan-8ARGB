@@ -176,7 +176,8 @@ void SerialConsole::handleLine(char* line) {
         if (!temperaturePalette_) {
             serial_.println(F("ERR TPAL unsupported")); return;
         }
-        if (strcmp(next(), "SET") != 0) return error();
+        char* op = next();
+        if (!op || strcmp(op, "SET") != 0) return error();
         uint8_t channel = 0, count = 0;
         if (!parseByte(next(), board::kChannelCount, channel) || !channel ||
             !parseByte(next(), TemperaturePaletteSettings::kMaxPoints, count) ||
