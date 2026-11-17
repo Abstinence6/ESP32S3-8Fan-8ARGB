@@ -22,6 +22,8 @@ try:
         MAX_ALL, MAX_CPU_GPU, GROUP_MAX, GROUP_AVG, GROUP_WEIGHTED,
     )
     from .sacn_bridge import encode_rgb_frame
+    from .temperature_palette import DEFAULT_PALETTE, Palette, make_palette_command, parse_palette_reply
+    from .temperature_palette_ui import TemperaturePaletteDialog
 except ImportError:
     from device_config_protocol import decode_value, encode_value, fields
     from temperature_argb import (
@@ -29,6 +31,8 @@ except ImportError:
         MAX_ALL, MAX_CPU_GPU, GROUP_MAX, GROUP_AVG, GROUP_WEIGHTED,
     )
     from sacn_bridge import encode_rgb_frame
+    from temperature_palette import DEFAULT_PALETTE, Palette, make_palette_command, parse_palette_reply
+    from temperature_palette_ui import TemperaturePaletteDialog
 
 SOURCES = (
     (OFF, "Вимкнено"),
@@ -58,6 +62,16 @@ class TemperatureArgbPanel(QGroupBox):
         self.labels: dict[int, QLabel] = {}
         self.save_buttons: dict[int, QPushButton] = {}
         self.configs = {ch: ZoneTemperatureConfig() for ch in range(1, 9)}
+        self.palette_supported = False
+        self.palettes: dict[int, Palette] = {}
+        self.palette_buttons: dict[int, QPushButton] = {}
+        self._palette_queue: deque[int] = deque()
+        self._palette_pending: int | None = None
+        self._palette_expected: Palette | None = None
+        self._palette_ack = False
+        self._palette_timer = QTimer(self)
+        self._palette_timer.setSingleShot(True)
+        self._palette_timer.timeout.connect(self._palette_failed)
 
         # Exactly one command or readback transaction at a time. UI never
         # reports successful flash persistence until the ESP echoes its data.
@@ -89,7 +103,7 @@ class TemperatureArgbPanel(QGroupBox):
         grid = QGridLayout(content)
         headers = (
             "Зона", "Датчик / група", "Група", "Низ, °C", "Верх, °C",
-            "Яскр.", "Стан", "NVS"
+            "Яскр.", "Стан", "NVS", "Кольори"
         )
         for col, caption in enumerate(headers):
             grid.addWidget(QLabel(caption), 0, col)
@@ -124,6 +138,10 @@ class TemperatureArgbPanel(QGroupBox):
             save.clicked.connect(lambda _=False, channel=ch: self.save_zone(channel))
             self.save_buttons[ch] = save
             grid.addWidget(save, ch, 7)
+            palette_button = QPushButton("Палітра…")
+            palette_button.clicked.connect(lambda _=False, channel=ch: self.edit_palette(channel))
+            self.palette_buttons[ch] = palette_button
+            grid.addWidget(palette_button, ch, 8)
             source.currentIndexChanged.connect(lambda _=0, channel=ch: self._mark_dirty(channel))
             low.valueChanged.connect(lambda _=0, channel=ch: self._mark_dirty(channel))
             high.valueChanged.connect(lambda _=0, channel=ch: self._mark_dirty(channel))
@@ -152,12 +170,16 @@ class TemperatureArgbPanel(QGroupBox):
         self._update_buttons()
 
     def _busy(self) -> bool:
-        return self._reading_ch is not None or self._write_ch is not None
+        return (self._reading_ch is not None or self._write_ch is not None or
+                self._palette_pending is not None or self._palette_ack)
 
     def _update_buttons(self) -> None:
         ready = self.connected and self.supported
         self.refresh_button.setEnabled(ready and not self._busy())
         self.start_button.setEnabled(ready and bool(self._loaded) and not self._busy())
+        for ch, palette_button in self.palette_buttons.items():
+            palette_button.setEnabled(ready and self.palette_supported and
+                                      ch in self.palettes and not self._busy())
         for ch, button in self.save_buttons.items():
             button.setEnabled(
                 ready and not self._busy() and ch in self._loaded and ch in self._dirty
@@ -168,6 +190,13 @@ class TemperatureArgbPanel(QGroupBox):
         if not connected:
             self.stop()
             self.supported = False
+            self.palette_supported = False
+            self.palettes.clear()
+            self._palette_queue.clear()
+            self._palette_pending = None
+            self._palette_expected = None
+            self._palette_ack = False
+            self._palette_timer.stop()
             self._loaded.clear()
             self._dirty.clear()
             self._read_queue.clear()
@@ -192,6 +221,98 @@ class TemperatureArgbPanel(QGroupBox):
         elif not supported:
             self.status.setText("Потрібна прошивка з протоколом TARGB (serial v8+).")
             self._update_buttons()
+
+    def set_palette_supported(self, enabled: bool) -> None:
+        self.palette_supported = bool(enabled)
+        if self.palette_supported and self.connected:
+            self._palette_queue = deque(range(1, 9))
+            self._palette_read_next()
+        self._update_buttons()
+
+    def _palette_read_next(self) -> None:
+        if self._palette_pending is not None or self._palette_ack:
+            return
+        if not self._palette_queue:
+            self._update_buttons()
+            return
+        ch = self._palette_queue.popleft()
+        self._palette_pending = ch
+        if not self.controller.send(f"TPAL? {ch}"):
+            self._palette_failed()
+        else:
+            self._palette_timer.start(5000)
+        self._update_buttons()
+
+    def _palette_failed(self) -> None:
+        self._palette_timer.stop()
+        self._palette_queue.clear()
+        self._palette_pending = None
+        self._palette_expected = None
+        self._palette_ack = False
+        self.status.setText("Палітра: немає підтвердження запису або читання з ESP32.")
+        self._update_buttons()
+
+    def edit_palette(self, ch: int) -> None:
+        if not self.connected or not self.palette_supported or ch not in self.palettes or self._busy():
+            return
+        editor = TemperaturePaletteDialog(ch, self.palettes[ch], self)
+        if editor.exec() != QDialog.DialogCode.Accepted:
+            return
+        points = editor.points
+        if points == self.palettes[ch]:
+            return
+        try:
+            command = make_palette_command(ch, points)
+        except ValueError as exc:
+            self.status.setText(f"Помилка палітри: {exc}")
+            return
+        self._palette_expected = points
+        self._palette_pending = ch
+        self._palette_ack = True
+        self.status.setText(f"Запис палітри ARGB {ch} у NVS ESP32…")
+        if not self.controller.send(command):
+            self._palette_failed()
+            return
+        self._palette_timer.start(5000)
+        self._update_buttons()
+
+    def _handle_palette(self, line: str) -> bool:
+        if line.startswith("ERR TPAL"):
+            if self._palette_pending is not None:
+                self._palette_failed()
+            return True
+        if line == "OK TPAL_SAVED":
+            if self._palette_pending is not None and self._palette_ack:
+                self._palette_ack = False
+                self._palette_timer.stop()
+                if not self.controller.send(f"TPAL? {self._palette_pending}"):
+                    self._palette_failed()
+                    return True
+                self._palette_timer.start(5000)
+            return True
+        if not line.startswith("TPAL CH="):
+            return False
+        if self._palette_pending is None or self._palette_ack:
+            return True
+        try:
+            channel, points = parse_palette_reply(line)
+            if channel != self._palette_pending:
+                raise ValueError("Неочікуваний канал")
+            if self._palette_expected is not None and points != self._palette_expected:
+                raise ValueError("Відповідь ESP32 не збігається з новою палітрою")
+        except ValueError:
+            self._palette_failed()
+            return True
+        self.palettes[channel] = points
+        self._palette_timer.stop()
+        self._palette_pending = None
+        if self._palette_expected is not None:
+            self.status.setText(f"✓ ESP32 підтвердив палітру ARGB {channel} у NVS.")
+            self._palette_expected = None
+        else:
+            self._palette_read_next()
+        self._update_buttons()
+        return True
 
     def refresh_sensors(self) -> None:
         actual = sorted(self.controller.temperatures, key=lambda s: s.name.casefold())
@@ -380,6 +501,8 @@ class TemperatureArgbPanel(QGroupBox):
         self._update_buttons()
 
     def handle_line(self, line: str) -> bool:
+        if self._handle_palette(line):
+            return True
         if self._await_ack is not None:
             if line == self._await_ack:
                 self._write_next()
@@ -503,7 +626,8 @@ class TemperatureArgbPanel(QGroupBox):
         for ch, cfg in self.configs.items():
             if ch not in self._loaded or cfg.source == OFF:
                 continue
-            color = zone_color(cfg, self.controller.temperatures, fresh=fresh)
+            color = zone_color(cfg, self.controller.temperatures, fresh=fresh,
+                               palette=self.palettes.get(ch) if self.palette_supported else None)
             if color is None:
                 continue
             num_leds = min(170, self.controller.led_counts[ch - 1])
