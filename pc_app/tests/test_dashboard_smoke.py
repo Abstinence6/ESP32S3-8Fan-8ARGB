@@ -231,6 +231,53 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertFalse(panel.page_button.isEnabled())
         self.assertFalse(shell.maintenance_panel.firmware_path)
 
+    def test_safe_pid_autotune_requires_verified_esp_reply(self):
+        from main import time
+        from protocol import parse_status
+        from PySide6.QtWidgets import QMessageBox
+        from unittest.mock import patch
+
+        from unittest.mock import Mock
+        self.window.pid_tune_supported = True
+        self.window.port = Mock()
+        sent = []
+        self.window.send = lambda command: sent.append(command) or True
+        self.window.dashboard.set_connected(True, "COM7")
+        dialog = self.window.pid_tune_dialog = __import__(
+            "pid_autotune_ui").PidAutotuneDialog(self.window, self.window)
+        dialog.show_for_channel(1)
+        self.assertEqual(sent[-1], "PIDGAINS? 1")
+        self.window.handle_line("PIDGAINS CH=1 KP=30 KI=3 KD=4")
+        self.assertEqual(dialog.current, (30, 3, 4))
+
+        start = time.time() - 45
+        series = [
+            (0, 40, 1000, 45), (5, 40, 1000, 45),
+            (10, 40, 1010, 45), (15, 40, 1005, 45),
+            (20, 60, 1080, 45), (25, 60, 1230, 45),
+            (30, 60, 1450, 45), (35, 60, 1600, 45),
+            (40, 60, 1602, 45), (45, 60, 1598, 45),
+        ]
+        self.window.history[1].extend(
+            (start + t, pwm, rpm, temp) for t, pwm, rpm, temp in series
+        )
+        self.window.fan_status[1] = parse_status(
+            "CH 1 FAN=60% RPM=1600 TEMP=450 MODE=auto SENSOR=ok TYPE=3 FAULT=0"
+        )
+        dialog.analyze()
+        self.assertIsNotNone(dialog.recommendation)
+        with patch.object(QMessageBox, "question",
+                          return_value=QMessageBox.StandardButton.Yes):
+            dialog.apply()
+        self.assertTrue(sent[-1].startswith("PIDGAINS 1 "))
+        self.window.handle_line("OK PIDGAINS_SAVED")
+        self.assertEqual(sent[-1], "PIDGAINS? 1")
+        kp, ki, kd = dialog.recommendation.gains
+        self.window.handle_line(f"PIDGAINS CH=1 KP={kp} KI={ki} KD={kd}")
+        self.assertEqual(dialog.current, (kp, ki, kd))
+        self.assertIn("підтвердив", dialog.status.text())
+        dialog.hide()
+
     def test_predictive_cooling_nvs_readback(self):
         panel = self.window.dashboard.device_settings.assist_dialog
         sent = []

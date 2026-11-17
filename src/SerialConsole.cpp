@@ -384,6 +384,32 @@ void SerialConsole::handleLine(char* line) {
                         F("OK ASSIST_SAVED") : F("ERR ASSIST invalid or NVS"));
         return;
     }
+    if (!strcmp(command, "PIDGAINS?")) {
+        uint8_t channel = 0;
+        if (!parseByte(next(), board::kChannelCount, channel) || !channel || !noMore())
+            return error();
+        const auto& g = cooling_.pidGains(channel - 1);
+        serial_.print(F("PIDGAINS CH=")); serial_.print(channel);
+        serial_.print(F(" KP=")); serial_.print(g.kpMilli);
+        serial_.print(F(" KI=")); serial_.print(g.kiMilli);
+        serial_.print(F(" KD=")); serial_.println(g.kdMilli);
+        return;
+    }
+    if (!strcmp(command, "PIDGAINS")) {
+        uint8_t channel = 0;
+        PidGainsSettings::Gains g = {};
+        if (!parseByte(next(), board::kChannelCount, channel) || !channel ||
+            !parseU16(next(), 80, g.kpMilli) ||
+            !parseU16(next(), 15, g.kiMilli) ||
+            !parseU16(next(), 20, g.kdMilli) || !noMore())
+            return error();
+        if (!cooling_.setPidGains(channel - 1, g)) {
+            serial_.println(F("ERR PIDGAINS calibration, TACH or hardware not qualified"));
+            return;
+        }
+        serial_.println(F("OK PIDGAINS_SAVED"));
+        return;
+    }
     if (strcmp(command, "PING") == 0) {
         if (!noMore()) return error();
         serial_.println(F("PONG 5"));
@@ -430,7 +456,9 @@ void SerialConsole::handleLine(char* line) {
         serial_.print(F(" GPIO_NVS=1 ASSIST_NVS="));
         serial_.print(cooling_.assistSupported() ? 1 : 0);
         serial_.print(F(" TPAL_NVS="));
-        serial_.println(temperaturePalette_ ? 1 : 0);
+        serial_.print(temperaturePalette_ ? 1 : 0);
+        serial_.print(F(" PIDTUNE_NVS="));
+        serial_.println(cooling_.pidTuningSupported() ? 1 : 0);
         return;
     }
     if (strcmp(command, "HTSCAN") == 0) {
@@ -1017,6 +1045,7 @@ void SerialConsole::printHelp() {
     serial_.println(F("CAL START <ch> | CAL SMART <ch> | CAL GET <ch> | CAL CANCEL"));
     serial_.println(F("TEMP2 / CURVE2 / CURVE2? for second thermal source; DUAL <ch> 0|1"));
     serial_.println(F("PID <ch> 0|1 | RPM <ch> <rpm> (requires calibration)"));
+    serial_.println(F("PIDGAINS? <ch> | PIDGAINS <ch> <kpMilli> <kiMilli> <kdMilli>"));
     serial_.println(F("PPR <ch> 1..12 | CRIT <ch> 40..120 | STALL <ch> 0..3000"));
     serial_.println(F("FANCFG <ch> <ppr> <criticalC> <stallRpm> (one NVS record)"));
     serial_.println(F("TYPE? <ch> | TYPE <ch> 2|3 (no auto detection)"));
