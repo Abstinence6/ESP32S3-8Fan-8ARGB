@@ -216,7 +216,7 @@ class DashboardSmokeTests(unittest.TestCase):
 
     def test_quick_navigation_and_search_palette(self):
         shell = self.window.dashboard
-        self.assertEqual(len(shell._shortcuts), 9)
+        self.assertEqual(len(shell._shortcuts), 10)
         palette = shell.create_command_palette()
         palette.search.setText("Вентилятор 6")
         self.assertGreater(palette.results.count(), 0)
