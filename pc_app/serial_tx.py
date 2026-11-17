@@ -55,7 +55,8 @@ class SerialTransmitter:
         with self._lock:
             if channel in self.pending_rgb:
                 self.frames_dropped += 1
-                del self.pending_rgb[channel]
+                # Preserve insertion order: replacing a pending frame must not
+                # starve other zones under sustained 8-channel streaming.
             self.pending_rgb[channel] = packet
 
     def flush_rgb(self, now: float | None = None) -> int:
