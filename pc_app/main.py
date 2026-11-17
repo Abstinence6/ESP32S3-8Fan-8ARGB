@@ -738,6 +738,8 @@ class FanArgbWindow(QMainWindow):
         if line.startswith("PONG ") and line[5:].isdigit():
             self.heartbeat.pong()
             return
+        if self.dashboard.temperature_argb.handle_line(line):
+            return
         if self.dashboard.device_settings.handle_line(line):
             return
         if self.dashboard.diagnostics.handle_line(line):
@@ -799,7 +801,9 @@ class FanArgbWindow(QMainWindow):
                     + f" · DC PWM {'дозволено' if fields.get('DC_READY') == '1' else 'заблоковано'}"
                     + f" · DS18B20 {'так' if fields.get('DS18B20') == '1' else 'ні'}"
                 )
-                self.dashboard.device_settings.set_version(version, int(fields.get("SERIAL", 5)))
+                serial_version = int(fields.get("SERIAL", 5))
+                self.dashboard.device_settings.set_version(version, serial_version)
+                self.dashboard.temperature_argb.set_version(serial_version)
             except (ValueError, KeyError):
                 self.log("Невалідна відповідь VERSION?")
             return

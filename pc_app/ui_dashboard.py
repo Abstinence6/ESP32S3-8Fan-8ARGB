@@ -1473,6 +1473,7 @@ class DashboardShell(QWidget):
 
     def set_connected(self, connected: bool, port_name: str = "") -> None:
         self.is_connected = bool(connected)
+        self.temperature_argb.set_connected(connected)
         if connected:
             self.connection_text.setText(f"●  ESP32 · {port_name}")
             self.connection_text.setProperty("role", "positive")

@@ -59,6 +59,10 @@ class TemperatureArgbTests(unittest.TestCase):
             ZoneTemperatureConfig(source="cpu", group_ids=("cpu", "cpu"))
         with self.assertRaises(ValueError):
             ZoneTemperatureConfig(brightness=255)
+        with self.assertRaises(ValueError):
+            ZoneTemperatureConfig(source="s" * 96)
+        with self.assertRaises(ValueError):
+            ZoneTemperatureConfig(group_ids=tuple(str(i) for i in range(9)))
 
 
 if __name__ == "__main__":

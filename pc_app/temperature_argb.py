@@ -32,10 +32,10 @@ class ZoneTemperatureConfig:
     brightness: int = 64
 
     def __post_init__(self) -> None:
-        if not isinstance(self.source, str) or not self.source or len(self.source) > 256:
+        if not isinstance(self.source, str) or not self.source or len(self.source.encode("utf-8")) > 95:
             raise ValueError("Invalid temperature source")
-        if not isinstance(self.group_ids, tuple) or len(self.group_ids) > 64 or any(
-            not isinstance(item, str) or not 0 < len(item) <= 256 for item in self.group_ids
+        if not isinstance(self.group_ids, tuple) or len(self.group_ids) > 8 or any(
+            not isinstance(item, str) or not 0 < len(item.encode("utf-8")) <= 95 for item in self.group_ids
         ):
             raise ValueError("Invalid temperature sensor group")
         if len(self.group_ids) != len(set(self.group_ids)):
