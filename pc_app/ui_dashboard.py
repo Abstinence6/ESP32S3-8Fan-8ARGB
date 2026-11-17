@@ -1472,9 +1472,11 @@ class DashboardShell(QWidget):
             f"FAN {channel:02d} · {status.pwm}% PWM · "
             + (f"{status.rpm} RPM" if status.rpm_feedback else "TACH недоступний")
         )
-        labels["rpm"].setText(f"{status.rpm} RPM" if status.rpm_feedback else "— RPM")
+        labels["rpm"].setText(
+            f"{status.rpm:,} RPM".replace(",", " ") if status.rpm_feedback else "— RPM"
+        )
         temp = f"{status.deci_c / 10:.1f} °C" if status.fresh else "— °C"
-        labels["metrics"].setText(f"{status.pwm}% PWM  ·  {temp}")
+        labels["metrics"].setText(f"PWM {status.pwm:3d}%  ·  {temp}")
         bar = labels["bar"]
         bar.setValue(max(0, min(100, int(status.pwm))))
         bar.setToolTip(f"PWM вентилятора {channel}: {status.pwm}%")
