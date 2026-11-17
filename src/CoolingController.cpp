@@ -22,8 +22,26 @@ uint8_t clampPercent(int32_t value) {
 }
 }
 
-CoolingController::CoolingController(FanController& fans, Stream& events, CoolingAssistSettings* assist)
-    : assist_(assist), fans_(fans), events_(events) {}
+CoolingController::CoolingController(FanController& fans, Stream& events, CoolingAssistSettings* assist, PidGainsSettings* gains)
+    : assist_(assist), pidGains_(gains), fans_(fans), events_(events) {}
+const PidGainsSettings::Gains& CoolingController::pidGains(uint8_t ch) const {
+    static const PidGainsSettings::Gains fixedDefaults = PidGainsSettings::defaults();
+    return pidGains_ && ch < board::kChannelCount ? pidGains_->get(ch) : fixedDefaults;
+}
+bool CoolingController::setPidGains(uint8_t ch, const PidGainsSettings::Gains& gains) {
+    // Passive fitting can be done on PC; actual coefficients are applied only
+    // to a calibrated, physically validated, safely running TACH-controlled fan.
+    if (!pidGains_ || ch >= board::kChannelCount || !hasCalibration(ch) ||
+        !fans_.canControl(ch, 50) || !fans_.tachReliable(ch) ||
+        !freshPair(ch, millis()) || overTemperature(ch) ||
+        faultLatched_[ch] || activeCalibration_ >= 0 ||
+        !PidGainsSettings::valid(gains)) return false;
+    if (!pidGains_->set(ch, gains)) return false;
+    integral_[ch] = 0;
+    lastError_[ch] = 0;
+    lastPidMs_[ch] = millis();
+    return true;
+}
 bool CoolingController::configureAssist(const CoolingAssistSettings::Config& config) {
     return assist_ && assist_->set(config);
 }
@@ -454,12 +472,14 @@ uint8_t CoolingController::controlPwm(uint8_t ch, uint8_t feedforward, uint16_t 
     lastPidMs_[ch] = nowMs;
     const int32_t error = static_cast<int32_t>(targetRpm) - static_cast<int32_t>(fans_.getRpm(ch));
     const float seconds = static_cast<float>(elapsed) / 1000.0f;
-    integral_[ch] += static_cast<float>(error) * 0.003f * seconds;
+    const PidGainsSettings::Gains& g = pidGains(ch);
+    integral_[ch] += static_cast<float>(error) * (g.kiMilli / 1000.0f) * seconds;
     if (integral_[ch] > 30) integral_[ch] = 30;
     if (integral_[ch] < -30) integral_[ch] = -30;
     const float derivative = static_cast<float>(error - lastError_[ch]) / seconds;
     lastError_[ch] = error;
-    const int32_t correction = static_cast<int32_t>(0.030f * error + integral_[ch] + 0.004f * derivative);
+    const int32_t correction = static_cast<int32_t>((g.kpMilli / 1000.0f) * error +
+        integral_[ch] + (g.kdMilli / 1000.0f) * derivative);
     const int32_t bound = correction > 35 ? 35 : correction < -35 ? -35 : correction;
     const uint8_t requested = clampPercent(static_cast<int32_t>(feedforward) + bound);
     return requested && requested < saved_[ch].minRun ? saved_[ch].minRun : requested;

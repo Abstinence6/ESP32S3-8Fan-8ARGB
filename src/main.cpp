@@ -9,6 +9,7 @@
 #include "HardwareTemperature.h"
 #include "PinMapSettings.h"
 #include "CoolingAssistSettings.h"
+#include "PidGainsSettings.h"
 #include "TemperatureArgbSettings.h"
 #include "TemperaturePaletteSettings.h"
 #include <string.h>
@@ -22,7 +23,8 @@ namespace { bool watchdogArmed = false; }
 FanController fans;
 ArgbController leds;
 CoolingAssistSettings coolingAssist;
-CoolingController cooling(fans, Serial, &coolingAssist);
+PidGainsSettings pidGainsSettings;
+CoolingController cooling(fans, Serial, &coolingAssist, &pidGainsSettings);
 NetworkRgbBridge wifiRgb(leds);
 PcPowerController pcPower;
 HardwareTemperature hardwareTemp;
@@ -48,6 +50,7 @@ void setup() {
         while (true) delay(1000);
     }
     if (!coolingAssist.begin()) Serial.println(F("WARN: cooling assist NVS unavailable"));
+    if (!pidGainsSettings.begin()) Serial.println(F("WARN: PID tuning NVS unavailable"));
     if (!cooling.begin()) {
         Serial.println(F("FATAL: NVS initialization failed"));
         while (true) delay(1000);
