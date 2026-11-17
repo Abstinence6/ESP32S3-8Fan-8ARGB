@@ -66,6 +66,12 @@ g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
   test/native/mock/Arduino.cpp test/native/test_pinmap.cpp -o "$out"
 "$out"
 
+# Per-channel brightness is persisted independently of external RGB frames.
+g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
+  test/native/mock/Arduino.cpp src/ArgbController.cpp \
+  test/native/test_argb_brightness.cpp -o "$out"
+"$out"
+
 # NVS temperature ARGB: serial commands, power-cycle persistence,
 # transaction rollback and corruption fallback.
 g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
