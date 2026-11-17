@@ -40,25 +40,25 @@ int main() {
     console.begin();
     Serial.send("FAN 1 45\nLED 3 255 0 0\nBRIGHT 3 80\nRAINBOW 2\nSTATUS\n");
     console.poll();
-    assert(fans.getPercent(0) == 45);
+    assert(fans.getPercent(0) == 100); // no fresh PC temperature: fail-safe stays active
     assert(leds.getMode(2) == ArgbController::Mode::Solid);
     assert(leds.getBrightness(2) == 80);
     assert(leds.getMode(1) == ArgbController::Mode::Rainbow);
-    assert(Serial.out.find("CH 1 FAN=45% RPM=0") != std::string::npos);
+    assert(Serial.out.find("CH 1 FAN=100% RPM=0") != std::string::npos);
 
     Serial.out.clear();
     Serial.send("FAN 9 80\nFAN 1 101\nALLFAN 70\nALLOFF\n");
     console.poll();
     assert(Serial.out.find("ERR arguments") != std::string::npos);
     for (unsigned ch = 0; ch < 8; ++ch) {
-        assert(fans.getPercent(ch) == 70);
+        assert(fans.getPercent(ch) == 100);
         assert(leds.getMode(ch) == ArgbController::Mode::Off);
     }
     Serial.out.clear();
     Serial.send(std::string(300, 'A') + "\nFAN 2 60\n");
     console.poll();
     assert(Serial.out.find("ERR line too long") != std::string::npos);
-    assert(fans.getPercent(1) == 60);
+    assert(fans.getPercent(1) == 100);
 
     // USB binary pixel stream (sACN bridge) must coexist with text fan control.
     // Fixed Python reference: encode_rgb_frame(3, bytes.fromhex("ff000000ff00"))
@@ -75,7 +75,7 @@ int main() {
     console.poll();
     assert(leds.getMode(2) == ArgbController::Mode::External);
     assert(leds.getBrightness(2) == 255);
-    assert(fans.getPercent(2) == 65);
+    assert(fans.getPercent(2) == 100);
     assert(Serial.out.find("LEDCOUNTS 30 30 30 30 30 30 30 30") != std::string::npos);
 
     // Malformed CRC and partial frame timeout must be discarded without modifying pixels.
@@ -91,18 +91,18 @@ int main() {
     console.poll();  // discard truncated packet
     Serial.send("FAN 4 77\n");
     console.poll();
-    assert(fans.getPercent(3) == 77);
+    assert(fans.getPercent(3) == 100);
 
     // Invalid RGB header: any following bytes must not execute fan commands.
     const uint8_t invalidLength[] = {0xA5, 0x5A, 0x02, 0xFF, 0x7F};
     Serial.send(std::string(reinterpret_cast<const char*>(invalidLength), 5) + "FAN 4 0\n");
     console.poll();
-    assert(fans.getPercent(3) == 77);
+    assert(fans.getPercent(3) == 100); // rejected binary header cannot change output
     mock::currentMs += 500;
     console.poll();
     Serial.send("FAN 4 45\n");
     console.poll();
-    assert(fans.getPercent(3) == 45);
+    assert(fans.getPercent(3) == 100);
 
     leds.setRainbow(0);
     mock::currentMs = 2040;
