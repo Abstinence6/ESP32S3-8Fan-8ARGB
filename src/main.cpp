@@ -8,6 +8,7 @@
 #include "PcPowerController.h"
 #include "HardwareTemperature.h"
 #include "PinMapSettings.h"
+#include "CoolingAssistSettings.h"
 #include "TemperatureArgbSettings.h"
 #include "TemperaturePaletteSettings.h"
 #include <string.h>
@@ -20,7 +21,8 @@ namespace { bool watchdogArmed = false; }
 
 FanController fans;
 ArgbController leds;
-CoolingController cooling(fans, Serial);
+CoolingAssistSettings coolingAssist;
+CoolingController cooling(fans, Serial, &coolingAssist);
 NetworkRgbBridge wifiRgb(leds);
 PcPowerController pcPower;
 HardwareTemperature hardwareTemp;
@@ -45,6 +47,7 @@ void setup() {
         // release PWM input HIGH whenever the MCU is off or reset.
         while (true) delay(1000);
     }
+    if (!coolingAssist.begin()) Serial.println(F("WARN: cooling assist NVS unavailable"));
     if (!cooling.begin()) {
         Serial.println(F("FATAL: NVS initialization failed"));
         while (true) delay(1000);
