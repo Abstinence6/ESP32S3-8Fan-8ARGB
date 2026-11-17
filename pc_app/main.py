@@ -48,6 +48,7 @@ from ui_dashboard import DashboardShell
 from smart_control import SafeTemperatureFilter, AutoProfileSelector
 from tray_monitor import FaultNotificationGate
 from tach_health import TachHealthMonitor
+from cooling_assist import power_payload
 from telemetry_store import TelemetryStore
 
 
@@ -66,6 +67,7 @@ class FanArgbWindow(QMainWindow):
         self.read_buffer = ""
         self.temperatures: list[TemperatureSensor] = []
         self.last_temperature_sample_at = float("-inf")
+        self.cooling_assist_supported = False
         self.curves = {ch: list(DEFAULT_CURVE) for ch in range(1, 9)}
         self.secondary_curves = {ch: list(DEFAULT_CURVE) for ch in range(1, 9)}
         self.config_types: dict[int, int] = {}
@@ -660,6 +662,7 @@ class FanArgbWindow(QMainWindow):
         self.heartbeat.reset()
         self.read_buffer = ""
         self.led_counts = None
+        self.cooling_assist_supported = False
         if self.dashboard.native_checkbox.isChecked():
             self.dashboard.native_checkbox.setChecked(False)
         if self.dashboard.studio.active:
@@ -805,6 +808,8 @@ class FanArgbWindow(QMainWindow):
                 self.dashboard.device_settings.set_version(version, serial_version)
                 self.dashboard.temperature_argb.set_version(serial_version)
                 self.dashboard.device_settings.gpio_dialog.set_supported(fields.get("GPIO_NVS") == "1")
+                self.cooling_assist_supported = fields.get("ASSIST_NVS") == "1"
+                self.dashboard.device_settings.assist_dialog.set_supported(self.cooling_assist_supported)
             except (ValueError, KeyError):
                 self.log("Невалідна відповідь VERSION?")
             return
@@ -988,6 +993,11 @@ class FanArgbWindow(QMainWindow):
             time.time(), max(cpu_w) if cpu_w else float("nan"),
             max(gpu_w) if gpu_w else float("nan"),
         ))
+        if self.port and self.cooling_assist_supported:
+            # Never fabricate a lower temperature; ESP uses Watts only to
+            # increase existing Auto PWM while raw temperature stays authoritative.
+            self.send(power_payload(max(cpu_w) if cpu_w else None,
+                                    max(gpu_w) if gpu_w else None))
         self._refresh_history()
         self._update_tray_tooltip()
         self._update_source_boxes()
