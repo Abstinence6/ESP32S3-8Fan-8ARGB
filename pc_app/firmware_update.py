@@ -31,6 +31,10 @@ def inspect_firmware(path: str) -> tuple[str, int]:
         raise ValueError("Образ призначений не для ESP32-S3 (chip_id != 9)")
     if data[23] not in (0, 1):
         raise ValueError("Некоректний прапорець SHA-256 в ESP image")
+    # The bootloader is also a valid ESP image, but it has no app descriptor.
+    # ESP-IDF places esp_app_desc_t magic at the start of the DROM descriptor.
+    if bytes.fromhex("3254cdab") not in data[:min(size, 8192)]:
+        raise ValueError("Немає ESP application descriptor: bootloader/merged BIN заборонено")
     cursor = 24
     check = 0xEF
     for _segment in range(data[1]):
