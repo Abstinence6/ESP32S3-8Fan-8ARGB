@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 import time
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from settings_widgets import DesktopSettingsPanel
 from hardware_sensor_ui import HardwareSensorPanel
@@ -24,6 +24,8 @@ from PySide6.QtWidgets import (
     QListWidgetItem, QSizePolicy, QTabWidget,
 )
 
+
+FAN_TELEMETRY_TTL = 15.0  # > two 5 s STATUS polls, tolerant of USB jitter
 
 PAGES = (
     ("overview", "Огляд", "Огляд системи", "Поточний стан охолодження"),
@@ -251,6 +253,7 @@ class DashboardShell(QWidget):
         self.pc_state_updated_at = 0.0
         self._fan_statuses: dict[int, object] = {}
         self._last_fan_update: dict[int, float] = {}
+        self._expired_fan_channels: set[int] = set()
         self._fan_grid_columns = 0
         self._fan_grid_visible: tuple[int, ...] = ()
         self._attention_only = False
@@ -294,6 +297,9 @@ class DashboardShell(QWidget):
         palette_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
         palette_shortcut.activated.connect(self.open_command_palette)
         self._shortcuts.append(palette_shortcut)
+        self._telemetry_timer = QTimer(self)
+        self._telemetry_timer.timeout.connect(self.refresh_telemetry_freshness)
+        self._telemetry_timer.start(1000)
         self._reflow_fan_cards()
 
     def create_command_palette(self) -> QDialog:
@@ -649,10 +655,56 @@ class DashboardShell(QWidget):
         self._attention_only = bool(checked)
         self._reflow_fan_cards()
 
+    def _fan_telemetry_stale(self, channel: int, now: float | None = None) -> bool:
+        stamp = self._last_fan_update.get(channel)
+        if stamp is None:
+            return True
+        return (time.monotonic() if now is None else now) - stamp > FAN_TELEMETRY_TTL
+
+    def refresh_telemetry_freshness(self) -> None:
+        """Expire individual card values even while PONG/USB stays connected."""
+        if not self.is_connected:
+            return
+        now = time.monotonic()
+        expired = {
+            ch for ch in self._fan_statuses
+            if self._fan_telemetry_stale(ch, now)
+        }
+        new_expired = expired - self._expired_fan_channels
+        if not new_expired:
+            return
+        self._expired_fan_channels.update(new_expired)
+        for ch in new_expired:
+            labels = self.fan_cards.get(ch)
+            if not labels:
+                continue
+            age = max(0, int(now - self._last_fan_update[ch]))
+            labels["rpm"].setText("— RPM")
+            labels["metrics"].setText("PWM — %  ·  — °C")
+            labels["state"].setText(f"Статус застарів · {age} с")
+            labels["state"].setProperty("role", "caution")
+            labels["state"].style().unpolish(labels["state"])
+            labels["state"].style().polish(labels["state"])
+            bar = labels["bar"]
+            bar.setToolTip("Немає актуальної телеметрії PWM")
+            bar.setProperty("state", "warning")
+            bar.style().unpolish(bar)
+            bar.style().polish(bar)
+            frame = self._fan_frames[ch]
+            frame.setProperty("state", "warning")
+            frame.setToolTip(f"FAN {ch:02d}: немає телеметрії {age} с")
+            frame.style().unpolish(frame)
+            frame.style().polish(frame)
+        self._update_cooling_health()
+        self._refresh_attention_count()
+        self._reflow_fan_cards()
+        self._refresh_fan_detail()
+
     def _refresh_attention_count(self) -> None:
         count = sum(
             bool(status.fault) or not bool(status.fresh)
-            for status in self._fan_statuses.values()
+            or self._fan_telemetry_stale(channel)
+            for channel, status in self._fan_statuses.items()
         )
         self.attention_filter.setText(
             f"Проблемні · {count}" if count else "Проблемні · 0"
@@ -674,6 +726,7 @@ class DashboardShell(QWidget):
             or ch not in self._fan_statuses
             or bool(self._fan_statuses[ch].fault)
             or not bool(self._fan_statuses[ch].fresh)
+            or self._fan_telemetry_stale(ch)
         )
         if columns != self._fan_grid_columns or visible != self._fan_grid_visible:
             self._fan_grid_columns = columns
@@ -720,11 +773,16 @@ class DashboardShell(QWidget):
         else:
             faults = sum(bool(s.fault) for s in self._fan_statuses.values())
             stale = sum(not bool(s.fresh) for s in self._fan_statuses.values())
+            expired = sum(self._fan_telemetry_stale(ch) for ch in self._fan_statuses)
             count = len(self._fan_statuses)
             if faults:
                 title = f"Потрібна увага · {faults} каналів"
                 detail = "Виявлено аварійні стани. Відкрий Сервіс → Діагностика для перевірки."
                 state = "critical"
+            elif expired:
+                title = f"Телеметрія застаріла · {expired} каналів"
+                detail = "ESP32 підключена, але немає свіжих статусів вентиляторів. Значення RPM/PWM приховано."
+                state = "warning"
             elif stale:
                 title = f"Захисне охолодження · {stale} каналів"
                 detail = "Немає свіжої температури на частині каналів — застосовується fail-safe."
@@ -888,11 +946,14 @@ class DashboardShell(QWidget):
             return
         self.fan_live_title.setText(f"FAN {channel:02d}")
         status = self._fan_statuses.get(channel)
-        if not self.is_connected or status is None:
+        if not self.is_connected or status is None or self._fan_telemetry_stale(channel):
             self.fan_live_rpm.setText("— RPM")
             self.fan_live_metrics.setText("PWM — %   ·   — °C")
-            self.fan_live_state.setText("Немає актуальної телеметрії")
-            self.fan_live_state.setProperty("role", "minor")
+            self.fan_live_state.setText(
+                "Статус вентилятора застарів"
+                if self.is_connected and status is not None else "Немає актуальної телеметрії"
+            )
+            self.fan_live_state.setProperty("role", "caution" if status is not None else "minor")
         else:
             self.fan_live_rpm.setText(
                 f"{status.rpm:,} RPM".replace(",", " ") if status.rpm_feedback else "— RPM"
@@ -1411,6 +1472,7 @@ class DashboardShell(QWidget):
         else:
             self._fan_statuses.clear()
             self._last_fan_update.clear()
+            self._expired_fan_channels.clear()
             self.connection_text.setText("●  ESP32 не підключено")
             self.connection_text.setProperty("role", "caution")
             self.summary_esp.setText("Не підключено")
@@ -1470,6 +1532,7 @@ class DashboardShell(QWidget):
             return
         self._fan_statuses[channel] = status
         self._last_fan_update[channel] = time.monotonic()
+        self._expired_fan_channels.discard(channel)
         self._fan_frames[channel].setToolTip(
             f"FAN {channel:02d} · {status.pwm}% PWM · "
             + (f"{status.rpm} RPM" if status.rpm_feedback else "TACH недоступний")

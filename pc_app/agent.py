@@ -123,6 +123,7 @@ def run_agent() -> int:
     tach_monitor = TachHealthMonitor()
     next_connect = 0.0
     query_due = 0.0
+    next_status = 0.0
     client_was_connected = False
     next_temps = 0.0
     last_rgb = 0.0
@@ -141,6 +142,7 @@ def run_agent() -> int:
                         log.info("Connected to %s", port_name)
                         # DTR may reset ESP. Do not block the agent/GUI for 2.2 s.
                         query_due = now + 2.2
+                        next_status = now + 7.2
                     except (serial.SerialException, OSError) as exc:
                         output = None
                         log.warning("Unable to connect %s: %s", port_name, exc)
@@ -150,11 +152,16 @@ def run_agent() -> int:
                 if tx is not None:
                     tx.clear()
                 client_was_connected = owner.has_client
+                if not owner.has_client:
+                    next_status = 0.0  # refresh immediately after GUI releases COM
             if output is not None:
                 try:
                     if query_due and now >= query_due:
                         tx.write(b"PING\nLEDS\nSTATUS\n")
                         query_due = 0.0
+                    if not owner.has_client and not query_due and now >= next_status:
+                        tx.send_command("STATUS")
+                        next_status = now + 5.0
                     rx = output.read(output.in_waiting or 0)
                     if rx:
                         owner.forward(rx)

@@ -637,6 +637,8 @@ class FanArgbWindow(QMainWindow):
                 self.heartbeat.ping(time.monotonic())
             if not self.port:
                 return
+            # PONG alone cannot prove the eight fan statuses are still current.
+            self.send("STATUS")
             self.send("PC STATUS")
             self.send("MQTT?")
             self.send("HTEMP?")

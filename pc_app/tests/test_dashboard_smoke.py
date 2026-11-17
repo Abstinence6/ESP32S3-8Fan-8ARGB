@@ -236,6 +236,23 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertEqual(palette.results.count(), 0)
         palette.close()
 
+    def test_expired_fan_status_is_not_shown_as_live_rpm(self):
+        shell = self.window.dashboard
+        shell.set_connected(True, "COM7")
+        normal = "CH 1 FAN=55% RPM=1250 TEMP=440 MODE=auto SENSOR=ok TYPE=3 FAULT=0"
+        self.window.handle_line(normal)
+        self.assertIn("RPM", shell.fan_cards[1]["rpm"].text())
+        shell._last_fan_update[1] -= 20.0
+        shell.refresh_telemetry_freshness()
+        self.assertEqual(shell.fan_cards[1]["rpm"].text(), "— RPM")
+        self.assertIn("застарів", shell.fan_cards[1]["state"].text())
+        self.assertIn("застаріла", shell.health_title.text())
+        shell._toggle_attention_filter(True)
+        self.assertIn(1, shell._fan_grid_visible)
+        self.window.handle_line(normal)
+        self.assertIn("1 250 RPM", shell.fan_cards[1]["rpm"].text())
+        self.assertNotIn("застарів", shell.fan_cards[1]["state"].text())
+
     def test_overview_safety_hierarchy_and_detail_visibility(self):
         shell = self.window.dashboard
         self.assertIn("не підключено", shell.health_title.text().lower())
