@@ -51,6 +51,8 @@ QFrame#metricsStrip, QFrame#fanCard, QFrame#quietCard, QFrame#systemBanner {
 }
 QFrame#metricSlot { background: transparent; border: none; }
 QFrame#fanCard:hover { border-color: #4e8e91; background: #192836; }
+QFrame#fanCard[state="critical"] { border-color: #b56a77; }
+QFrame#fanCard[state="warning"] { border-color: #ad8a52; }
 QProgressBar#fanDuty {
     background: #293b49; color: transparent; border: 0;
     border-radius: 4px; min-height: 7px; max-height: 7px;
@@ -1470,6 +1472,11 @@ class DashboardShell(QWidget):
             bar.setProperty("state", bar_state)
             bar.style().unpolish(bar)
             bar.style().polish(bar)
+        frame = self._fan_frames[channel]
+        if frame.property("state") != bar_state:
+            frame.setProperty("state", bar_state)
+            frame.style().unpolish(frame)
+            frame.style().polish(frame)
         if status.fault:
             labels["state"].setText("Аварія")
             labels["state"].setProperty("role", "negative")
