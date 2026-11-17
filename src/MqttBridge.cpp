@@ -379,7 +379,10 @@ void MqttBridge::publishStatus(uint8_t ch) {
     snprintf(topic, sizeof(topic), "%s/fan/%u/fault", baseTopic_, idx);
     mqtt_.publish(topic, cooling_.faulted(ch) ? "ON" : "OFF", true);
     snprintf(topic, sizeof(topic), "%s/fan/%u/temp", baseTopic_, idx);
-    snprintf(payload, sizeof(payload), "%.1f", cooling_.temperature(ch) / 10.0f);
+    if (cooling_.temperatureFresh(ch, millis()))
+        snprintf(payload, sizeof(payload), "%.1f", cooling_.temperature(ch) / 10.0f);
+    else
+        snprintf(payload, sizeof(payload), "unknown");
     mqtt_.publish(topic, payload, true);
 #else
     (void)ch;

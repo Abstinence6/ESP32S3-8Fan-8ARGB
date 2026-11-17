@@ -35,10 +35,16 @@ bool ArgbController::begin() {
         storage_.getBytes("config", &config, sizeof(config)) == sizeof(config) &&
         config.magic == kArgbMagic && config.crc == checksum(config) &&
         config.budgetMa >= 100 && config.budgetMa <= 20000;
-    if (valid) for (uint8_t i = 0; i < board::kChannelCount; ++i)
-        if (config.counts[i] == 0 || config.counts[i] > board::kMaxArgbPixelsPerFrame || config.reversed[i] > 1)
-            valid = false;
-    powerLimitMa_ = valid ? config.budgetMa : 2000;
+    uint32_t idleBaselineMa = 0;
+    if (valid) for (uint8_t i = 0; i < board::kChannelCount; ++i) {
+        if (config.counts[i] == 0 || config.counts[i] > board::kMaxArgbPixelsPerFrame ||
+            config.reversed[i] > 1) valid = false;
+        idleBaselineMa += config.counts[i];
+    }
+    // An old impossible budget cannot suppress the estimated idle current.
+    powerLimitMa_ = valid
+        ? (config.budgetMa < idleBaselineMa ? idleBaselineMa : config.budgetMa)
+        : 2000;
     for (uint8_t i = 0; i < board::kChannelCount; ++i) {
         strips_[i].updateType(NEO_GRB + NEO_KHZ800);
         strips_[i].updateLength(valid ? config.counts[i] : board::kArgbLedCounts[i]);
@@ -222,6 +228,10 @@ bool ArgbController::configureStripAndBudget(uint8_t ch, uint16_t count,
     if (ch >= board::kChannelCount || count == 0 ||
         count > board::kMaxArgbPixelsPerFrame ||
         budgetMa < 100 || budgetMa > 20000) return false;
+    uint32_t idleBaselineMa = count;
+    for (uint8_t i = 0; i < board::kChannelCount; ++i)
+        if (i != ch) idleBaselineMa += strips_[i].numPixels();
+    if (budgetMa < idleBaselineMa) return false;
 
     const bool geometryChanged = strips_[ch].numPixels() != count ||
                                  reversed_[ch] != reversed;
