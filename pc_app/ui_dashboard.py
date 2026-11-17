@@ -509,6 +509,11 @@ class DashboardShell(QWidget):
         self.summary_esp.setAlignment(Qt.AlignmentFlag.AlignRight)
         right.addWidget(self.summary_esp)
         info.addLayout(right, 0)
+        diagnostics_button = QPushButton("Діагностика")
+        diagnostics_button.setProperty("role", "ghost")
+        diagnostics_button.setToolTip("Відкрити діагностику контролера")
+        diagnostics_button.clicked.connect(lambda: self.show_page("service"))
+        right.addWidget(diagnostics_button)
         layout.addWidget(banner)
 
         telemetry = QFrame()
