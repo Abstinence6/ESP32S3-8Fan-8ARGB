@@ -230,10 +230,18 @@ bool CoolingController::canSetManual(uint8_t ch, uint8_t pwm) const {
 
 bool CoolingController::setManual(uint8_t ch, uint8_t pwm) {
     if (!canSetManual(ch, pwm)) return false;
+    const uint32_t nowMs = millis();
+    // Apply the same safety conditions *before* writing the PWM output.
+    // A manual Serial/MQTT command must not briefly undo a 100% failsafe
+    // between the controller's 250-ms regulation ticks.
+    const bool spinup = spinupUntilMs_[ch] &&
+        static_cast<int32_t>(spinupUntilMs_[ch] - nowMs) > 0;
+    const bool unsafe = !freshPair(ch, nowMs) || overTemperature(ch) ||
+        faultLatched_[ch] || spinup;
+    if (!fans_.setPercent(ch, unsafe ? 100 : pwm)) return false;
     fanMode_[ch] = Mode::Manual;
     manualPwm_[ch] = pwm;
     integral_[ch] = 0;
-    fans_.setPercent(ch, pwm);
     return true;
 }
 bool CoolingController::setFixedRpm(uint8_t ch, uint16_t rpm) {
