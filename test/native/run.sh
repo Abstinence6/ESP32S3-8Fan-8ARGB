@@ -8,6 +8,12 @@ g++ -std=c++17 -Wall -Wextra -Werror -DFAN_DC_PWM_VALIDATED=1 -Itest/native/mock
   src/CoolingController.cpp src/NetworkRgbBridge.cpp src/MqttBridge.cpp src/PcPowerController.cpp src/HardwareTemperature.cpp src/SerialConsole.cpp src/main.cpp test/native/test_main.cpp -o "$out"
 "$out"
 
+# Predictive cooling and intake/exhaust: NVS settings, stale power and guard.
+g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
+  test/native/mock/Arduino.cpp src/FanController.cpp src/CoolingController.cpp \
+  test/native/test_cooling_assist.cpp -o "$out"
+"$out"
+
 # Manual commands must obey the thermal/sensor arbiter even with a
 # bench-validated DC driver; default builds still prohibit partial power.
 g++ -std=c++17 -Wall -Wextra -Werror -DFAN_DC_PWM_VALIDATED=1 -Itest/native/mock -Iinclude \
