@@ -32,6 +32,17 @@ class SerialTxTests(unittest.TestCase):
         self.assertEqual(port.events[-1], two)
         self.assertEqual(tx.frames_dropped, 1)
 
+    def test_eight_zones_cannot_starve_under_repeated_updates(self):
+        port = FakePort()
+        tx = SerialTransmitter(port, rgb_interval=0)
+        for step in range(80):
+            for ch in range(1, 9):
+                tx.queue_rgb(ch, encode_rgb_frame(ch, bytes([step, ch, 0])))
+            tx.flush_rgb(now=float(step))
+        channels = [frame[2] for frame in port.events]
+        self.assertEqual(len(channels), 80)
+        self.assertEqual([channels.count(ch) for ch in range(1, 9)], [10] * 8)
+
     def test_never_retry_partial_frame(self):
         port = FakePort()
         tx = SerialTransmitter(port)
