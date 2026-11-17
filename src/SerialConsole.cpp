@@ -8,8 +8,8 @@
 #include <string.h>
 
 SerialConsole::SerialConsole(Stream& serial, FanController& fans, ArgbController& leds,
-                             CoolingController& cooling, NetworkRgbBridge* wifi, MqttBridge* mqtt, PcPowerController* pc, HardwareTemperature* hw, TemperatureArgbSettings* temperatureArgb)
-    : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling), wifi_(wifi), mqtt_(mqtt), pc_(pc), hw_(hw), temperatureArgb_(temperatureArgb) {}
+                             CoolingController& cooling, NetworkRgbBridge* wifi, MqttBridge* mqtt, PcPowerController* pc, HardwareTemperature* hw, TemperatureArgbSettings* temperatureArgb, TemperaturePaletteSettings* temperaturePalette)
+    : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling), wifi_(wifi), mqtt_(mqtt), pc_(pc), hw_(hw), temperatureArgb_(temperatureArgb), temperaturePalette_(temperaturePalette) {}
 
 void SerialConsole::begin() {
     serial_.println(F("8Fan/8ARGB ready | protocol v8 | type HELP"));
@@ -150,6 +150,53 @@ void SerialConsole::handleLine(char* line) {
     auto noMore = [&next]() -> bool { return next() == nullptr; };
     auto error = [this]() { serial_.println(F("ERR arguments | type HELP")); };
 
+    if (!strcmp(command, "TPAL?")) {
+        uint8_t channel = 0;
+        if (!parseByte(next(), board::kChannelCount, channel) || !channel || !noMore())
+            return error();
+        if (!temperaturePalette_) {
+            serial_.println(F("ERR TPAL unsupported")); return;
+        }
+        const auto& pal = temperaturePalette_->get(channel - 1);
+        serial_.print(F("TPAL CH=")); serial_.print(channel);
+        serial_.print(F(" COUNT=")); serial_.print(pal.count);
+        serial_.print(F(" DATA="));
+        for (uint8_t i = 0; i < pal.count; ++i) {
+            if (i) serial_.print(F(";"));
+            const auto& p = pal.points[i];
+            serial_.print(p.tempC); serial_.print(F(","));
+            serial_.print(p.r); serial_.print(F(","));
+            serial_.print(p.g); serial_.print(F(","));
+            serial_.print(p.b);
+        }
+        serial_.println("");
+        return;
+    }
+    if (!strcmp(command, "TPAL")) {
+        if (!temperaturePalette_) {
+            serial_.println(F("ERR TPAL unsupported")); return;
+        }
+        char* op = next();
+        if (!op || strcmp(op, "SET") != 0) return error();
+        uint8_t channel = 0, count = 0;
+        if (!parseByte(next(), board::kChannelCount, channel) || !channel ||
+            !parseByte(next(), TemperaturePaletteSettings::kMaxPoints, count) ||
+            count < TemperaturePaletteSettings::kMinPoints) return error();
+        TemperaturePaletteSettings::Palette candidate = {};
+        candidate.count = count;
+        for (uint8_t i = 0; i < count; ++i) {
+            auto& p = candidate.points[i];
+            if (!parseByte(next(), 125, p.tempC) || !parseByte(next(), 255, p.r) ||
+                !parseByte(next(), 255, p.g) || !parseByte(next(), 255, p.b))
+                return error();
+        }
+        if (!noMore()) return error();
+        if (!temperaturePalette_->set(channel - 1, candidate)) {
+            serial_.println(F("ERR TPAL invalid or NVS write failed")); return;
+        }
+        serial_.println(F("OK TPAL_SAVED"));
+        return;
+    }
     if (!strcmp(command, "TARGB?")) {
         uint8_t ch = 0;
         if (!parseByte(next(), board::kChannelCount, ch) || !ch || !noMore())
@@ -290,53 +337,6 @@ void SerialConsole::handleLine(char* line) {
         }
         return error();
     }
-    if (!strcmp(command, "PWRDATA")) {
-        uint16_t cpu = 0, gpu = 0;
-        if (!parseU16(next(), UINT16_MAX, cpu) ||
-            !parseU16(next(), UINT16_MAX, gpu) || !noMore())
-            return error();
-        cooling_.setPowerTelemetry(cpu, gpu, millis());
-        serial_.println(F("OK PWRDATA")); return;
-    }
-    if (!strcmp(command, "ASSIST?")) {
-        if (!noMore()) return error();
-        const auto& cfg = cooling_.assistConfig();
-        serial_.print(F("ASSIST ENABLE=")); serial_.print(cfg.enabled);
-        serial_.print(F(" CPU_START=")); serial_.print(cfg.cpuStartW);
-        serial_.print(F(" CPU_FULL=")); serial_.print(cfg.cpuFullW);
-        serial_.print(F(" GPU_START=")); serial_.print(cfg.gpuStartW);
-        serial_.print(F(" GPU_FULL=")); serial_.print(cfg.gpuFullW);
-        serial_.print(F(" BOOST=")); serial_.print(cfg.maxPowerBoost);
-        serial_.print(F(" BIAS=")); serial_.print(cfg.intakeBias);
-        serial_.print(F(" MAP="));
-        for (uint8_t i = 0; i < board::kChannelCount; ++i) {
-            if (i) serial_.print(F(","));
-            serial_.print(cfg.role[i]);
-            serial_.print(F(":"));
-            serial_.print(cfg.source[i]);
-        }
-        serial_.println("");
-        return;
-    }
-    if (!strcmp(command, "ASSIST")) {
-        char* operation = next();
-        if (!operation || strcmp(operation, "SET") != 0) return error();
-        CoolingAssistSettings::Config cfg = CoolingAssistSettings::defaults();
-        if (!parseByte(next(), 1, cfg.enabled) ||
-            !parseU16(next(), 3000, cfg.cpuStartW) ||
-            !parseU16(next(), 3000, cfg.cpuFullW) ||
-            !parseU16(next(), 3000, cfg.gpuStartW) ||
-            !parseU16(next(), 3000, cfg.gpuFullW) ||
-            !parseByte(next(), 25, cfg.maxPowerBoost) ||
-            !parseByte(next(), 15, cfg.intakeBias)) return error();
-        for (uint8_t i = 0; i < board::kChannelCount; ++i)
-            if (!parseByte(next(), 2, cfg.role[i]) ||
-                !parseByte(next(), 3, cfg.source[i])) return error();
-        if (!noMore()) return error();
-        serial_.println(cooling_.configureAssist(cfg) ?
-                        F("OK ASSIST_SAVED") : F("ERR ASSIST invalid or NVS"));
-        return;
-    }
     if (strcmp(command, "PING") == 0) {
         if (!noMore()) return error();
         serial_.println(F("PONG 5"));
@@ -374,14 +374,14 @@ void SerialConsole::handleLine(char* line) {
     }
     if (strcmp(command, "VERSION?") == 0) {
         if (!noMore()) return error();
-        serial_.print(F("FW VERSION=9 SERIAL=8 DC_READY="));
+        serial_.print(F("FW VERSION=10 SERIAL=8 DC_READY="));
         serial_.print(board::kDcSupplyPwmValidated ? 1 : 0);
         serial_.print(F(" DS18B20="));
         serial_.print(hw_ && hw_->enabled() ? 1 : 0);
         serial_.print(F(" SENSORS="));
         serial_.print(hw_ ? hw_->sensorCount() : 0);
-        serial_.print(F(" GPIO_NVS=1 ASSIST_NVS="));
-        serial_.println(cooling_.assistSupported() ? 1 : 0);
+        serial_.print(F(" GPIO_NVS=1 TPAL_NVS="));
+        serial_.println(temperaturePalette_ ? 1 : 0);
         return;
     }
     if (strcmp(command, "HTSCAN") == 0) {
@@ -954,13 +954,12 @@ void SerialConsole::printHelp() {
     serial_.println(F("Channels: 1..8, temperatures: deci-Celsius, e.g. 455 = 45.5 C"));
     serial_.println(F("PING | STATUS | HEALTH [ch] | SELFTEST [CANCEL] | HELP | LEDS | PC STATUS|ON|OFF|FORCE"));
     serial_.println(F("GPIO? | GPIO BEGIN | GPIO PWM|TACH|ARGB <ch> <pin> | GPIO COMMIT|CANCEL|FACTORY"));
+    serial_.println(F("TPAL? <ch> | TPAL SET <ch> <count> <temp> <r> <g> <b> ... (4..8 points)"));
     serial_.println(F("TARGB? <ch> | TARGB BEGIN <ch> | SOURCE <hex> | GROUP <hex> | RANGE <low> <high> <bright> | COMMIT | CANCEL"));
     serial_.println(F("VERSION? | HTEMP? | HTLIST? | HTSCAN | HTMAP? <ch> | HTMAP <ch> AUTO|ROMHEX"));
     serial_.println(F("HTMODE? <ch> | HTMODE <ch> PC|LOCAL|BACKUP"));
     serial_.println(F("MQTT CONFIG? | MQTT BROKER <host> <port> | MQTT AUTHHEX <userHex|-> <passHex|-> | MQTT HA ON|OFF | MQTT TEMP ON|OFF | MQTT ON|OFF | MQTT CLEAR"));
     serial_.println(F("MQTT TX START | BROKER <host> <port> | AUTHHEX <userHex|-> <passHex|-> | FLAGS <on> <ha> <temp> | CLEAR | COMMIT | CANCEL"));
-    serial_.println(F("ASSIST? | ASSIST SET <enable> <cpuStart> <cpuFull> <gpuStart> <gpuFull> <boost> <intakeBias> <role> <source> x8"));
-    serial_.println(F("PWRDATA <cpuW|65535> <gpuW|65535> (expires after 6s)"));
     serial_.println(F("TEMP <ch> <0..1250> | AUTO <ch> | ALLAUTO"));
     serial_.println(F("FAN <ch> <0..100> | ALLFAN <0..100> (manual override)"));
     serial_.println(F("CURVE? <ch> | CURVE <ch> <T1> <PWM1> ... <T5> <PWM5>"));

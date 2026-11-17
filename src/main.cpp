@@ -8,8 +8,9 @@
 #include "PcPowerController.h"
 #include "HardwareTemperature.h"
 #include "PinMapSettings.h"
-#include "CoolingAssistSettings.h"
 #include "TemperatureArgbSettings.h"
+#include "TemperaturePaletteSettings.h"
+#include <string.h>
 
 #if defined(ARDUINO_ARCH_ESP32)
 #include <esp_task_wdt.h>
@@ -19,14 +20,14 @@ namespace { bool watchdogArmed = false; }
 
 FanController fans;
 ArgbController leds;
-CoolingAssistSettings coolingAssist;
-CoolingController cooling(fans, Serial, &coolingAssist);
+CoolingController cooling(fans, Serial);
 NetworkRgbBridge wifiRgb(leds);
 PcPowerController pcPower;
 HardwareTemperature hardwareTemp;
 TemperatureArgbSettings temperatureArgbSettings;
+TemperaturePaletteSettings temperaturePaletteSettings;
 MqttBridge mqtt(cooling, fans, leds, wifiRgb, &pcPower);
-SerialConsole console(Serial, fans, leds, cooling, &wifiRgb, &mqtt, &pcPower, &hardwareTemp, &temperatureArgbSettings);
+SerialConsole console(Serial, fans, leds, cooling, &wifiRgb, &mqtt, &pcPower, &hardwareTemp, &temperatureArgbSettings, &temperaturePaletteSettings);
 
 void setup() {
 #if !ARDUINO_USB_CDC_ON_BOOT
@@ -44,7 +45,6 @@ void setup() {
         // release PWM input HIGH whenever the MCU is off or reset.
         while (true) delay(1000);
     }
-    if (!coolingAssist.begin()) Serial.println(F("WARN: cooling assist NVS unavailable"));
     if (!cooling.begin()) {
         Serial.println(F("FATAL: NVS initialization failed"));
         while (true) delay(1000);
@@ -58,6 +58,7 @@ void setup() {
     wifiRgb.begin();
     if (!mqtt.begin()) Serial.println(F("WARN: MQTT NVS unavailable"));
     if (!temperatureArgbSettings.begin()) Serial.println(F("WARN: temperature ARGB NVS unavailable"));
+    if (!temperaturePaletteSettings.begin()) Serial.println(F("WARN: temperature palette NVS unavailable"));
     console.begin();
 #if defined(ARDUINO_ARCH_ESP32)
     // Software recovery from a stalled Arduino loop. Electrical full-speed
@@ -77,6 +78,13 @@ void loop() {
     fans.update(now);
     hardwareTemp.update(now, cooling);
     cooling.update(now);
+    for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
+        const char* reason = cooling.failSafeReason(ch, now);
+        const uint8_t warning = strcmp(reason, "overheat") == 0 ? 2 :
+            strcmp(reason, "fault") == 0 ? 3 :
+            strcmp(reason, "sensor") == 0 ? 1 : 0;
+        leds.setSafetyWarning(ch, warning);
+    }
     pcPower.update(now);
     wifiRgb.update(now);
     mqtt.update(now);

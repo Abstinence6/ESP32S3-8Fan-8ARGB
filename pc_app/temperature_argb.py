@@ -9,6 +9,11 @@ from dataclasses import dataclass
 import math
 
 try:
+    from .temperature_palette import Palette, color_at
+except ImportError:
+    from temperature_palette import Palette, color_at
+
+try:
     from .monitor import (
         GROUP_AVG, GROUP_MAX, GROUP_WEIGHTED, MAX_ALL, MAX_CPU_GPU,
         TemperatureSensor, resolve_temperature,
@@ -68,12 +73,15 @@ class ZoneTemperatureConfig:
         )
 
 
-def temperature_color(celsius: float | None, settings: ZoneTemperatureConfig) -> tuple[int, int, int]:
+def temperature_color(celsius: float | None, settings: ZoneTemperatureConfig,
+                      palette: Palette | None = None) -> tuple[int, int, int]:
     """Blue -> green -> yellow -> red, with a conspicuous amber missing state."""
     if celsius is None or not isinstance(celsius, (float, int)) or (
         isinstance(celsius, bool) or not math.isfinite(celsius) or not 0 <= celsius <= 125
     ):
         target = MISSING_RGB
+    elif palette is not None:
+        target = color_at(celsius, palette)
     else:
         level = min(1.0, max(0.0, (celsius - settings.low_c) /
                               (settings.high_c - settings.low_c)))
@@ -94,9 +102,9 @@ def temperature_color(celsius: float | None, settings: ZoneTemperatureConfig) ->
 
 
 def zone_color(settings: ZoneTemperatureConfig, sensors: list[TemperatureSensor],
-               *, fresh: bool) -> tuple[int, int, int] | None:
+               *, fresh: bool, palette: Palette | None = None) -> tuple[int, int, int] | None:
     """One sensor or a strict group (all member IDs must be present)."""
     if settings.source == OFF:
         return None
     reading = resolve_temperature(settings.source, sensors, settings.group_ids) if fresh else None
-    return temperature_color(reading, settings)
+    return temperature_color(reading, settings, palette)
