@@ -25,6 +25,10 @@ class FirmwareTests(unittest.TestCase):
             path.write_bytes(make_test_image(chip_id=0))
             with self.assertRaisesRegex(ValueError, "ESP32-S3"):
                 inspect_firmware(str(path))
+            path.write_bytes(make_test_image(content=bytes(range(256)) * 9))
+            with self.assertRaisesRegex(ValueError, "descriptor"):
+                inspect_firmware(str(path))
+            path.write_bytes(payload)
             damaged = bytearray(payload)
             damaged[100] ^= 1
             path.write_bytes(damaged)
