@@ -11,9 +11,9 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QVBoxLayout, QHeaderView,
 )
 try:
-    from .diagnostics import parse_health
+    from .diagnostics import parse_health, export_support_bundle
 except ImportError:
-    from diagnostics import parse_health
+    from diagnostics import parse_health, export_support_bundle
 
 
 class DiagnosticPanel(QGroupBox):
@@ -31,6 +31,10 @@ class DiagnosticPanel(QGroupBox):
         save = QPushButton("Експорт діагностики")
         save.clicked.connect(self.export)
         line.addWidget(save)
+        bundle = QPushButton("Звіт для підтримки ZIP…")
+        bundle.setToolTip("Тільки стан вентиляторів, без паролів і журналів команд")
+        bundle.clicked.connect(self.export_bundle)
+        line.addWidget(bundle)
         root.addLayout(line)
         self.table = QTableWidget(8, 8)
         self.table.setHorizontalHeaderLabels(
@@ -70,6 +74,19 @@ class DiagnosticPanel(QGroupBox):
         ), 1):
             self.table.setItem(row, col, QTableWidgetItem(value))
         return True
+
+    def export_bundle(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Діагностика FanARGB для підтримки",
+            "fanargb-support.zip", "ZIP (*.zip)",
+        )
+        if not path:
+            return
+        try:
+            export_support_bundle(path, self.records)
+            self.label.setText("Діагностику ZIP збережено (без паролів)")
+        except (OSError, ValueError) as exc:
+            self.label.setText(f"Не вдалося зберегти ZIP: {exc}")
 
     def export(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Експорт стану ESP32",

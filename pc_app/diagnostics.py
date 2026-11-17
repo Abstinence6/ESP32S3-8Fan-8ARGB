@@ -1,6 +1,11 @@
 """Parse read-only ESP32 fan HEALTH records; no commands changing fan duty."""
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import zipfile
 
 
 @dataclass(frozen=True)
@@ -62,3 +67,43 @@ def parse_health(line: str) -> FanHealth | None:
         )
     except (KeyError, ValueError):
         return None
+
+
+def export_support_bundle(path: str | Path, records: dict[int, FanHealth]) -> None:
+    """Write a diagnostics-only ZIP; intentionally omit credentials and raw logs.
+
+    This is a snapshot of the last HEALTH response, not proof the readings
+    are still live. The user chooses the output path explicitly.
+    """
+    target = Path(path)
+    if target.suffix.lower() != ".zip":
+        raise ValueError("Діагностичний пакет повинен мати розширення .zip")
+    if not 0 <= len(records) <= 8 or any(
+        ch != record.channel or not 1 <= ch <= 8
+        for ch, record in records.items()
+    ):
+        raise ValueError("Invalid fan diagnostic records")
+
+    report = {
+        "schema": 1,
+        "generated_utc": datetime.now(timezone.utc).isoformat(),
+        "status": "latest observed HEALTH snapshot; not guaranteed live",
+        "fans": [asdict(records[ch]) for ch in sorted(records)],
+    }
+    temporary = target.with_name(target.name + ".tmp")
+    try:
+        with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as output:
+            output.writestr(
+                "diagnostics.json",
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+            )
+            output.writestr(
+                "README.txt",
+                "FanARGB diagnostic snapshot. Contains no credentials, "
+                "network configuration, raw command history or file paths.\n"
+                "Check the timestamp before treating readings as current.\n",
+            )
+        os.replace(temporary, target)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
