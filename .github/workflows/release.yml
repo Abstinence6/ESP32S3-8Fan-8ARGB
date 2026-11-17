@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'v[0-9]*.[0-9]*.[0-9]*'
+    branches:
+      - 'release/v[0-9]*.[0-9]*.[0-9]*'
 
 permissions:
   contents: read
@@ -19,8 +21,10 @@ jobs:
       - name: Validate release tag
         shell: bash
         run: |
-          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo 'Release tag must be vMAJOR.MINOR.PATCH'
+          release_tag="${GITHUB_REF_NAME#release/}"
+          if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+             [[ "$GITHUB_REF_TYPE" == "branch" && "$GITHUB_REF_NAME" != "release/$release_tag" ]]; then
+            echo 'Release must be tag vMAJOR.MINOR.PATCH or branch release/vMAJOR.MINOR.PATCH'
             exit 1
           fi
       - name: Run native and protocol tests
@@ -77,10 +81,11 @@ jobs:
       - name: Inject release version
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF_NAME -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
+          $version = $env:GITHUB_REF_NAME -replace '^release/', ''
+          if ($version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
             throw 'Invalid release version tag'
           }
-          "APP_VERSION = '$env:GITHUB_REF_NAME'" | Set-Content pc_app/_release_version.py -Encoding utf8
+          "APP_VERSION = '$version'" | Set-Content pc_app/_release_version.py -Encoding utf8
       - name: Unit tests
         run: python -m unittest discover -s pc_app/tests -v
       - name: Install dependencies
@@ -118,13 +123,23 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Confirm version tag is reachable from main
+      - name: Ensure release branch matches the current main and version is unique
         shell: bash
         run: |
           set -euo pipefail
           git fetch origin main
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          release_tag="${GITHUB_REF_NAME#release/}"
+          [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          if [[ "$GITHUB_REF_TYPE" == "branch" ]]; then
+            [[ "$GITHUB_REF_NAME" == "release/$release_tag" ]]
+            # Release archives must be built from exactly the current main SHA.
+            [[ "$GITHUB_SHA" == "$(git rev-parse origin/main)" ]]
+            if git ls-remote --exit-code --tags origin "refs/tags/$release_tag" >/dev/null 2>&1; then
+              echo "Tag already exists: $release_tag"; exit 1
+            fi
+          else
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          fi
       - uses: actions/download-artifact@v4
         with:
           name: github-release-firmware
@@ -141,9 +156,16 @@ jobs:
           set -euo pipefail
           test -s release/FanARGBControl-Windows.zip
           test -s release/ESP32S3-8Fan-8ARGB-firmware.zip
-          gh release create "$GITHUB_REF_NAME" \
+          release_tag="${GITHUB_REF_NAME#release/}"
+          options=(--title "FanARGBControl $release_tag")
+          if [[ "$GITHUB_REF_TYPE" == "branch" ]]; then
+            # gh release create also creates the lightweight tag at this main SHA.
+            options+=(--target "$GITHUB_SHA")
+          else
+            options+=(--verify-tag)
+          fi
+          gh release create "$release_tag" \
             release/FanARGBControl-Windows.zip \
             release/ESP32S3-8Fan-8ARGB-firmware.zip \
-            --verify-tag \
-            --title "FanARGBControl $GITHUB_REF_NAME" \
+            "${options[@]}" \
             --notes "Paired ESP32-S3 firmware and Windows EXE from commit $GITHUB_SHA. Both ZIPs contain SHA256SUMS and manifest.json. Install Windows updates manually; ESP32 flashing requires validated board and physical fan fail-ON. Checksums are not digital signatures."
