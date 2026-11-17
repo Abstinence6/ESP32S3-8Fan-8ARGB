@@ -568,7 +568,7 @@ class DashboardSmokeTests(unittest.TestCase):
         )
         card = self.window.dashboard.fan_cards[3]
         self.assertEqual(card["rpm"].text(), "1 200 RPM")
-        self.assertIn("55% PWM", card["metrics"].text())
+        self.assertIn("PWM  55%", card["metrics"].text())
         self.assertIn("43.0", card["metrics"].text())
         self.window.dashboard.set_connected(True, "COM7")
         self.window.handle_line("PC off BUSY=0")
