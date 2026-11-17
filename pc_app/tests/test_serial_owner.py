@@ -58,6 +58,21 @@ class SerialOwnerTests(unittest.TestCase):
             thread.join(timeout=2)
             owner.close()
 
+    def test_closed_handshake_does_not_block_serial_owner(self):
+        owner = SerialOwnerServer("COM7", port=0)
+        port = owner.listener.getsockname()[1]
+        try:
+            peer = socket.create_connection(("127.0.0.1", port), timeout=1)
+            peer.sendall(b"FANARGB-1 COM7")
+            peer.shutdown(socket.SHUT_WR)
+            started = time.monotonic()
+            owner.poll(FakeSerial())
+            self.assertLess(time.monotonic() - started, 0.5)
+            self.assertFalse(owner.has_client)
+            peer.close()
+        finally:
+            owner.close()
+
     @staticmethod
     def _serve(owner, stop):
         while not stop.is_set():
