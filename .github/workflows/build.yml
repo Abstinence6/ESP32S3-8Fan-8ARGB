@@ -52,6 +52,10 @@ jobs:
           PC_POWER_ENABLED=0 and FAN_DC_PWM_VALIDATED=0 by default.
           Do not enable unvalidated DC fan supply PWM.
           EOF
+      - name: Verify firmware files and write release manifest
+        run: |
+          python scripts/build_manifest.py --component firmware --directory dist/esp32s3 --commit "$GITHUB_SHA" \
+            --file bootloader.bin --file partitions.bin --file boot_app0.bin --file firmware.bin
       - uses: actions/upload-artifact@v4
         with:
           name: ESP32S3-8Fan-8ARGB-firmware
