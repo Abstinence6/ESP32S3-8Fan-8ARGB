@@ -22,6 +22,9 @@ def default_path() -> Path:
 
 
 class TelemetryStore:
+    # Re-check time-based retention during long-lived headless sessions too.
+    RETENTION_CHECK_SECONDS = 6 * 3600
+
     def __init__(self, path: str | Path | None = None,
                  retention_days: int = 30, min_fan_interval: float = 10.0):
         if not 1 <= retention_days <= 365 or min_fan_interval <= 0:
@@ -62,12 +65,15 @@ class TelemetryStore:
                 db.execute("CREATE TABLE IF NOT EXISTS alerts ("
                            "ts REAL NOT NULL, category TEXT NOT NULL, message TEXT NOT NULL)")
                 db.execute("CREATE INDEX IF NOT EXISTS ix_alert_ts ON alerts(ts)")
-                cutoff = time.time() - self.retention_days * 86400
-                for table in ("fan_samples", "metrics", "alerts"):
-                    db.execute(f"DELETE FROM {table} WHERE ts < ?", (cutoff,))
+                self._prune_retention(db, time.time())
                 db.commit()
                 self._ready.set()
+                last_prune = time.monotonic()
                 while True:
+                    if time.monotonic() - last_prune >= self.RETENTION_CHECK_SECONDS:
+                        self._prune_retention(db, time.time())
+                        db.commit()
+                        last_prune = time.monotonic()
                     try:
                         message = self._q.get(timeout=1.5)
                     except queue.Empty:
@@ -86,6 +92,11 @@ class TelemetryStore:
         except (OSError, sqlite3.Error) as exc:
             self._error = str(exc)
             self._ready.set()
+
+    def _prune_retention(self, db: sqlite3.Connection, now: float) -> None:
+        cutoff = now - self.retention_days * 86400
+        for table in ("fan_samples", "metrics", "alerts"):
+            db.execute(f"DELETE FROM {table} WHERE ts < ?", (cutoff,))
 
     @property
     def error(self) -> str | None:
@@ -131,7 +142,7 @@ class TelemetryStore:
                              "rpm", "temp_c", "fresh", "fault"))
             rows = db.execute(
                 "SELECT ts, channel, pwm, rpm, temp_c, fresh, fault FROM fan_samples "
-                "WHERE ts >= ? ORDER BY ts ASC LIMIT 250000",
+                "WHERE ts >= ? ORDER BY ts ASC",
                 (time.time() - hours * 3600,),
             )
             count = 0
