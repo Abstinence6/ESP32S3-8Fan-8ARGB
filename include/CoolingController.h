@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include "FanController.h"
+#include "CoolingAssistSettings.h"
 
 // Persistent cooling control for eight independent fans. The temperature stream
 // comes from the desktop agent. Missing telemetry always means MAX fan speed.
@@ -19,8 +20,12 @@ public:
     enum class Fault : uint8_t { Stall = 1, Overheat = 2, SensorTimeout = 3, CalibrationAborted = 4 };
     struct FaultRecord { uint32_t uptimeSeconds; uint8_t channel; uint8_t code; };
 
-    explicit CoolingController(FanController& fans, Stream& events);
+    explicit CoolingController(FanController& fans, Stream& events, CoolingAssistSettings* assist = nullptr);
     bool begin();
+    bool configureAssist(const CoolingAssistSettings::Config& config);
+    const CoolingAssistSettings::Config& assistConfig() const;
+    bool assistSupported() const { return assist_ != nullptr; }
+    void setPowerTelemetry(uint16_t cpuW, uint16_t gpuW, uint32_t nowMs);
     void update(uint32_t nowMs);
     void setTemperature(uint8_t ch, uint16_t deciC, uint32_t nowMs, bool secondary = false);
     void setHardwareTemperature(uint8_t ch, uint16_t deciC, uint32_t nowMs);
@@ -138,6 +143,11 @@ private:
     bool overTemperature(uint8_t ch) const;
     bool freshPair(uint8_t ch, uint32_t nowMs) const;
 
+    CoolingAssistSettings* assist_ = nullptr;
+    uint16_t cpuPowerW_ = UINT16_MAX;
+    uint16_t gpuPowerW_ = UINT16_MAX;
+    uint32_t lastPowerMs_ = 0;
+    bool gotPower_ = false;
     FanController& fans_;
     Stream& events_;
     Preferences storage_;

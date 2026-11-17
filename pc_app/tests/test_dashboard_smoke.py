@@ -231,6 +231,35 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertFalse(panel.page_button.isEnabled())
         self.assertFalse(shell.maintenance_panel.firmware_path)
 
+    def test_predictive_cooling_nvs_readback(self):
+        panel = self.window.dashboard.device_settings.assist_dialog
+        sent = []
+        self.window.send = lambda msg: sent.append(msg) or True
+        self.window.dashboard.set_connected(True, "COM5")
+        panel.set_supported(True)
+        self.assertEqual(sent[-1], "ASSIST?")
+        line = ("ASSIST ENABLE=0 CPU_START=65 CPU_FULL=160 GPU_START=100 "
+                "GPU_FULL=300 BOOST=15 BIAS=5 MAP=0:3,0:3,0:3,0:3,0:3,0:3,0:3,0:3")
+        self.window.handle_line(line)
+        self.assertIsNotNone(panel._saved)
+        self.assertFalse(panel._busy)
+        self.assertEqual(panel._saved.roles, (0,) * 8)
+        panel.enabled.setChecked(True)
+        panel.roles[0].setCurrentIndex(1)
+        from PySide6.QtWidgets import QMessageBox
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "question",
+                          return_value=QMessageBox.StandardButton.Yes):
+            panel.save()
+        self.assertTrue(sent[-1].startswith("ASSIST SET 1"))
+        self.window.handle_line("OK ASSIST_SAVED")
+        self.assertEqual(sent[-1], "ASSIST?")
+        self.window.handle_line(line.replace("ENABLE=0", "ENABLE=1").
+                                replace("MAP=0:3", "MAP=1:3", 1))
+        self.assertFalse(panel._busy)
+        self.assertEqual(panel._saved.roles[0], 1)
+        self.assertTrue(panel._saved.enabled)
+
     def test_temperature_argb_esp_readback_save_and_reload(self):
         shell = self.window.dashboard
         panel = shell.temperature_argb

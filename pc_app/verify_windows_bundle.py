@@ -21,6 +21,7 @@ REQUIRED = frozenset({
     "temperature_argb", "temperature_argb_ui",
     "temperature_palette", "temperature_palette_ui",
     "pinmap_config", "gpio_settings_ui",
+    "cooling_assist", "cooling_assist_ui",
     "config_backup", "maintenance_ui", "firmware_update", "esptool",
     "github_updates", "github_update_ui", "_release_version",
     "tray_monitor", "serial_tx", "port_recovery", "tach_health",

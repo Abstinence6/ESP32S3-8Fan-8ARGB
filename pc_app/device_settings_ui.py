@@ -18,9 +18,11 @@ from PySide6.QtWidgets import (
 try:
     from .device_config_protocol import decode_value, fields, wifi_command, mqtt_commands, mqtt_transaction_commands
     from .gpio_settings_ui import GpioSettingsDialog
+    from .cooling_assist_ui import CoolingAssistDialog
 except ImportError:
     from device_config_protocol import decode_value, fields, wifi_command, mqtt_commands, mqtt_transaction_commands
     from gpio_settings_ui import GpioSettingsDialog
+    from cooling_assist_ui import CoolingAssistDialog
 
 
 class DeviceSettingsPanel(QWidget):
@@ -294,6 +296,7 @@ class DeviceSettingsPanel(QWidget):
         self.tabs.addTab(fan_box, "TACH / пороги")
 
         self.gpio_dialog = GpioSettingsDialog(self.controller, self)
+        self.assist_dialog = CoolingAssistDialog(self.controller, self)
         links = QHBoxLayout()
         sensor_link = QPushButton("DS18B20 / джерела температур…")
         sensor_link.clicked.connect(lambda: self.controller.dashboard.show_page("sensors"))
@@ -310,6 +313,13 @@ class DeviceSettingsPanel(QWidget):
         gpio_link.clicked.connect(self.gpio_dialog.show)
         links.addWidget(gpio_link)
         links.addStretch(1)
+        assist_links = QHBoxLayout()
+        assist_link = QPushButton("CPU/GPU Power · Intake/Exhaust…")
+        assist_link.setProperty("role", "ghost")
+        assist_link.setMaximumWidth(295)
+        assist_link.clicked.connect(self.assist_dialog.show)
+        assist_links.addWidget(assist_link)
+        assist_links.addStretch(1)
         limitations = QLabel(
             "GPIO 8 PWM / 8 TACH / 8 ARGB налаштовуються через діалог GPIO. "
             "Нова розкладка зберігається в ESP32 NVS і працює після перезапуску. "
@@ -346,6 +356,7 @@ class DeviceSettingsPanel(QWidget):
         # Related navigation and hardware disclaimer remain secondary.
         root.addWidget(self.action_footer)
         root.addLayout(links)
+        root.addLayout(assist_links)
         root.addWidget(limitations)
         root.addStretch(1)
         self._action_buttons = (
@@ -426,6 +437,7 @@ class DeviceSettingsPanel(QWidget):
     def set_connected(self, connected: bool) -> None:
         self.connected = bool(connected)
         self.gpio_dialog.set_connected(connected)
+        self.assist_dialog.set_connected(connected)
         if connected:
             self._state_label("ESP32 підключено · зчитування налаштувань…")
         else:
@@ -740,6 +752,8 @@ class DeviceSettingsPanel(QWidget):
                     {"channel": ch, "ppr": ppr, "crit": critical, "stall": stall})
 
     def handle_line(self, line: str) -> bool:
+        if self.assist_dialog.handle_line(line):
+            return True
         if self.gpio_dialog.handle_line(line):
             return True
         if line.startswith("WIFI_CONFIG "):

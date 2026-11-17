@@ -22,8 +22,21 @@ uint8_t clampPercent(int32_t value) {
 }
 }
 
-CoolingController::CoolingController(FanController& fans, Stream& events)
-    : fans_(fans), events_(events) {}
+CoolingController::CoolingController(FanController& fans, Stream& events, CoolingAssistSettings* assist)
+    : assist_(assist), fans_(fans), events_(events) {}
+bool CoolingController::configureAssist(const CoolingAssistSettings::Config& config) {
+    return assist_ && assist_->set(config);
+}
+const CoolingAssistSettings::Config& CoolingController::assistConfig() const {
+    static const CoolingAssistSettings::Config disabled = CoolingAssistSettings::defaults();
+    return assist_ ? assist_->get() : disabled;
+}
+void CoolingController::setPowerTelemetry(uint16_t cpuW, uint16_t gpuW, uint32_t nowMs) {
+    cpuPowerW_ = cpuW;
+    gpuPowerW_ = gpuW;
+    lastPowerMs_ = nowMs;
+    gotPower_ = true;
+}
 
 uint32_t CoolingController::checksum(const void* ptr, size_t count) {
     const uint8_t* bytes = static_cast<const uint8_t*>(ptr);
@@ -603,6 +616,14 @@ void CoolingController::update(uint32_t nowMs) {
             if (saved_[ch].dualEnabled) {
                 const uint8_t second = interpolate(saved_[ch].secondCurve, filteredTemp2_[ch]);
                 if (second > targetPwm) targetPwm = second;
+            }
+            // Intake balancing is only an upward bias; power predictions must
+            // never replace measured temperature or reduce cooling demand.
+            if (assist_ && assist_->get().enabled) {
+                const uint32_t age = gotPower_ ? nowMs - lastPowerMs_ : UINT32_MAX;
+                const uint8_t extra = CoolingAssistSettings::boost(
+                    assist_->get(), ch, cpuPowerW_, gpuPowerW_, age);
+                targetPwm = clampPercent(static_cast<int32_t>(targetPwm) + extra);
             }
             desiredRpm_[ch] = targetRpmFromPwm(ch, targetPwm);
             regulate = saved_[ch].pidEnabled && saved_[ch].calibrated;
