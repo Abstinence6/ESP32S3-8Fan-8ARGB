@@ -651,9 +651,23 @@ bool CoolingController::setDualSensor(uint8_t ch, bool enabled) {
 bool CoolingController::dualSensor(uint8_t ch) const { return ch < board::kChannelCount && saved_[ch].dualEnabled; }
 bool CoolingController::setPulsesPerRevolution(uint8_t ch, uint8_t ppr) {
     if (ch >= board::kChannelCount || ppr == 0 || ppr > 12) return false;
-    StoredFan value = saved_[ch]; value.ppr = ppr;
+    if (saved_[ch].ppr == ppr) return true;
+    if (activeCalibration_ == ch) return false;
+    StoredFan value = saved_[ch];
+    value.ppr = ppr;
+    // The previously measured PWM-to-RPM curve was calibrated with a
+    // different tach pulse ratio. Reusing it would corrupt closed-loop RPM.
+    value.calibrated = 0;
+    value.pidEnabled = 0;
+    memset(value.rpm, 0, sizeof(value.rpm));
     if (!writeFan(ch, value)) return false;
     fans_.setPulsesPerRevolution(ch, ppr);
+    if (fanMode_[ch] == Mode::FixedRpm) {
+        fanMode_[ch] = Mode::Auto;
+        fixedRpm_[ch] = 0;
+        integral_[ch] = 0;
+        fans_.setPercent(ch, 100);
+    }
     return true;
 }
 uint8_t CoolingController::pulsesPerRevolution(uint8_t ch) const { return ch < board::kChannelCount ? saved_[ch].ppr : 0; }
@@ -668,12 +682,25 @@ bool CoolingController::setFanThresholds(uint8_t ch, uint8_t ppr,
         criticalC < 40 || criticalC > 120 || stallRpm > 3000) return false;
     if (saved_[ch].ppr == ppr && saved_[ch].criticalC == criticalC &&
         saved_[ch].stallRpm == stallRpm) return true;
+    const bool pprChanged = saved_[ch].ppr != ppr;
+    if (pprChanged && activeCalibration_ == ch) return false;
     StoredFan value = saved_[ch];
     value.ppr = ppr;
     value.criticalC = criticalC;
     value.stallRpm = stallRpm;
+    if (pprChanged) {
+        value.calibrated = 0;
+        value.pidEnabled = 0;
+        memset(value.rpm, 0, sizeof(value.rpm));
+    }
     if (!writeFan(ch, value)) return false;
     fans_.setPulsesPerRevolution(ch, ppr);
+    if (pprChanged && fanMode_[ch] == Mode::FixedRpm) {
+        fanMode_[ch] = Mode::Auto;
+        fixedRpm_[ch] = 0;
+        integral_[ch] = 0;
+        fans_.setPercent(ch, 100);
+    }
     return true;
 }
 bool CoolingController::setStallThreshold(uint8_t ch, uint16_t rpm) {
