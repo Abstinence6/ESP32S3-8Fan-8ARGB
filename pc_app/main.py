@@ -48,6 +48,7 @@ from ui_dashboard import DashboardShell
 from smart_control import SafeTemperatureFilter, AutoProfileSelector
 from tray_monitor import FaultNotificationGate
 from tach_health import TachHealthMonitor
+from pid_autotune_ui import PidAutotuneDialog
 from cooling_assist import power_payload
 from telemetry_store import TelemetryStore
 
@@ -68,6 +69,8 @@ class FanArgbWindow(QMainWindow):
         self.temperatures: list[TemperatureSensor] = []
         self.last_temperature_sample_at = float("-inf")
         self.cooling_assist_supported = False
+        self.pid_tune_supported = False
+        self.pid_tune_dialog = None
         self.curves = {ch: list(DEFAULT_CURVE) for ch in range(1, 9)}
         self.secondary_curves = {ch: list(DEFAULT_CURVE) for ch in range(1, 9)}
         self.config_types: dict[int, int] = {}
@@ -330,6 +333,12 @@ class FanArgbWindow(QMainWindow):
         rpm_target_button.clicked.connect(self.set_rpm_target)
         regulation_actions.addWidget(rpm_target_button)
         curve_layout.addLayout(regulation_actions)
+        pid_row = QHBoxLayout()
+        pid_tune = QPushButton("PID автонастроювання за TACH…")
+        pid_tune.clicked.connect(self.show_pid_autotune)
+        pid_row.addWidget(pid_tune)
+        pid_row.addStretch(1)
+        curve_layout.addLayout(pid_row)
         right_layout.addWidget(curve_box, 2)
 
         calibration_box = QGroupBox("Калібрування PWM → RPM (21 крок: 0–100%, по 5%)")
@@ -663,6 +672,9 @@ class FanArgbWindow(QMainWindow):
         self.read_buffer = ""
         self.led_counts = None
         self.cooling_assist_supported = False
+        self.pid_tune_supported = False
+        if self.pid_tune_dialog is not None:
+            self.pid_tune_dialog.set_connected(False)
         if self.dashboard.native_checkbox.isChecked():
             self.dashboard.native_checkbox.setChecked(False)
         if self.dashboard.studio.active:
@@ -741,6 +753,8 @@ class FanArgbWindow(QMainWindow):
         if line.startswith("PONG ") and line[5:].isdigit():
             self.heartbeat.pong()
             return
+        if self.pid_tune_dialog is not None and self.pid_tune_dialog.handle_line(line):
+            return
         if self.dashboard.temperature_argb.handle_line(line):
             return
         if self.dashboard.device_settings.handle_line(line):
@@ -809,6 +823,9 @@ class FanArgbWindow(QMainWindow):
                 self.dashboard.temperature_argb.set_version(serial_version)
                 self.dashboard.temperature_argb.set_palette_supported(fields.get("TPAL_NVS") == "1")
                 self.dashboard.device_settings.gpio_dialog.set_supported(fields.get("GPIO_NVS") == "1")
+                self.pid_tune_supported = fields.get("PIDTUNE_NVS") == "1"
+                if self.pid_tune_dialog is not None:
+                    self.pid_tune_dialog.set_supported(self.pid_tune_supported)
                 self.cooling_assist_supported = fields.get("ASSIST_NVS") == "1"
                 self.dashboard.device_settings.assist_dialog.set_supported(self.cooling_assist_supported)
             except (ValueError, KeyError):
@@ -1299,6 +1316,11 @@ class FanArgbWindow(QMainWindow):
         self.send(f"TYPE {self.current_fan} {wire}")
         self.send(f"TYPE? {self.current_fan}")
         self.send(f"CONFIG {self.current_fan}")
+
+    def show_pid_autotune(self) -> None:
+        if self.pid_tune_dialog is None:
+            self.pid_tune_dialog = PidAutotuneDialog(self, self)
+        self.pid_tune_dialog.show_for_channel(self.current_fan)
 
     def toggle_pid(self, enabled: bool) -> None:
         self.send(f"PID {self.current_fan} {1 if enabled else 0}")
