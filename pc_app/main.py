@@ -804,6 +804,7 @@ class FanArgbWindow(QMainWindow):
                 serial_version = int(fields.get("SERIAL", 5))
                 self.dashboard.device_settings.set_version(version, serial_version)
                 self.dashboard.temperature_argb.set_version(serial_version)
+                self.dashboard.device_settings.gpio_dialog.set_supported(fields.get("GPIO_NVS") == "1")
             except (ValueError, KeyError):
                 self.log("Невалідна відповідь VERSION?")
             return
