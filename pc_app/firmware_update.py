@@ -31,10 +31,12 @@ def inspect_firmware(path: str) -> tuple[str, int]:
         raise ValueError("Образ призначений не для ESP32-S3 (chip_id != 9)")
     if data[23] not in (0, 1):
         raise ValueError("Некоректний прапорець SHA-256 в ESP image")
-    # The bootloader is also a valid ESP image, but it has no app descriptor.
-    # ESP-IDF places esp_app_desc_t magic at the start of the DROM descriptor.
-    if bytes.fromhex("3254cdab") not in data[:min(size, 8192)]:
-        raise ValueError("Немає ESP application descriptor: bootloader/merged BIN заборонено")
+    # Bootloader is a valid ESP image too; accepting the magic anywhere in the
+    # first 8 KiB can mistake an embedded string for an app descriptor.
+    # ESP-IDF stores esp_app_desc_t at the beginning of the DROM segment
+    # (some toolchains prepend 32 reserved bytes). Validate that placement.
+    app_magic = bytes.fromhex("3254cdab")
+    app_descriptor_found = False
     cursor = 24
     check = 0xEF
     for _segment in range(data[1]):
@@ -45,9 +47,18 @@ def inspect_firmware(path: str) -> tuple[str, int]:
         cursor += 8
         if not address or length == 0 or length > size - cursor:
             raise ValueError("Некоректна адреса чи розмір ESP image сегмента")
-        for byte in data[cursor:cursor + length]:
+        segment = data[cursor:cursor + length]
+        # ESP32-S3 DROM maps to 0x3c000000..0x3dffffff. Only a descriptor
+        # at the start of a mapped DROM segment proves this is an app image.
+        if 0x3C000000 <= address < 0x3E000000 and (
+            segment[:4] == app_magic or segment[32:36] == app_magic
+        ):
+            app_descriptor_found = True
+        for byte in segment:
             check ^= byte
         cursor += length
+    if not app_descriptor_found:
+        raise ValueError("Немає ESP application descriptor у DROM: bootloader/merged BIN заборонено")
     checksum_at = ((cursor + 16) // 16) * 16 - 1
     if checksum_at >= size or data[checksum_at] != check:
         raise ValueError("Пошкоджено контрольну суму сегментів ESP32-S3")
