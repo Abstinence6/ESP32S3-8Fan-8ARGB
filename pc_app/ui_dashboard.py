@@ -629,8 +629,9 @@ class DashboardShell(QWidget):
         self.attention_empty_card.setVisible(False)
         layout.addWidget(self.attention_empty_card)
         info_text = _label(
-            "За втрати актуальної температури прошивка переходить у fail-safe. "
-            "Гарантоване живлення вентиляторів під час reset залежить від схеми ключів.",
+            "Індикатори PWM та RPM — лише телеметрія. Фільтр «Проблемні» "
+            "не змінює керування. За втрати температури діє fail-safe; "
+            "живлення вентиляторів під час reset залежить від силової схеми.",
             "minor", True,
         )
         layout.addWidget(info_text)
@@ -1373,6 +1374,7 @@ class DashboardShell(QWidget):
         if key not in self.page_index:
             raise KeyError(f"Unknown page: {key}")
         self.stack.setCurrentIndex(self.page_index[key])
+        self.setAccessibleDescription(f"Активний розділ: {key}")
         self.stack.widget(self.page_index[key]).verticalScrollBar().setValue(0)
         for name, button in self.nav.items():
             button.setChecked(name == key)
