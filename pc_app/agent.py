@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, Future
 try:
     from .monitor import MAX_ALL, resolve_temperature
     from .nwinfo_sensors import NwinfoSensorSampler
+    from .cooling_assist import extract_power_watts, power_payload
     from .protocol import make_temperature_command
     from .smart_control import SafeTemperatureFilter, AutoProfileSelector
     from .profiles import PRESETS
@@ -28,6 +29,7 @@ try:
 except ImportError:  # packaged as a standalone PyInstaller entrypoint
     from monitor import MAX_ALL, resolve_temperature
     from nwinfo_sensors import NwinfoSensorSampler
+    from cooling_assist import extract_power_watts, power_payload
     from protocol import make_temperature_command
     from smart_control import SafeTemperatureFilter, AutoProfileSelector
     from profiles import PRESETS
@@ -197,6 +199,8 @@ def run_agent() -> int:
                             if not owner.has_client and sample is not None:
                                 for msg in make_sensor_commands(settings, sample, smooth_filter):
                                     tx.send_command(msg)
+                                cpu_w, gpu_w = extract_power_watts(sensor_sampler.metrics)
+                                tx.send_command(power_payload(cpu_w, gpu_w))
                                 for metric in sensor_sampler.metrics:
                                     telemetry.record_metric(
                                         metric.sensor_id, metric.name, metric.value, metric.unit

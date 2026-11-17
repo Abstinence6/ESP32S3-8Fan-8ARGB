@@ -78,6 +78,26 @@ def parse_assist_reply(line: str) -> CoolingAssistConfig:
     return c.validate()
 
 
+def extract_power_watts(metrics) -> tuple[float | None, float | None]:
+    """Use the same live power classification in the GUI and background agent."""
+    from math import isfinite
+    cpu: list[float] = []
+    gpu: list[float] = []
+    for metric in metrics:
+        if getattr(metric, "unit", None) != "W":
+            continue
+        value = getattr(metric, "value", None)
+        if (isinstance(value, bool) or not isinstance(value, (int, float)) or
+                not isfinite(value) or not 0 <= value <= 3000):
+            continue
+        name = str(getattr(metric, "name", "")).casefold()
+        if "gpu" in name:
+            gpu.append(float(value))
+        elif any(key in name for key in ("cpu", "intel", "zen")):
+            cpu.append(float(value))
+    return max(cpu, default=None), max(gpu, default=None)
+
+
 def power_payload(cpu_w: float | None, gpu_w: float | None) -> str:
     def sanitize(value: float | None) -> int:
         if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):

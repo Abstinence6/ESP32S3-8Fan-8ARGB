@@ -1,6 +1,8 @@
 import unittest
+from types import SimpleNamespace
 from pc_app.cooling_assist import (
-    CoolingAssistConfig, make_assist_command, parse_assist_reply, power_payload,
+    CoolingAssistConfig, make_assist_command, parse_assist_reply,
+    extract_power_watts, power_payload,
 )
 
 
@@ -24,6 +26,20 @@ class CoolingAssistTests(unittest.TestCase):
             CoolingAssistConfig(roles=(0,) * 7).validate()
         with self.assertRaises(ValueError):
             parse_assist_reply("ASSIST ENABLE=1 CPU_START=65 MAP=0:3")
+
+    def test_shared_power_metric_extraction(self):
+        def m(name, value, unit="W"):
+            return SimpleNamespace(name=name, value=value, unit=unit)
+        cpu, gpu = extract_power_watts([
+            m("CPU Package Power", 110.6),
+            m("Intel CPU Power", 129),
+            m("GPU Board Power", 225.4),
+            m("GPU Voltage", 50, "V"),
+            m("GPU Bad Power", float("nan")),
+            m("CPU Bad Power", 4000),
+        ])
+        self.assertEqual(power_payload(cpu, gpu), "PWRDATA 129 225")
+        self.assertEqual(power_payload(*extract_power_watts([])), "PWRDATA 65535 65535")
 
     def test_invalid_power_metrics_are_never_interpreted_as_valid(self):
         self.assertEqual(power_payload(100.4, 210.9), "PWRDATA 100 211")
