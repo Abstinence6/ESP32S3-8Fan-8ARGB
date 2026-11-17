@@ -102,8 +102,11 @@ class SerialOwnerServer:
             c.settimeout(0.2)
             try:
                 header = b""
-                while b"\n" not in header and len(header) <= 128:
-                    header += c.recv(128 - len(header))
+                while b"\n" not in header and len(header) < 128:
+                    block = c.recv(128 - len(header))
+                    if not block:
+                        break
+                    header += block
                 expected = (HANDSHAKE_PREFIX + self.serial_port + "\n").encode("ascii")
                 if header != expected or serial is None:
                     c.sendall(b"ERR\n")
