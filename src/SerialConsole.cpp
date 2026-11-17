@@ -7,11 +7,11 @@
 #include <string.h>
 
 SerialConsole::SerialConsole(Stream& serial, FanController& fans, ArgbController& leds,
-                             CoolingController& cooling, NetworkRgbBridge* wifi, MqttBridge* mqtt, PcPowerController* pc, HardwareTemperature* hw)
-    : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling), wifi_(wifi), mqtt_(mqtt), pc_(pc), hw_(hw) {}
+                             CoolingController& cooling, NetworkRgbBridge* wifi, MqttBridge* mqtt, PcPowerController* pc, HardwareTemperature* hw, TemperatureArgbSettings* temperatureArgb)
+    : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling), wifi_(wifi), mqtt_(mqtt), pc_(pc), hw_(hw), temperatureArgb_(temperatureArgb) {}
 
 void SerialConsole::begin() {
-    serial_.println(F("8Fan/8ARGB ready | protocol v7 | type HELP"));
+    serial_.println(F("8Fan/8ARGB ready | protocol v8 | type HELP"));
 }
 
 void SerialConsole::poll() {
@@ -149,6 +149,84 @@ void SerialConsole::handleLine(char* line) {
     auto noMore = [&next]() -> bool { return next() == nullptr; };
     auto error = [this]() { serial_.println(F("ERR arguments | type HELP")); };
 
+    if (!strcmp(command, "TARGB?")) {
+        uint8_t ch = 0;
+        if (!parseByte(next(), board::kChannelCount, ch) || !ch || !noMore())
+            return error();
+        if (!temperatureArgb_) {
+            serial_.println(F("ERR TARGB unsupported")); return;
+        }
+        const auto& cfg = temperatureArgb_->zone(ch - 1);
+        serial_.print(F("TARGB CH=")); serial_.print(ch);
+        serial_.print(F(" SOURCE_HEX=")); configwire::printHex(serial_, cfg.source);
+        serial_.print(F(" LOW=")); serial_.print(cfg.lowC);
+        serial_.print(F(" HIGH=")); serial_.print(cfg.highC);
+        serial_.print(F(" BRIGHT=")); serial_.print(cfg.brightness);
+        serial_.print(F(" COUNT=")); serial_.println(cfg.groupCount);
+        for (uint8_t i = 0; i < cfg.groupCount; ++i) {
+            serial_.print(F("TARGB_GROUP CH=")); serial_.print(ch);
+            serial_.print(F(" ID_HEX=")); configwire::printHex(serial_, cfg.groups[i]);
+            serial_.println("");
+        }
+        serial_.print(F("TARGB_END CH=")); serial_.println(ch);
+        return;
+    }
+    if (!strcmp(command, "TARGB")) {
+        if (!temperatureArgb_) {
+            serial_.println(F("ERR TARGB unsupported")); return;
+        }
+        char* op = next();
+        if (!op) return error();
+        for (char* c = op; *c; ++c)
+            *c = static_cast<char>(toupper(static_cast<unsigned char>(*c)));
+        const uint32_t now = millis();
+        if (!strcmp(op, "BEGIN")) {
+            uint8_t ch = 0;
+            if (!parseByte(next(), board::kChannelCount, ch) || !ch || !noMore())
+                return error();
+            if (!temperatureArgb_->start(ch - 1, now)) {
+                serial_.println(F("ERR TARGB busy")); return;
+            }
+            serial_.println(F("OK TARGB_BEGIN")); return;
+        }
+        if (!strcmp(op, "CANCEL")) {
+            if (!noMore()) return error();
+            temperatureArgb_->cancel();
+            serial_.println(F("OK TARGB_CANCELLED")); return;
+        }
+        if (!strcmp(op, "COMMIT")) {
+            if (!noMore()) return error();
+            if (!temperatureArgb_->commit(now)) {
+                serial_.println(F("ERR TARGB storage or configuration")); return;
+            }
+            serial_.println(F("OK TARGB_SAVED")); return;
+        }
+        if (!strcmp(op, "SOURCE") || !strcmp(op, "GROUP")) {
+            char* encoded = next();
+            char value[TemperatureArgbSettings::kIdCapacity] = {};
+            if (!encoded || !noMore() ||
+                !configwire::decode(encoded, value, sizeof(value)))
+                return error();
+            const bool group = !strcmp(op, "GROUP");
+            const bool ok = group
+                ? temperatureArgb_->addMember(value, now)
+                : temperatureArgb_->setSource(value, now);
+            serial_.println(ok ? (group ? F("OK TARGB_GROUP") : F("OK TARGB_SOURCE"))
+                               : F("ERR TARGB value or transaction"));
+            return;
+        }
+        if (!strcmp(op, "RANGE")) {
+            uint8_t low = 0, high = 0, bright = 0;
+            if (!parseByte(next(), 124, low) || !parseByte(next(), 125, high) ||
+                !parseByte(next(), 128, bright) || !noMore())
+                return error();
+            if (!temperatureArgb_->setRange(low, high, bright, now)) {
+                serial_.println(F("ERR TARGB range or transaction")); return;
+            }
+            serial_.println(F("OK TARGB_RANGE")); return;
+        }
+        return error();
+    }
     if (strcmp(command, "PING") == 0) {
         if (!noMore()) return error();
         serial_.println(F("PONG 5"));
@@ -186,7 +264,7 @@ void SerialConsole::handleLine(char* line) {
     }
     if (strcmp(command, "VERSION?") == 0) {
         if (!noMore()) return error();
-        serial_.print(F("FW VERSION=8 SERIAL=7 DC_READY="));
+        serial_.print(F("FW VERSION=9 SERIAL=8 DC_READY="));
         serial_.print(board::kDcSupplyPwmValidated ? 1 : 0);
         serial_.print(F(" DS18B20="));
         serial_.print(hw_ && hw_->enabled() ? 1 : 0);
@@ -763,6 +841,7 @@ void SerialConsole::handleLine(char* line) {
 void SerialConsole::printHelp() {
     serial_.println(F("Channels: 1..8, temperatures: deci-Celsius, e.g. 455 = 45.5 C"));
     serial_.println(F("PING | STATUS | HEALTH [ch] | SELFTEST [CANCEL] | HELP | LEDS | PC STATUS|ON|OFF|FORCE"));
+    serial_.println(F("TARGB? <ch> | TARGB BEGIN <ch> | SOURCE <hex> | GROUP <hex> | RANGE <low> <high> <bright> | COMMIT | CANCEL"));
     serial_.println(F("VERSION? | HTEMP? | HTLIST? | HTSCAN | HTMAP? <ch> | HTMAP <ch> AUTO|ROMHEX"));
     serial_.println(F("HTMODE? <ch> | HTMODE <ch> PC|LOCAL|BACKUP"));
     serial_.println(F("MQTT CONFIG? | MQTT BROKER <host> <port> | MQTT AUTHHEX <userHex|-> <passHex|-> | MQTT HA ON|OFF | MQTT TEMP ON|OFF | MQTT ON|OFF | MQTT CLEAR"));
