@@ -8,8 +8,8 @@
 #include <string.h>
 
 SerialConsole::SerialConsole(Stream& serial, FanController& fans, ArgbController& leds,
-                             CoolingController& cooling, NetworkRgbBridge* wifi, MqttBridge* mqtt, PcPowerController* pc, HardwareTemperature* hw, TemperatureArgbSettings* temperatureArgb, TemperaturePaletteSettings* temperaturePalette, OfflineProfiles* profiles)
-    : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling), wifi_(wifi), mqtt_(mqtt), pc_(pc), hw_(hw), temperatureArgb_(temperatureArgb), temperaturePalette_(temperaturePalette), profiles_(profiles) {}
+                             CoolingController& cooling, NetworkRgbBridge* wifi, MqttBridge* mqtt, PcPowerController* pc, HardwareTemperature* hw, TemperatureArgbSettings* temperatureArgb, TemperaturePaletteSettings* temperaturePalette, OfflineProfiles* profiles, AirflowAssistant* airflow)
+    : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling), wifi_(wifi), mqtt_(mqtt), pc_(pc), hw_(hw), temperatureArgb_(temperatureArgb), temperaturePalette_(temperaturePalette), profiles_(profiles), airflow_(airflow) {}
 
 void SerialConsole::begin() {
     serial_.println(F("8Fan/8ARGB ready | protocol v8 | type HELP"));
@@ -467,7 +467,7 @@ void SerialConsole::handleLine(char* line) {
         serial_.print(temperaturePalette_ ? 1 : 0);
         serial_.print(F(" PIDTUNE_NVS="));
         serial_.print(cooling_.pidTuningSupported() ? 1 : 0);
-        serial_.println(F(" RTCURVE=1 FX=1 RFX=1 OFFLINE=1"));
+        serial_.println(F(" RTCURVE=1 FX=1 RFX=1 OFFLINE=1 AIRFLOW=1"));
         return;
     }
     if (strcmp(command, "HTSCAN") == 0) {
@@ -892,6 +892,42 @@ void SerialConsole::handleLine(char* line) {
         if (!ok) { serial_.println(F("ERR STRIP config")); return; }
         serial_.println(F("OK STRIP_SAVED")); return;
     }
+    if (!strcmp(command, "AIRFLOW?")) {
+        if (!airflow_ || !noMore()) return error();
+        const auto value=airflow_->estimate();
+        serial_.print(F("AIRFLOW IN10=")); serial_.print(value.intakeDeci);
+        serial_.print(F(" OUT10=")); serial_.print(value.exhaustDeci);
+        serial_.print(F(" BALANCE=")); serial_.print(value.balancePercent);
+        serial_.print(F(" VALID=")); serial_.print(value.usable ? 1 : 0);
+        serial_.print(F(" UNKNOWN=")); serial_.print(value.unavailable);
+        serial_.print(F(" TREND=")); serial_.println(AirflowAssistant::tendency(value));
+        return;
+    }
+    if (!strcmp(command, "AIRCFG?")) {
+        uint8_t ch=0;
+        if (!airflow_ || !parseByte(next(),board::kChannelCount,ch) || !ch || !noMore())
+            return error();
+        const auto cfg=airflow_->channel(ch-1);
+        serial_.print(F("AIRCFG CH=")); serial_.print(ch);
+        serial_.print(F(" DIR=")); serial_.print(cfg.direction);
+        serial_.print(F(" RPM=")); serial_.print(cfg.maxRpm);
+        serial_.print(F(" CFM10=")); serial_.print(cfg.cfmDeci);
+        serial_.print(F(" RESTRICT=")); serial_.println(cfg.restriction);
+        return;
+    }
+    if (!strcmp(command, "AIRCFG")) {
+        uint8_t ch=0, dir=0, restriction=0;
+        uint16_t rpm=0, cfm=0;
+        if (!airflow_ || !parseByte(next(),board::kChannelCount,ch) || !ch ||
+            !parseByte(next(),2,dir) ||
+            !parseU16(next(),25000,rpm) ||
+            !parseU16(next(),3000,cfm) ||
+            !parseByte(next(),100,restriction) || !noMore())
+            return error();
+        serial_.println(airflow_->configure(ch-1,dir,rpm,cfm,restriction)
+                        ? F("OK AIRCFG_SAVED") : F("ERR AIRCFG invalid or NVS"));
+        return;
+    }
     if (!strcmp(command, "PROFILE?")) {
         if (!profiles_ || !noMore()) return error();
         serial_.print(F("PROFILE ACTIVE=")); serial_.print(profiles_->active());
@@ -1290,6 +1326,7 @@ void SerialConsole::printHelp() {
     serial_.println(F("RFX? <ch> | RFX SET <ch> <source> <fallback> <style> <low10> <high10> <pattern> <6 RGB> <speed> <brightness> <dir>"));
     serial_.println(F("RFX START|STOP <ch> | RFX BOOT <ch> <0|1> | RFX SAVE | RVAL <slot:1..8> <value*10>"));
     serial_.println(F("PROFILE? | PROFILE SAVE|SELECT <1..3> | PROFILE CLEAR | PROFILE BOOT <0..3>"));
+    serial_.println(F("AIRCFG? <ch> | AIRCFG <ch> <dir:0|1|2> <ratedRpm> <ratedCFM*10> <restriction%> | AIRFLOW?"));
     serial_.println(F("ARGBCFG <ch> <count> <reverse> <budgetMa> <brightness> (one NVS record)"));
     serial_.println(F("Binary ARGB: A5 5A ch countLE16 RGB... crc16LE (CCITT-FALSE)"));
 }
