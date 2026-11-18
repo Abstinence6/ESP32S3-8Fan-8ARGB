@@ -259,3 +259,35 @@ configuration: [docs/PC_POWER.md](docs/PC_POWER.md).
 features bypasses the 100% unqualified DC supply PWM interlock or provides
 MCU-independent fan power during reset. Do not enable 2/3-pin duty switching
 until the physical high-side power stage has been validated.
+
+## Sensor-reactive RGB modes (firmware v12)
+
+The ESP32-S3 now renders sensor-reactive animations **on the controller**,
+without host-side USB RGB frame streaming. Each ARGB zone has independent
+source, optional native fallback, value range, color endpoints, brightness,
+pattern, and mapping (Color / Bar / Brightness / Speed). Explicitly persisted
+settings live in a separate CRC-checked NVS record; the default boot state
+remains OFF unless deliberately enabled.
+
+**Available without a PC:** per-fan TACH RPM, applied PWM, fresh cooling
+temperatures (including mapped local probes), and up to eight local DS18B20
+readings if the hardware support is enabled. The physical DS18B20 addresses
+should be bound via the existing per-fan hardware temperature map for stable
+assignments.
+
+**Available with Windows GUI or headless agent:** any live NWinfo numeric
+metric or temperature, including CPU/GPU utilization, CPU/GPU package power,
+GPU fan speed, SSD/disk activity, frequencies, voltage, RAM/DIMM usage and
+other supported sensors. The PC transmits at most eight small scalar values
+every normal sensor poll; it does not render the effect.
+
+**Available without Windows via MQTT/Home Assistant:** a local broker can
+publish values into the same eight external reactive slots. When external
+measurements become stale (7 seconds), the ESP uses the configured local
+fallback or displays amber rather than claiming a low/healthy value.
+
+[Reactive ARGB setup and source codes](docs/REACTIVE_ARGB.md).
+
+This visual feature is isolated from fan PWM/PID and does not modify cooling
+control, temperature fail-safe logic, the existing LED current estimate or
+the priority of the fault indicator.

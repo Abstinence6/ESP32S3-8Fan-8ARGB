@@ -101,3 +101,21 @@ project: no hardware qualification is implied by a successful CI run.
   CRC restores safe defaults. Global current cap and safety overlay apply.
 - Windows settings backup validates new group/application/Fan Health data and
   never imports arbitrary executable paths or authentication credentials.
+
+## Firmware v12 sensor-reactive effects
+
+- Native RGB tests verify Color/Bar/Brightness/Speed processing, values beyond
+  range, stale external telemetry after 7 seconds, optional fresh local
+  fallback and conspicuous amber missing-data indication.
+- ESP32 still renders only one LED strip per scheduled render call; no new
+  network or serial path bypasses the global power-estimation limiter or
+  first-three-LED safety indication.
+- All 8 source slots accept numeric updates through USB `RVAL` or topic
+  `<base>/reactive/<slot>/set` (MQTT), never fan mode/PWM changes.
+- Fresh NVS boots ARGB off; `RFX BOOT` plus explicit `RFX SAVE` enables
+  optional independent playback. Malformed/CRC-damaged reactive settings
+  must revert to OFF without changing older FX or cooling records.
+- Host-side tests include arbitrary NWinfo CPU/GPU metrics, temperature
+  assignments, invalid/future/nonfinite values and corrupt slot JSON.
+- Simulate loss of Windows and MQTT with valid local fallback, and confirm
+  thermally failed fans still command 100% independent of LED scene activity.

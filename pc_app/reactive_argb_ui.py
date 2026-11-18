@@ -189,6 +189,10 @@ class ReactiveArgbPanel(QGroupBox):
         self._loading=True
         self._sources(self.current)
         self._fill(self.configs[self.current])
+        # A zone change uses that zone's saved metric, never the previous zone's combo.
+        self.host_sensor.blockSignals(True)
+        self.host_sensor.clear()
+        self.host_sensor.blockSignals(False)
         self.refresh_sensors()
         self._loading=False
         if self.supported and self.controller.port:
@@ -219,6 +223,16 @@ class ReactiveArgbPanel(QGroupBox):
 
     def _source_changed(self,*_):
         is_host=self.source.currentData()==24+self.current
+        if not self._loading:
+            source=self.source.currentData()
+            if source is not None and 1 <= source <= 8:
+                self.low.setValue(0); self.high.setValue(2500)
+            elif source is not None and 9 <= source <= 24:
+                self.low.setValue(30); self.high.setValue(85)
+            elif source is not None and 33 <= source <= 40:
+                self.low.setValue(0); self.high.setValue(100)
+            elif is_host:
+                self._host_changed()
         self.host_label.setVisible(is_host)
         self.host_sensor.setVisible(is_host)
         self.mqtt_help.setVisible(is_host)
@@ -245,7 +259,8 @@ class ReactiveArgbPanel(QGroupBox):
             self.high.setValue(hi)
 
     def refresh_sensors(self):
-        selected=str(self.host_sensor.currentData() or self.host_slots[self.current-1])
+        current=self.host_sensor.currentData()
+        selected=current if isinstance(current,str) else self.host_slots[self.current-1]
         self.host_sensor.blockSignals(True)
         self.host_sensor.clear()
         self.host_sensor.addItem("MQTT / Home Assistant (без даних з ПК)","")

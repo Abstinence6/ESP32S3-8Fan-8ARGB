@@ -348,3 +348,20 @@ not measured electrical or USB performance.
 
 These additions are capability-negotiated through `VERSION?` (`RTCURVE`,
 `FX` flags), and preserve the existing serial, MQTT and NVS settings.
+
+## Reactive ARGB driven by any live sensor
+
+Use **Підсвітка → Реактивні датчики**. Choose an ARGB zone, an ESP-local
+source or a PC/MQTT numeric slot, visualization (Color, Bar, Brightness or
+Speed), min/max values, palette, and a local fallback. For a PC slot, select
+the exact NWinfo temperature or metric (e.g. GPU Utilization, CPU Package
+Power, GPU Frequency, SSD IOPS). The GUI and background agent use the same
+slot mapping and transmit only actual, fresh numeric values using `RVAL`.
+
+The ESP32 renders the animation independently and persists its configuration
+only after explicit `RFX SAVE` acknowledgment. Auto-run after MCU reset is
+opt-in and OFF by default. The UI may be closed after setup for ESP-local
+sources; Windows metrics require a running GUI/agent, while MQTT/Home
+Assistant can supply the slot instead. Missing inputs expire after 7 s and
+switch to local fallback or amber missing-data indication.
+See [`docs/REACTIVE_ARGB.md`](../docs/REACTIVE_ARGB.md).
