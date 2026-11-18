@@ -119,3 +119,26 @@ project: no hardware qualification is implied by a successful CI run.
   assignments, invalid/future/nonfinite values and corrupt slot JSON.
 - Simulate loss of Windows and MQTT with valid local fallback, and confirm
   thermally failed fans still command 100% independent of LED scene activity.
+
+## Firmware v13 acceptance checklist
+
+- Validate three offline snapshots' CRC, NVS no-op, failed-write rollback,
+  explicit boot opt-in and safe fallback to persistent curves. If leased
+  `RTCURVE` exists it takes precedence only while its 20s lease is fresh.
+  Check every fan watchdog, overheating, calibration and default DC interlock
+  remain active across local and MQTT profile changes.
+- Home Assistant discovery advertises valid fan temperature/fault, offline
+  select and estimated airflow entities. Invalid/unsaved profile selection
+  is rejected, and old MQTT fan safety rules still apply.
+- Audio modes are bounded 0..255, four-band packets only; no raw PCM leaves
+  Windows. Test output black after 1.2s without valid audio, opt-in capture
+  disabled by default, safety overlay priority, global estimated LED current
+  limit and optional boot replay (silent until a new sample).
+- Airflow uses only rated user input and currently reliable TACH. It must
+  report unavailable for missing tach / 2-pin no feedback / no exhaust or
+  intake; never change PWM or claim a measured pressure value.
+- Windows offscreen GUI 1080px + 1510px layouts remain unclipped; verify the
+  new offline, airflow and audio controls remain usable without hardware.
+- Probe Windows loopback on a machine with both audio playback and mute:
+  neither packet recording nor hidden recording shall occur. The headless
+  agent must not duplicate capture while a GUI serial-proxy client owns COM.

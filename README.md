@@ -291,3 +291,38 @@ fallback or displays amber rather than claiming a low/healthy value.
 This visual feature is isolated from fan PWM/PID and does not modify cooling
 control, temperature fail-safe logic, the existing LED current estimate or
 the priority of the fault indicator.
+
+## Firmware v13: Offline Profiles, extended Home Assistant, audio and airflow
+
+Four opt-in features add device-level autonomy without changing the physical
+fan interlock or 10-second temperature watchdog:
+
+- **Offline Profiles** store up to three complete snapshots of the eight
+  persistent PWM curves and current ARGB states in a separate CRC-checked NVS
+  bank. Profile switching is RAM-only. `PROFILE BOOT` explicitly opts into
+  activating a saved bank after ESP32 reset; by default existing behavior
+  stays unchanged. Valid leased PC curves still have higher priority.
+- **MQTT/Home Assistant** supports profile selection, separate fan temperature
+  and fault entities, ARGB native mode changes, and estimated airflow
+  diagnostics (not a real pressure measurement).
+- **Native audio-reactive ARGB** supports VU, four-band spectrum, bass pulse
+  and wave on ESP32. The Windows GUI/agent can optionally send only 4 numeric
+  bands from system playback via WASAPI loopback; another MQTT publisher can
+  provide the same values without Windows. No raw audio is transmitted or
+  saved. Audio LEDs go black if frames stop for 1.2 seconds; fault overlays
+  and global ARGB current estimation are unchanged.
+- **Airflow Assistant** passively estimates intake/exhaust balance from the
+  user's rated CFM, rated RPM, installation restriction and *verified* live
+  TACH. Missing TACH or an incomplete intake/exhaust setup reports
+  unavailable. It neither measures pressure nor changes motor power.
+
+Windows GUI buttons: **Fans → Автономні профілі ESP32** and
+**Fans → Airflow Assistant**; ARGB tab **Звукова підсвітка**.
+Details: [offline profiles](docs/OFFLINE_PROFILES.md),
+[Home Assistant](docs/HA_EXTENDED.md),
+[audio reactive ARGB](docs/AUDIO_REACTIVE.md),
+[airflow estimates](docs/AIRFLOW_ASSISTANT.md).
+
+**Hardware fail-ON is not software.** ESP32 reset/power loss still requires
+an externally qualified fail-ON 12 V power stage. Never enable below-100%
+2/3-pin DC PWM before physical testing, even if all CI tests pass.

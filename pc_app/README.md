@@ -365,3 +365,32 @@ sources; Windows metrics require a running GUI/agent, while MQTT/Home
 Assistant can supply the slot instead. Missing inputs expire after 7 s and
 switch to local fallback or amber missing-data indication.
 See [`docs/REACTIVE_ARGB.md`](../docs/REACTIVE_ARGB.md).
+
+## Firmware v13: device profiles, airflow and opt-in audio
+
+- **Fans → Автономні профілі ESP32…**: 3 device-resident presets. Capture
+  copies persistent ESP curves (not a temporary `RTCURVE` host override),
+  and current ARGB modes. An external RGB frame is saved as OFF, not as a
+  replayable scene. Use explicit save to write NVS; profile selection does
+  not write flash. Boot auto-selection is opt-in. A leased PC profile still
+  temporarily overrides the selected offline curve.
+- **Fans → Airflow Assistant…**: configure intake/exhaust, manufacturer rated
+  RPM and CFM, approximate restriction coefficient. The ESP estimates flow
+  only when all selected TACH readings are reliable. It cannot measure
+  static case pressure without independent pressure hardware.
+- **ARGB → Звукова підсвітка**: choose VU / spectrum / bass / wave, two RGB
+  colors, brightness and sensitivity per strip. System-audio capture via
+  Windows is OFF until the user checks the WASAPI-loopback box. The GUI
+  relinquishes capture when closing and the headless agent may resume it
+  from the explicit persistent opt-in, never without permission. PCM is not
+  recorded or transmitted; only 4 instantaneous 0..255-band values are
+  sent using `AUDIO` at the UI's serial pacing. The ESP handles all LED
+  frames. Without the PC, MQTT can supply `<base>/audio/set` instead.
+- **Home Assistant**: device offline-profile select, per-fan temperature and
+  fault, native light effect commands and passive airflow metrics. The
+  broker must be restricted to your local trusted network with ACLs.
+
+Missing audio packets expire after 1.2 seconds and fade to black (not
+replayed music). Unreliable TACH or omitted fan CFM produces unavailable
+airflow information, not a false diagnostic. All cooling guards remain
+identical; see the four v13 docs linked from the root README.

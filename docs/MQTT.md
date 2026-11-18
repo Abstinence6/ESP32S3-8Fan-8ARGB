@@ -113,3 +113,30 @@ The controller publishes `unknown` to `esp32fan/<device>/fan/<n>/temp`
 when the current temperature source exceeds its 10-second freshness window.
 This prevents external monitoring from interpreting an old retained value as
 current. The independent firmware cooling fail-safe remains unchanged.
+
+## v13: extended Home Assistant entities and reactive input
+
+After MQTT discovery, the ESP announces additional entities when supported:
+
+- Select `Offline cooling/ARGB profile`: `Base`, `Profile 1`, `Profile 2`,
+  `Profile 3`. Slots 1..3 must have been explicitly saved via USB
+  `PROFILE SAVE N`. `profile/set` changes the live selection without
+  writing NVS; reboot selection remains independently configured.
+- For each fan, the `Fan N Temperature` sensor uses the existing retained
+  `fan/N/temp` topic, publishing `unknown` for stale sources.
+  `Fan N Fault` is a problem binary sensor bound to `fan/N/fault`.
+- Airflow estimates have `airflow/intake`, `airflow/exhaust`,
+  `airflow/balance` and `airflow/trend`. Values are marked `unknown`
+  when any selected TACH is unavailable or intake/exhaust is not configured.
+  These are CFM-like *estimates*, not static pressure measurements.
+- `light/N/effect/set` accepts `OFF`, `RAINBOW`, `EFFECT`, `REACTIVE`,
+  `AUDIO`. `light/N/mode` reports the actual scene type. Each ARGB
+  effect still uses firmware current estimation and safety overlays.
+- `audio/set` accepts four unsigned integers separated by commas,
+  each 0..255: `bass,mid,treble,peak`. For example `100,45,35,120`.
+  Audio sample freshness expires in 1.2 seconds and no frame is stored.
+
+**Security:** MQTT uses plain TCP; use an isolated broker with ACLs. Do not
+expose controls to the public Internet. Avoid retained audio samples to
+prevent stale playback on reconnect. All ESP motor commands still pass the
+same safety guards as USB.
