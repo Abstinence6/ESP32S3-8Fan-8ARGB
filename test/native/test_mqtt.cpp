@@ -84,6 +84,14 @@ int main() {
     assert(!integrated.applyCommand((base+"/light/2/effect/set").c_str(),"NOTREAL",2000));
     assert(fans.getPercent(0)==100);
 
+    assert(integrated.applyCommand((base+"/audio/set").c_str(),"5,10,20,40",2100));
+    assert(lights.audioFresh(2101));
+    assert(!integrated.applyCommand((base+"/audio/set").c_str(),"256,5,6,7",2100));
+    assert(!integrated.applyCommand((base+"/audio/set").c_str(),"5,5,6,7,8",2100));
+    assert(integrated.applyCommand((base+"/light/2/effect/set").c_str(),"AUDIO",2101));
+    assert(lights.getMode(1)==ArgbController::Mode::Audio);
+    assert(fans.getPercent(0)==100);
+
     // Stage multiple MQTT changes without mutating NVS or the active broker.
     const size_t beforeTxWrites = Preferences::writeCount();
     assert(afterReboot.txBegin());

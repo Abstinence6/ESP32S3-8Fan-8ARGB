@@ -82,6 +82,21 @@ int main() {
     assert(!cooling.offlineProfileActive());
     assert(offline.boot() == 0);
 
+    // Native sound data never writes NVS; device renders the audio spectrum.
+    Serial.out.clear();
+    Serial.send("AUDIOCFG SET 3 2 100 64 0 0 255 255 0 0\n"
+                "AUDIO 200 50 30 220\nAUDIOCFG BOOT 3 0\n"
+                "AUDIOCFG SAVE\nAUDIOCFG? 3\n");
+    console.poll();
+    assert(Serial.out.find("OK AUDIOCFG_SAVED") != std::string::npos);
+    assert(Serial.out.find("AUDIOCFG CH=3 STYLE=2") != std::string::npos);
+    assert(leds.getMode(2)==ArgbController::Mode::Audio);
+    assert(leds.audioFresh(millis()));
+    Serial.out.clear();
+    Serial.send("AUDIO 256 1 2 3\nAUDIOCFG SET 3 8 100 64 0 0 255 255 0 0\n");
+    console.poll();
+    assert(Serial.out.find("ERR arguments") != std::string::npos);
+
     // Independent native LED effects are persisted only on an explicit SAVE.
     Serial.out.clear();
     Serial.send("FX SET 2 2 10 20 30 90 100 110 3 64 0\nFX BOOT 2 0\nFX SAVE\nFX? 2\n");

@@ -107,6 +107,12 @@ g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
   test/native/test_argb_effects.cpp -o "$out"
 "$out"
 
+# Four-band audio visualization is device-rendered; numeric input TTL is strict.
+g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
+  test/native/mock/Arduino.cpp src/ArgbController.cpp \
+  test/native/test_argb_audio.cpp -o "$out"
+"$out"
+
 # Source-reactive LED modes, local fallback, stale telemetry, NVS and current guard.
 g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
   test/native/mock/Arduino.cpp src/ArgbController.cpp \

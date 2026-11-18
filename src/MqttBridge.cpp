@@ -335,6 +335,17 @@ bool MqttBridge::applyCommand(const char* topic, const char* payload, uint32_t n
                                                nowMs, !strcmp(suffix, "temp2/set"));
         return false;
     }
+    if (!strcmp(p, "audio/set")) {
+        unsigned bass=0,mid=0,treble=0,peak=0;
+        char extra=0;
+        if (sscanf(payload,"%u,%u,%u,%u%c",&bass,&mid,&treble,&peak,&extra)!=4 ||
+            bass>255 || mid>255 || treble>255 || peak>255) return false;
+        argbaudio::Levels levels={
+            static_cast<uint8_t>(bass),static_cast<uint8_t>(mid),
+            static_cast<uint8_t>(treble),static_cast<uint8_t>(peak)};
+        leds_.setAudioLevels(levels,nowMs);
+        return true;
+    }
     if (!strcmp(p, "profile/set") && profiles_) {
         if (!strcmp(payload, "Base")) return profiles_->clear();
         if (!strcmp(payload, "Profile 1")) return profiles_->activate(1);
@@ -366,6 +377,7 @@ bool MqttBridge::applyCommand(const char* topic, const char* payload, uint32_t n
             if (!strcmp(payload,"RAINBOW")) return leds_.setRainbow(number);
             if (!strcmp(payload,"EFFECT")) return leds_.startEffect(number);
             if (!strcmp(payload,"REACTIVE")) return leds_.startReactive(number);
+            if (!strcmp(payload,"AUDIO")) return leds_.startAudio(number);
             return false;
         }
         if (!strcmp(suffix, "rgb/set")) {
@@ -416,7 +428,8 @@ void MqttBridge::publishStatus(uint8_t ch) {
         mode == ArgbController::Mode::Rainbow ? "RAINBOW" :
         mode == ArgbController::Mode::External ? "EXTERNAL" :
         mode == ArgbController::Mode::Effect ? "EFFECT" :
-        mode == ArgbController::Mode::Reactive ? "REACTIVE" : "UNKNOWN";
+        mode == ArgbController::Mode::Reactive ? "REACTIVE" :
+        mode == ArgbController::Mode::Audio ? "AUDIO" : "UNKNOWN";
     mqtt_.publish(topic, modeText, true);
 #else
     (void)ch;
@@ -613,6 +626,8 @@ void MqttBridge::update(uint32_t nowMs) {
             snprintf(topic, sizeof(topic), "%s/profile/set", baseTopic_);
             mqtt_.subscribe(topic);
         }
+        snprintf(topic, sizeof(topic), "%s/audio/set", baseTopic_);
+        mqtt_.subscribe(topic);
         discoveryStep_ = 0;
         if (!discoveryEnabled_) discoveryCleanupStep_ = 0;
         lastDiscoveryMs_ = nowMs;

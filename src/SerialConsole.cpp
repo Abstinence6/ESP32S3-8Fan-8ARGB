@@ -455,7 +455,7 @@ void SerialConsole::handleLine(char* line) {
     }
     if (strcmp(command, "VERSION?") == 0) {
         if (!noMore()) return error();
-        serial_.print(F("FW VERSION=12 SERIAL=8 DC_READY="));
+        serial_.print(F("FW VERSION=13 SERIAL=8 DC_READY="));
         serial_.print(board::kDcSupplyPwmValidated ? 1 : 0);
         serial_.print(F(" DS18B20="));
         serial_.print(hw_ && hw_->enabled() ? 1 : 0);
@@ -467,7 +467,7 @@ void SerialConsole::handleLine(char* line) {
         serial_.print(temperaturePalette_ ? 1 : 0);
         serial_.print(F(" PIDTUNE_NVS="));
         serial_.print(cooling_.pidTuningSupported() ? 1 : 0);
-        serial_.println(F(" RTCURVE=1 FX=1 RFX=1 OFFLINE=1 AIRFLOW=1"));
+        serial_.println(F(" RTCURVE=1 FX=1 RFX=1 OFFLINE=1 AIRFLOW=1 AUDIO=1 HA_EXT=1"));
         return;
     }
     if (strcmp(command, "HTSCAN") == 0) {
@@ -1042,6 +1042,69 @@ void SerialConsole::handleLine(char* line) {
         serial_.println(ok ? F("OK RFX") : F("ERR RFX invalid"));
         return;
     }
+    if (!strcmp(command,"AUDIO")) {
+        argbaudio::Levels levels={};
+        if (!parseByte(next(),255,levels.bass) ||
+            !parseByte(next(),255,levels.mid) ||
+            !parseByte(next(),255,levels.treble) ||
+            !parseByte(next(),255,levels.peak) || !noMore()) return error();
+        leds_.setAudioLevels(levels,millis());
+        serial_.println(F("OK AUDIO")); return;
+    }
+    if (!strcmp(command,"AUDIOCFG?")) {
+        uint8_t ch=0;
+        if (!parseByte(next(),board::kChannelCount,ch) || !ch || !noMore()) return error();
+        const auto& cfg=leds_.audio(ch-1);
+        serial_.print(F("AUDIOCFG CH=")); serial_.print(ch);
+        serial_.print(F(" STYLE=")); serial_.print(cfg.style);
+        serial_.print(F(" GAIN=")); serial_.print(cfg.gain);
+        serial_.print(F(" BRIGHT=")); serial_.print(cfg.brightness);
+        serial_.print(F(" R1=")); serial_.print(cfg.primary[0]); serial_.print(',');
+        serial_.print(cfg.primary[1]); serial_.print(','); serial_.print(cfg.primary[2]);
+        serial_.print(F(" R2=")); serial_.print(cfg.secondary[0]); serial_.print(',');
+        serial_.print(cfg.secondary[1]); serial_.print(','); serial_.print(cfg.secondary[2]);
+        serial_.print(F(" BOOT=")); serial_.print(leds_.audioBoot(ch-1)?1:0);
+        serial_.print(F(" ACTIVE=")); serial_.print(leds_.getMode(ch-1)==ArgbController::Mode::Audio?1:0);
+        serial_.print(F(" FRESH=")); serial_.println(leds_.audioFresh(millis())?1:0);
+        return;
+    }
+    if (!strcmp(command,"AUDIOCFG")) {
+        char* op=next();
+        if (!op) return error();
+        for (char* q=op;*q;++q)
+            *q=static_cast<char>(toupper(static_cast<unsigned char>(*q)));
+        if (!strcmp(op,"SAVE")) {
+            if (!noMore() || !leds_.saveAudio()) {
+                serial_.println(F("ERR AUDIOCFG NVS")); return;
+            }
+            serial_.println(F("OK AUDIOCFG_SAVED")); return;
+        }
+        uint8_t ch=0;
+        if (!parseByte(next(),board::kChannelCount,ch) || !ch) return error();
+        --ch;
+        bool ok=false;
+        if (!strcmp(op,"START") && noMore()) ok=leds_.startAudio(ch);
+        else if (!strcmp(op,"STOP") && noMore()) ok=leds_.setOff(ch);
+        else if (!strcmp(op,"BOOT")) {
+            uint8_t boot=0;
+            if (!parseByte(next(),1,boot)||!noMore()) return error();
+            ok=leds_.setAudioBoot(ch,boot!=0);
+        } else if (!strcmp(op,"SET")) {
+            argbaudio::Config cfg={};
+            if (!parseByte(next(),4,cfg.style) || !cfg.style ||
+                !parseByte(next(),200,cfg.gain) || !cfg.gain ||
+                !parseByte(next(),255,cfg.brightness) ||
+                !parseByte(next(),255,cfg.primary[0]) ||
+                !parseByte(next(),255,cfg.primary[1]) ||
+                !parseByte(next(),255,cfg.primary[2]) ||
+                !parseByte(next(),255,cfg.secondary[0]) ||
+                !parseByte(next(),255,cfg.secondary[1]) ||
+                !parseByte(next(),255,cfg.secondary[2]) || !noMore()) return error();
+            ok=leds_.setAudio(ch,cfg);
+        } else return error();
+        serial_.println(ok ? F("OK AUDIOCFG") : F("ERR AUDIOCFG invalid"));
+        return;
+    }
     if (!strcmp(command, "FX?")) {
         uint8_t channel = 0;
         if (!parseByte(next(), board::kChannelCount, channel) || !channel || !noMore())
@@ -1327,6 +1390,9 @@ void SerialConsole::printHelp() {
     serial_.println(F("RFX START|STOP <ch> | RFX BOOT <ch> <0|1> | RFX SAVE | RVAL <slot:1..8> <value*10>"));
     serial_.println(F("PROFILE? | PROFILE SAVE|SELECT <1..3> | PROFILE CLEAR | PROFILE BOOT <0..3>"));
     serial_.println(F("AIRCFG? <ch> | AIRCFG <ch> <dir:0|1|2> <ratedRpm> <ratedCFM*10> <restriction%> | AIRFLOW?"));
+    serial_.println(F("AUDIO <bass> <mid> <treble> <peak> (0..255 each, expires after 1.2s)"));
+    serial_.println(F("AUDIOCFG? <ch> | AUDIOCFG SET <ch> <style:1..4> <gain:1..200> <bright> <R1 G1 B1> <R2 G2 B2>"));
+    serial_.println(F("AUDIOCFG START|STOP <ch> | AUDIOCFG BOOT <ch> 0|1 | AUDIOCFG SAVE"));
     serial_.println(F("ARGBCFG <ch> <count> <reverse> <budgetMa> <brightness> (one NVS record)"));
     serial_.println(F("Binary ARGB: A5 5A ch countLE16 RGB... crc16LE (CCITT-FALSE)"));
 }
