@@ -34,7 +34,7 @@ PcPowerController pcPower;
 HardwareTemperature hardwareTemp;
 TemperatureArgbSettings temperatureArgbSettings;
 TemperaturePaletteSettings temperaturePaletteSettings;
-MqttBridge mqtt(cooling, fans, leds, wifiRgb, &pcPower);
+MqttBridge mqtt(cooling, fans, leds, wifiRgb, &pcPower, &offlineProfiles, &airflowAssistant);
 SerialConsole console(Serial, fans, leds, cooling, &wifiRgb, &mqtt, &pcPower, &hardwareTemp, &temperatureArgbSettings, &temperaturePaletteSettings, &offlineProfiles, &airflowAssistant);
 
 void setup() {

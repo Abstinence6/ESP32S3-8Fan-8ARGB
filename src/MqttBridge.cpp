@@ -24,8 +24,10 @@ bool parseUInt(const char* s, unsigned max, unsigned& value) {
 }
 
 MqttBridge::MqttBridge(CoolingController& cooling, FanController& fans,
-                       ArgbController& leds, NetworkRgbBridge& network, PcPowerController* pc)
-    : cooling_(cooling), fans_(fans), leds_(leds), network_(network), pc_(pc)
+                       ArgbController& leds, NetworkRgbBridge& network, PcPowerController* pc,
+                       OfflineProfiles* profiles, AirflowAssistant* airflow)
+    : cooling_(cooling), fans_(fans), leds_(leds), network_(network),
+      pc_(pc), profiles_(profiles), airflow_(airflow)
 #if defined(ARDUINO_ARCH_ESP32)
     , mqtt_(tcp_)
 #endif
@@ -333,6 +335,13 @@ bool MqttBridge::applyCommand(const char* topic, const char* payload, uint32_t n
                                                nowMs, !strcmp(suffix, "temp2/set"));
         return false;
     }
+    if (!strcmp(p, "profile/set") && profiles_) {
+        if (!strcmp(payload, "Base")) return profiles_->clear();
+        if (!strcmp(payload, "Profile 1")) return profiles_->activate(1);
+        if (!strcmp(payload, "Profile 2")) return profiles_->activate(2);
+        if (!strcmp(payload, "Profile 3")) return profiles_->activate(3);
+        return false;
+    }
     if (!strncmp(p, "reactive/", 9)) {
         p += 9;
         if (*p < '1' || *p > '8' || strcmp(p+1, "/set")) return false;
@@ -350,6 +359,13 @@ bool MqttBridge::applyCommand(const char* topic, const char* payload, uint32_t n
             if (!strcmp(payload, "OFF")) return leds_.setOff(number);
             if (!strcmp(payload, "RAINBOW") || !strcmp(payload, "ON"))
                 return leds_.setRainbow(number);
+            return false;
+        }
+        if (!strcmp(suffix, "effect/set")) {
+            if (!strcmp(payload,"OFF")) return leds_.setOff(number);
+            if (!strcmp(payload,"RAINBOW")) return leds_.setRainbow(number);
+            if (!strcmp(payload,"EFFECT")) return leds_.startEffect(number);
+            if (!strcmp(payload,"REACTIVE")) return leds_.startReactive(number);
             return false;
         }
         if (!strcmp(suffix, "rgb/set")) {
@@ -392,6 +408,16 @@ void MqttBridge::publishStatus(uint8_t ch) {
     else
         snprintf(payload, sizeof(payload), "unknown");
     mqtt_.publish(topic, payload, true);
+    snprintf(topic, sizeof(topic), "%s/light/%u/mode", baseTopic_, idx);
+    const auto mode = leds_.getMode(ch);
+    const char* modeText =
+        mode == ArgbController::Mode::Off ? "OFF" :
+        mode == ArgbController::Mode::Solid ? "SOLID" :
+        mode == ArgbController::Mode::Rainbow ? "RAINBOW" :
+        mode == ArgbController::Mode::External ? "EXTERNAL" :
+        mode == ArgbController::Mode::Effect ? "EFFECT" :
+        mode == ArgbController::Mode::Reactive ? "REACTIVE" : "UNKNOWN";
+    mqtt_.publish(topic, modeText, true);
 #else
     (void)ch;
 #endif
@@ -399,7 +425,7 @@ void MqttBridge::publishStatus(uint8_t ch) {
 
 void MqttBridge::removeDiscovery(uint8_t channel) {
 #if defined(ARDUINO_ARCH_ESP32)
-    if (!connected() || channel > board::kChannelCount) return;
+    if (!connected() || channel > 10U) return;
     const char* id = strchr(baseTopic_, '/');
     id = id ? id + 1 : "esp32s3";
     char topic[120];
@@ -411,11 +437,23 @@ void MqttBridge::removeDiscovery(uint8_t channel) {
         mqtt_.publish(topic, "", true);
         snprintf(topic, sizeof(topic), "homeassistant/light/%s_l%u/config", id, i);
         mqtt_.publish(topic, "", true);
-    } else {
+        snprintf(topic, sizeof(topic), "homeassistant/sensor/%s_f%u_temp/config", id, i);
+        mqtt_.publish(topic, "", true);
+        snprintf(topic, sizeof(topic), "homeassistant/binary_sensor/%s_f%u_fault/config", id, i);
+        mqtt_.publish(topic, "", true);
+    } else if (channel == board::kChannelCount) {
         snprintf(topic, sizeof(topic), "homeassistant/binary_sensor/%s_pc_power/config", id);
         mqtt_.publish(topic, "", true);
         for (const char* key : {"pc_on", "pc_off", "pc_force"}) {
             snprintf(topic, sizeof(topic), "homeassistant/button/%s_%s/config", id, key);
+            mqtt_.publish(topic, "", true);
+        }
+    } else if (channel == 9) {
+        snprintf(topic, sizeof(topic), "homeassistant/select/%s_offline_profile/config", id);
+        mqtt_.publish(topic, "", true);
+    } else if (channel == 10) {
+        for (const char* name : {"intake", "exhaust", "balance", "trend"}) {
+            snprintf(topic, sizeof(topic), "homeassistant/sensor/%s_airflow_%s/config", id, name);
             mqtt_.publish(topic, "", true);
         }
     }
@@ -428,8 +466,9 @@ void MqttBridge::publishDiscovery() {
     char topic[120], payload[900];
     const char* id = strchr(baseTopic_, '/');
     id = id ? id + 1 : "esp32s3";
-    if (discoveryStep_ == board::kChannelCount && pc_ && pc_->enabled()) {
+    if (discoveryStep_ == board::kChannelCount) {
         ++discoveryStep_;
+        if (!pc_ || !pc_->enabled()) return;
         snprintf(topic, sizeof(topic), "homeassistant/binary_sensor/%s_pc_power/config", id);
         snprintf(payload, sizeof(payload),
             "{\"name\":\"PC Power\",\"unique_id\":\"%s_pc_power\","
@@ -451,6 +490,38 @@ void MqttBridge::publishDiscovery() {
                 "\"device\":{\"identifiers\":[\"%s\"],\"name\":\"ESP32-S3 Fan/ARGB %s\"}}",
                 names[j], id, keys[j], baseTopic_, commands[j], baseTopic_, id, id);
             mqtt_.publish(topic, payload, true);
+        }
+        return;
+    }
+    if (discoveryStep_ == 9U) {
+        ++discoveryStep_;
+        if (!profiles_) return;
+        snprintf(topic, sizeof(topic), "homeassistant/select/%s_offline_profile/config", id);
+        snprintf(payload, sizeof(payload),
+            "{\"name\":\"Offline cooling/ARGB profile\",\"unique_id\":\"%s_offline_profile\","
+            "\"command_topic\":\"%s/profile/set\",\"state_topic\":\"%s/profile/state\","
+            "\"options\":[\"Base\",\"Profile 1\",\"Profile 2\",\"Profile 3\"],"
+            "\"availability_topic\":\"%s/availability\","
+            "\"device\":{\"identifiers\":[\"%s\"],\"name\":\"ESP32-S3 Fan/ARGB %s\"}}",
+            id,baseTopic_,baseTopic_,baseTopic_,id,id);
+        mqtt_.publish(topic,payload,true);
+        return;
+    }
+    if (discoveryStep_ == 10U) {
+        ++discoveryStep_;
+        if (!airflow_) return;
+        const char* names[]={"intake","exhaust","balance","trend"};
+        const char* labels[]={"Estimated Intake Airflow","Estimated Exhaust Airflow",
+                              "Estimated Airflow Balance","Estimated Airflow Tendency"};
+        for (unsigned i=0;i<4;++i) {
+            snprintf(topic,sizeof(topic),"homeassistant/sensor/%s_airflow_%s/config",id,names[i]);
+            snprintf(payload,sizeof(payload),
+                "{\"name\":\"%s\",\"unique_id\":\"%s_airflow_%s\","
+                "\"state_topic\":\"%s/airflow/%s\","
+                "\"availability_topic\":\"%s/availability\","
+                "\"device\":{\"identifiers\":[\"%s\"],\"name\":\"ESP32-S3 Fan/ARGB %s\"}}",
+                labels[i],id,names[i],baseTopic_,names[i],baseTopic_,id,id);
+            mqtt_.publish(topic,payload,true);
         }
         return;
     }
@@ -486,6 +557,24 @@ void MqttBridge::publishDiscovery() {
             "\"device\":{\"identifiers\":[\"%s\"],\"name\":\"ESP32-S3 Fan/ARGB %s\"}}",
             i, id, i, baseTopic_, i, baseTopic_, i, baseTopic_, baseTopic_, id);
         mqtt_.publish(topic, payload, true);
+        snprintf(topic, sizeof(topic), "homeassistant/sensor/%s_f%u_temp/config", id, i);
+        snprintf(payload, sizeof(payload),
+            "{\"name\":\"Fan %u Temperature\",\"unique_id\":\"%s_f%u_temp\","
+            "\"state_topic\":\"%s/fan/%u/temp\","
+            "\"unit_of_measurement\":\"°C\",\"device_class\":\"temperature\","
+            "\"availability_topic\":\"%s/availability\","
+            "\"device\":{\"identifiers\":[\"%s\"],\"name\":\"ESP32-S3 Fan/ARGB %s\"}}",
+            i,id,i,baseTopic_,i,baseTopic_,id,id);
+        mqtt_.publish(topic,payload,true);
+        snprintf(topic, sizeof(topic), "homeassistant/binary_sensor/%s_f%u_fault/config", id, i);
+        snprintf(payload, sizeof(payload),
+            "{\"name\":\"Fan %u Fault\",\"unique_id\":\"%s_f%u_fault\","
+            "\"state_topic\":\"%s/fan/%u/fault\","
+            "\"payload_on\":\"ON\",\"payload_off\":\"OFF\","
+            "\"device_class\":\"problem\",\"availability_topic\":\"%s/availability\","
+            "\"device\":{\"identifiers\":[\"%s\"],\"name\":\"ESP32-S3 Fan/ARGB %s\"}}",
+            i,id,i,baseTopic_,i,baseTopic_,id,id);
+        mqtt_.publish(topic,payload,true);
     }
 #endif
 }
@@ -511,12 +600,17 @@ void MqttBridge::update(uint32_t nowMs) {
         char topic[96];
         for (const char* wildcard : {"fan/+/set", "fan/+/power/set", "fan/+/mode/set",
                                      "fan/+/temp/set", "fan/+/temp2/set", "light/+/set",
-                                     "light/+/rgb/set", "reactive/+/set"}) {
+                                     "light/+/rgb/set", "light/+/effect/set",
+                                     "reactive/+/set"}) {
             snprintf(topic, sizeof(topic), "%s/%s", baseTopic_, wildcard);
             mqtt_.subscribe(topic);
         }
         if (pc_ && pc_->enabled()) {
             snprintf(topic, sizeof(topic), "%s/pc/set", baseTopic_);
+            mqtt_.subscribe(topic);
+        }
+        if (profiles_) {
+            snprintf(topic, sizeof(topic), "%s/profile/set", baseTopic_);
             mqtt_.subscribe(topic);
         }
         discoveryStep_ = 0;
@@ -527,11 +621,11 @@ void MqttBridge::update(uint32_t nowMs) {
     mqtt_.loop();
     // Limit HA discovery traffic: three retained configs per 300 ms visit.
     if (nowMs - lastDiscoveryMs_ >= 300U) {
-        if (!discoveryEnabled_ && discoveryCleanupStep_ <= board::kChannelCount) {
+        if (!discoveryEnabled_ && discoveryCleanupStep_ <= 10U) {
             lastDiscoveryMs_ = nowMs;
             removeDiscovery(discoveryCleanupStep_++);
         } else if (discoveryEnabled_ &&
-            discoveryStep_ < board::kChannelCount + ((pc_ && pc_->enabled()) ? 1U : 0U)) {
+            discoveryStep_ < 11U) {
             lastDiscoveryMs_ = nowMs;
             publishDiscovery();
         }
@@ -543,6 +637,31 @@ void MqttBridge::update(uint32_t nowMs) {
         const auto state = pc_->state();
         mqtt_.publish(topic, state == PcPowerController::State::On ? "ON" :
                             state == PcPowerController::State::Off ? "OFF" : "unknown", true);
+    }
+    if (nowMs - lastAssistPublishMs_ >= 2000U) {
+        lastAssistPublishMs_ = nowMs;
+        char topic[96], payload[32];
+        if (profiles_) {
+            snprintf(topic,sizeof(topic),"%s/profile/state",baseTopic_);
+            snprintf(payload,sizeof(payload),"%s",profiles_->active()==0 ? "Base" :
+                     profiles_->active()==1 ? "Profile 1" :
+                     profiles_->active()==2 ? "Profile 2" : "Profile 3");
+            mqtt_.publish(topic,payload,true);
+        }
+        if (airflow_) {
+            const auto result=airflow_->estimate();
+            snprintf(topic,sizeof(topic),"%s/airflow/trend",baseTopic_);
+            mqtt_.publish(topic,AirflowAssistant::tendency(result),true);
+            const char* metric[]={"intake","exhaust","balance"};
+            for (unsigned i=0;i<3;++i) {
+                snprintf(topic,sizeof(topic),"%s/airflow/%s",baseTopic_,metric[i]);
+                if (!result.usable) snprintf(payload,sizeof(payload),"unknown");
+                else if (i==0) snprintf(payload,sizeof(payload),"%.1f",result.intakeDeci/10.0f);
+                else if (i==1) snprintf(payload,sizeof(payload),"%.1f",result.exhaustDeci/10.0f);
+                else snprintf(payload,sizeof(payload),"%d",result.balancePercent);
+                mqtt_.publish(topic,payload,true);
+            }
+        }
     }
     if (nowMs - lastPublishMs_ >= 250U) {
         lastPublishMs_ = nowMs;

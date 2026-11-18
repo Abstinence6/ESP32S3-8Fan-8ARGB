@@ -65,6 +65,25 @@ int main() {
     assert(!afterReboot.applyCommand("esp32fan/untrusted/reactive/3/set", "990", 2000));
     assert(fans.getPercent(0) == 100);
 
+    OfflineProfiles offline(cooling,lights);
+    assert(offline.begin());
+    assert(offline.capture(1));
+    AirflowAssistant airflow(fans);
+    assert(airflow.begin());
+    assert(airflow.configure(0,1,2000,900,80));
+    MqttBridge integrated(cooling,fans,lights,network,nullptr,&offline,&airflow);
+    assert(integrated.begin());
+    assert(integrated.applyCommand((base+"/profile/set").c_str(),"Profile 1",2000));
+    assert(offline.active()==1);
+    assert(!integrated.applyCommand((base+"/profile/set").c_str(),"Profile 2",2000));
+    assert(!integrated.applyCommand((base+"/profile/set").c_str(),"Profile 9",2000));
+    assert(integrated.applyCommand((base+"/profile/set").c_str(),"Base",2000));
+    assert(!cooling.offlineProfileActive());
+    assert(integrated.applyCommand((base+"/light/2/effect/set").c_str(),"EFFECT",2000));
+    assert(lights.getMode(1)==ArgbController::Mode::Effect);
+    assert(!integrated.applyCommand((base+"/light/2/effect/set").c_str(),"NOTREAL",2000));
+    assert(fans.getPercent(0)==100);
+
     // Stage multiple MQTT changes without mutating NVS or the active broker.
     const size_t beforeTxWrites = Preferences::writeCount();
     assert(afterReboot.txBegin());
