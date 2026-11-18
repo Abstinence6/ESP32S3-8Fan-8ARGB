@@ -10,6 +10,7 @@ constexpr uint32_t kBrightnessMagic = 0x42524731UL; // BRG1, separate CRC-checke
 constexpr uint32_t kExternalTimeoutMs = 3000;
 constexpr uint32_t kEffectMagic = 0x46584331UL; // FXC1
 constexpr uint32_t kReactiveMagic = 0x52584631UL; // RXF1
+constexpr uint32_t kAudioMagic = 0x41554431UL; // AUD1
 }
 
 uint32_t ArgbController::checksum(const Config& config) {
@@ -46,6 +47,14 @@ uint32_t ArgbController::reactiveChecksum(const ReactiveStore& config) {
         hash ^= bytes[i]; hash *= 16777619UL;
     }
     return hash;
+}
+uint32_t ArgbController::audioChecksum(const AudioStore& record) {
+    const uint8_t* bytes=reinterpret_cast<const uint8_t*>(&record);
+    uint32_t crc=2166136261UL;
+    for (size_t i=0; i<offsetof(AudioStore,crc); ++i) {
+        crc^=bytes[i]; crc*=16777619UL;
+    }
+    return crc;
 }
 bool ArgbController::begin() {
     if (!storage_.begin("argb-v4", false)) return false;
@@ -135,7 +144,30 @@ bool ArgbController::begin() {
             // An explicit reactive boot opt-in takes precedence over FX boot.
             if (bootReactive_[ch]) startReactive(ch);
         }
-    // Corrupt NVS reverts new reactive configurations to disabled/off.
+    // A separate audio namespace entry cannot invalidate existing FX/RFX
+    // scenes. Audio boot is explicitly disabled unless the user opted in.
+    for (uint8_t ch=0; ch<board::kChannelCount; ++ch) {
+        audio_[ch]=argbaudio::defaults();
+        savedAudio_[ch]=audio_[ch];
+    }
+    AudioStore audioSaved={};
+    bool validAudio=storage_.getBytesLength("audio") == sizeof(audioSaved) &&
+        storage_.getBytes("audio",&audioSaved,sizeof(audioSaved))==sizeof(audioSaved) &&
+        audioSaved.magic==kAudioMagic && audioSaved.version==1 &&
+        audioSaved.crc==audioChecksum(audioSaved);
+    if (validAudio)
+        for (uint8_t ch=0;ch<board::kChannelCount;++ch)
+            if (audioSaved.boot[ch]>1 || !argbaudio::valid(audioSaved.configs[ch]))
+                validAudio=false;
+    if (validAudio)
+        for (uint8_t ch=0;ch<board::kChannelCount;++ch) {
+            audio_[ch]=audioSaved.configs[ch];
+            savedAudio_[ch]=audio_[ch];
+            bootAudio_[ch]=audioSaved.boot[ch]!=0;
+            savedBootAudio_[ch]=bootAudio_[ch];
+            // Explicit Audio BOOT takes precedence over FX and RFX.
+            if (bootAudio_[ch]) startAudio(ch);
+        }
     previousFrameMs_ = millis();
     return true;
 }
@@ -257,7 +289,7 @@ bool ArgbController::solidColor(uint8_t ch, uint8_t& r,
 bool ArgbController::setSolid(uint8_t ch, uint8_t r, uint8_t g, uint8_t b) {
     if (ch >= board::kChannelCount) return false;
     if (modes_[ch] == Mode::External || modes_[ch] == Mode::Effect ||
-        modes_[ch] == Mode::Reactive)
+        modes_[ch] == Mode::Reactive || modes_[ch] == Mode::Audio)
         brightness_[ch] = savedBrightness_[ch];
     modes_[ch] = Mode::Solid;
     colors_[ch].r = r; colors_[ch].g = g; colors_[ch].b = b;
@@ -267,7 +299,7 @@ bool ArgbController::setSolid(uint8_t ch, uint8_t r, uint8_t g, uint8_t b) {
 bool ArgbController::setOff(uint8_t ch) {
     if (ch >= board::kChannelCount) return false;
     if (modes_[ch] == Mode::External || modes_[ch] == Mode::Effect ||
-        modes_[ch] == Mode::Reactive)
+        modes_[ch] == Mode::Reactive || modes_[ch] == Mode::Audio)
         brightness_[ch] = savedBrightness_[ch];
     modes_[ch] = Mode::Off;
     memset(frame_[ch], 0, sizeof(frame_[ch]));
@@ -278,7 +310,7 @@ bool ArgbController::setOff(uint8_t ch) {
 bool ArgbController::setRainbow(uint8_t ch) {
     if (ch >= board::kChannelCount) return false;
     if (modes_[ch] == Mode::External || modes_[ch] == Mode::Effect ||
-        modes_[ch] == Mode::Reactive)
+        modes_[ch] == Mode::Reactive || modes_[ch] == Mode::Audio)
         brightness_[ch] = savedBrightness_[ch];
     modes_[ch] = Mode::Rainbow;
     return true;
@@ -325,6 +357,60 @@ bool ArgbController::saveEffects() {
     for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
         savedEffects_[ch] = effects_[ch];
         savedBootEffects_[ch] = bootEffects_[ch];
+    }
+    return true;
+}
+bool ArgbController::setAudio(uint8_t ch, const argbaudio::Config& cfg) {
+    if (ch>=board::kChannelCount || !argbaudio::valid(cfg)) return false;
+    audio_[ch]=cfg;
+    modes_[ch]=Mode::Audio;
+    brightness_[ch]=cfg.brightness;
+    drawAudio(ch,millis());
+    return true;
+}
+bool ArgbController::startAudio(uint8_t ch) {
+    return ch<board::kChannelCount && setAudio(ch,audio_[ch]);
+}
+bool ArgbController::setAudioBoot(uint8_t ch, bool enabled) {
+    if (ch>=board::kChannelCount) return false;
+    bootAudio_[ch]=enabled;
+    return true;
+}
+const argbaudio::Config& ArgbController::audio(uint8_t ch) const {
+    static const argbaudio::Config fallback=argbaudio::defaults();
+    return ch<board::kChannelCount ? audio_[ch] : fallback;
+}
+bool ArgbController::audioBoot(uint8_t ch) const {
+    return ch<board::kChannelCount && bootAudio_[ch];
+}
+void ArgbController::setAudioLevels(const argbaudio::Levels& levels,uint32_t nowMs) {
+    audioLevels_=levels; audioStampMs_=nowMs; audioValid_=true;
+}
+bool ArgbController::audioFresh(uint32_t nowMs) const {
+    return audioValid_ && nowMs-audioStampMs_<=argbaudio::kFreshMs;
+}
+void ArgbController::drawAudio(uint8_t ch,uint32_t nowMs) {
+    argbaudio::render(audio_[ch],audioLevels_,audioFresh(nowMs),
+                      strips_[ch].numPixels(),nowMs,frame_[ch]);
+    markDirty(ch);
+}
+bool ArgbController::saveAudio() {
+    bool changed=false;
+    for (uint8_t ch=0;ch<board::kChannelCount;++ch)
+        if (memcmp(&audio_[ch],&savedAudio_[ch],sizeof(audio_[ch])) ||
+            bootAudio_[ch]!=savedBootAudio_[ch]) changed=true;
+    if (!changed) return true;
+    AudioStore next={};
+    next.magic=kAudioMagic; next.version=1;
+    for (uint8_t ch=0;ch<board::kChannelCount;++ch) {
+        next.configs[ch]=audio_[ch];
+        next.boot[ch]=bootAudio_[ch]?1:0;
+    }
+    next.crc=audioChecksum(next);
+    if (storage_.putBytes("audio",&next,sizeof(next)) != sizeof(next)) return false;
+    for (uint8_t ch=0;ch<board::kChannelCount;++ch) {
+        savedAudio_[ch]=audio_[ch];
+        savedBootAudio_[ch]=bootAudio_[ch];
     }
     return true;
 }
@@ -505,6 +591,10 @@ void ArgbController::update(uint32_t nowMs) {
     if (nowMs - previousFrameMs_ >= board::kArgbFrameMs) {
         previousFrameMs_ = nowMs;
         for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
+            if (modes_[ch] == Mode::Audio) {
+                drawAudio(ch,nowMs);
+                continue;
+            }
             if (modes_[ch] == Mode::Reactive) {
                 drawReactive(ch, nowMs);
                 continue;

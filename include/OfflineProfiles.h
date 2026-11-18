@@ -78,6 +78,7 @@ public:
                 case ArgbController::Mode::Rainbow: leds_.setRainbow(ch); break;
                 case ArgbController::Mode::Effect: leds_.setEffect(ch,data.effects[ch]); break;
                 case ArgbController::Mode::Reactive: leds_.setReactive(ch,data.reactive[ch]); break;
+                case ArgbController::Mode::Audio: leds_.startAudio(ch); break;
                 default: return false;
             }
         }
@@ -128,7 +129,7 @@ private:
             if (!item.saved) continue;
             for (uint8_t ch=0; ch<board::kChannelCount; ++ch) {
                 if (!CoolingController::validCurve(item.curves[ch]) ||
-                    item.mode[ch] > static_cast<uint8_t>(ArgbController::Mode::Reactive) ||
+                    item.mode[ch] > static_cast<uint8_t>(ArgbController::Mode::Audio) ||
                     item.mode[ch] == static_cast<uint8_t>(ArgbController::Mode::External) ||
                     !argbeffects::valid(item.effects[ch]) ||
                     !argbreaction::valid(item.reactive[ch])) return false;

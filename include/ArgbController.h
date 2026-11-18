@@ -6,13 +6,14 @@
 #include "BoardConfig.h"
 #include "ArgbEffects.h"
 #include "ArgbReactive.h"
+#include "ArgbAudio.h"
 
 // Eight RGB24 addressable outputs. Internal raw pixel buffers allow a single
 // *global* approximate power budget to be applied to every output, including
 // OpenRGB USB and Wi-Fi frames (there is no bypass of this limit).
 class ArgbController {
 public:
-    enum class Mode : uint8_t { Off, Solid, Rainbow, External, Effect, Reactive };
+    enum class Mode : uint8_t { Off, Solid, Rainbow, External, Effect, Reactive, Audio };
     bool begin();
     bool setSolid(uint8_t channel, uint8_t red, uint8_t green, uint8_t blue);
     bool setOff(uint8_t channel);
@@ -29,6 +30,14 @@ public:
     const argbreaction::Config& reactive(uint8_t channel) const;
     bool reactiveBoot(uint8_t channel) const;
     bool reactiveActive() const;
+    bool setAudio(uint8_t channel, const argbaudio::Config& config);
+    bool startAudio(uint8_t channel);
+    bool setAudioBoot(uint8_t channel, bool enabled);
+    bool saveAudio();
+    const argbaudio::Config& audio(uint8_t channel) const;
+    bool audioBoot(uint8_t channel) const;
+    void setAudioLevels(const argbaudio::Levels& levels, uint32_t nowMs);
+    bool audioFresh(uint32_t nowMs) const;
     bool setReactiveInput(uint8_t source, uint32_t value, uint32_t nowMs);
     void invalidateReactiveInput(uint8_t source);
     bool reactiveInput(uint8_t source, uint32_t nowMs, uint32_t& value) const;
@@ -85,6 +94,14 @@ private:
         uint32_t stampMs = 0;
         bool valid = false;
     };
+    struct AudioStore {
+        uint32_t magic;
+        uint8_t version;
+        uint8_t boot[board::kChannelCount];
+        argbaudio::Config configs[board::kChannelCount];
+        uint8_t reserved[3];
+        uint32_t crc;
+    };
     struct EffectStore {
         uint32_t magic;
         uint8_t version;
@@ -95,6 +112,7 @@ private:
     };
     static uint32_t effectChecksum(const EffectStore& config);
     static uint32_t reactiveChecksum(const ReactiveStore& config);
+    static uint32_t audioChecksum(const AudioStore& config);
     static uint32_t checksum(const Config& config);
     static uint32_t brightnessChecksum(const BrightnessConfig& config);
     Rgb effectiveColor(uint8_t channel, uint16_t pixel) const;
@@ -102,6 +120,7 @@ private:
     void render();
     void drawSolid(uint8_t channel);
     void drawReactive(uint8_t channel, uint32_t nowMs);
+    void drawAudio(uint8_t channel, uint32_t nowMs);
     void markDirty(uint8_t channel);
 
     Adafruit_NeoPixel strips_[board::kChannelCount];
@@ -118,6 +137,13 @@ private:
     argbreaction::Config savedReactive_[board::kChannelCount] = {};
     bool bootReactive_[board::kChannelCount] = {};
     bool savedBootReactive_[board::kChannelCount] = {};
+    argbaudio::Config audio_[board::kChannelCount] = {};
+    argbaudio::Config savedAudio_[board::kChannelCount] = {};
+    bool bootAudio_[board::kChannelCount] = {};
+    bool savedBootAudio_[board::kChannelCount] = {};
+    argbaudio::Levels audioLevels_ = {};
+    uint32_t audioStampMs_ = 0;
+    bool audioValid_ = false;
     Input inputs_[argbreaction::kMaxSource+1] = {};
     uint8_t safetyWarnings_[board::kChannelCount] = {};
     bool warningOn_ = false;
