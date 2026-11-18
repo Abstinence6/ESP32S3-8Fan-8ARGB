@@ -114,8 +114,9 @@ def run_agent() -> int:
     runtime_curve_supported = False
     telemetry = TelemetryStore()
     tach_monitor = TachHealthMonitor()
+    last_refs_raw = str(settings.value("fanHealthRefsV1", ""))
     try:
-        tach_monitor.import_references(str(settings.value("fanHealthRefsV1", "")))
+        tach_monitor.import_references(last_refs_raw)
     except ValueError:
         log.warning("Invalid Fan Health reference settings; passive check disabled")
     next_connect = 0.0
@@ -214,11 +215,13 @@ def run_agent() -> int:
                                 # this agent was yielding COM to the GUI.
                                 try:
                                     stored_refs = str(settings.value("fanHealthRefsV1", ""))
-                                    if stored_refs != tach_monitor.export_references():
+                                    if stored_refs != last_refs_raw:
                                         tach_monitor.import_references(stored_refs)
+                                        last_refs_raw = stored_refs
                                 except ValueError:
                                     pass
-                                if str(settings.value("autoProfiles", "false")).lower() in ("true", "1"):
+                                if (not app_active and
+                                        str(settings.value("autoProfiles", "false")).lower() in ("true", "1")):
                                     desired = choose_automatic_profile(
                                         sensor_sampler.metrics, auto_profiles,
                                         hour=datetime.now().hour, now=time.monotonic(),
@@ -252,6 +255,12 @@ def run_agent() -> int:
                                     log.info("Application cooling profile: %s", app_active or "base")
                             except (ValueError, ImportError, OSError) as exc:
                                 log.warning("Application-profile scan failed: %s", exc)
+                                # Do not keep a now-unverifiable process override
+                                # alive. The firmware still owns all thermal guards.
+                                if app_active:
+                                    tx.send_command("RTCURVE CLEAR")
+                                app_active = None
+                                app_policy.reset()
                             finally:
                                 app_scan_future = None
                         if app_active and now - app_last_lease > 6.0:

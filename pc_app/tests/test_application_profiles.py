@@ -20,6 +20,10 @@ class AppProfilesTests(unittest.TestCase):
 
     def test_invalid_rules_and_complete_volatile_transaction(self):
         with self.assertRaises(ValueError):
+            loads('{"version":1,"rules":[null]}')
+        with self.assertRaises(ValueError):
+            loads('{"version":1,"rules":[{"executable":"game.exe","profile":"Silent","priority":50,"extra":1}]}')
+        with self.assertRaises(ValueError):
             loads('{"version":2,"rules":[]}')
         with self.assertRaises(ValueError):
             dumps([AppRule("../bad.exe","Silent")])

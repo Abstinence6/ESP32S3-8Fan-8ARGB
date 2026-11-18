@@ -53,13 +53,11 @@ def loads(raw: str) -> tuple[AppRule, ...]:
         rows = value["rules"]
         if not isinstance(rows, list):
             raise ValueError("Invalid rule list")
-        return validate_rules(AppRule(**item) for item in rows if isinstance(item, dict)
-            ) if len(rows) == sum(isinstance(item, dict) for item in rows) else (_invalid())
+        if any(not isinstance(item, dict) for item in rows):
+            raise ValueError("Invalid application profile rule")
+        return validate_rules(AppRule(**item) for item in rows)
     except (KeyError, TypeError, json.JSONDecodeError) as exc:
         raise ValueError("Invalid application profile config") from exc
-
-def _invalid():
-    raise ValueError("Invalid application profile rule")
 
 def dumps(rules: Iterable[AppRule]) -> str:
     clean = validate_rules(rules)

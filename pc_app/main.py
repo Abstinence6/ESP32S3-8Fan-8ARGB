@@ -1095,6 +1095,12 @@ class FanArgbWindow(QMainWindow):
                     decision = self.app_policy.consider(rules, running, now=now)
                 except (ValueError, ImportError, OSError) as exc:
                     self.log(f"Профілі програм: {exc}")
+                    # Recover to the saved cooling policy rather than renewing
+                    # a process decision that is no longer trustworthy.
+                    if self.app_active:
+                        self.send("RTCURVE CLEAR")
+                    self.app_active = None
+                    self.app_policy.reset()
                 else:
                     if decision.ready and decision.profile != self.app_active:
                         actions = (runtime_commands(decision.profile) if decision.profile

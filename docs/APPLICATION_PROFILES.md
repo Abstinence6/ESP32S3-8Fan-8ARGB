@@ -24,3 +24,10 @@ still causes 100% in every mode after 10 seconds.
 
 An old GUI can ignore these commands; a new GUI checks the firmware
 `VERSION?` capability `RTCURVE=1` before attempting any runtime profile.
+
+If process enumeration fails (including insufficient permissions) the companion
+abandons the previous application decision and asks ESP32 to clear its temporary
+curve. If USB is unavailable, the lease still expires in 20 seconds.
+The existing GPU-load profile automation is suspended while a process profile
+is selected, preventing competing persistent NVS changes. A manual curve edit
+remains higher priority and disables process rules.
