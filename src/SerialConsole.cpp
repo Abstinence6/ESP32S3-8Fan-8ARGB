@@ -459,7 +459,7 @@ void SerialConsole::handleLine(char* line) {
         serial_.print(temperaturePalette_ ? 1 : 0);
         serial_.print(F(" PIDTUNE_NVS="));
         serial_.print(cooling_.pidTuningSupported() ? 1 : 0);
-        serial_.println(F(" RTCURVE=1"));
+        serial_.println(F(" RTCURVE=1 FX=1"));
         return;
     }
     if (strcmp(command, "HTSCAN") == 0) {
@@ -884,6 +884,64 @@ void SerialConsole::handleLine(char* line) {
         if (!ok) { serial_.println(F("ERR STRIP config")); return; }
         serial_.println(F("OK STRIP_SAVED")); return;
     }
+    if (!strcmp(command, "FX?")) {
+        uint8_t channel = 0;
+        if (!parseByte(next(), board::kChannelCount, channel) || !channel || !noMore())
+            return error();
+        const auto& cfg = leds_.effect(channel - 1);
+        serial_.print(F("FX CH=")); serial_.print(channel);
+        serial_.print(F(" MODE=")); serial_.print(cfg.pattern);
+        serial_.print(F(" R1=")); serial_.print(cfg.primary[0]);
+        serial_.print(F(",")); serial_.print(cfg.primary[1]);
+        serial_.print(F(",")); serial_.print(cfg.primary[2]);
+        serial_.print(F(" R2=")); serial_.print(cfg.secondary[0]);
+        serial_.print(F(",")); serial_.print(cfg.secondary[1]);
+        serial_.print(F(",")); serial_.print(cfg.secondary[2]);
+        serial_.print(F(" SPEED=")); serial_.print(cfg.speed);
+        serial_.print(F(" BRIGHT=")); serial_.print(cfg.brightness);
+        serial_.print(F(" DIR=")); serial_.print(cfg.direction);
+        serial_.print(F(" BOOT=")); serial_.print(leds_.effectBoot(channel - 1) ? 1 : 0);
+        serial_.print(F(" ACTIVE=")); serial_.println(leds_.getMode(channel - 1) == ArgbController::Mode::Effect ? 1 : 0);
+        return;
+    }
+    if (!strcmp(command, "FX")) {
+        char* op = next();
+        if (!op) return error();
+        for (char* p = op; *p; ++p)
+            *p = static_cast<char>(toupper(static_cast<unsigned char>(*p)));
+        if (!strcmp(op, "SAVE")) {
+            if (!noMore() || !leds_.saveEffects()) {
+                serial_.println(F("ERR FX NVS")); return;
+            }
+            serial_.println(F("OK FX_SAVED")); return;
+        }
+        uint8_t ch = 0;
+        if (!parseByte(next(), board::kChannelCount, ch) || !ch) return error();
+        --ch;
+        bool ok = false;
+        if (!strcmp(op, "START") && noMore()) ok = leds_.startEffect(ch);
+        else if (!strcmp(op, "STOP") && noMore()) ok = leds_.setOff(ch);
+        else if (!strcmp(op, "BOOT")) {
+            uint8_t enabled = 0;
+            if (!parseByte(next(), 1, enabled) || !noMore()) return error();
+            ok = leds_.setEffectBoot(ch, enabled != 0);
+        } else if (!strcmp(op, "SET")) {
+            argbeffects::Scene cfg = {};
+            if (!parseByte(next(), 4, cfg.pattern) || !cfg.pattern ||
+                !parseByte(next(), 255, cfg.primary[0]) ||
+                !parseByte(next(), 255, cfg.primary[1]) ||
+                !parseByte(next(), 255, cfg.primary[2]) ||
+                !parseByte(next(), 255, cfg.secondary[0]) ||
+                !parseByte(next(), 255, cfg.secondary[1]) ||
+                !parseByte(next(), 255, cfg.secondary[2]) ||
+                !parseByte(next(), 10, cfg.speed) || !cfg.speed ||
+                !parseByte(next(), 255, cfg.brightness) ||
+                !parseByte(next(), 1, cfg.direction) || !noMore()) return error();
+            ok = leds_.setEffect(ch, cfg);
+        } else return error();
+        serial_.println(ok ? F("OK FX") : F("ERR FX invalid"));
+        return;
+    }
     if (!strcmp(command, "STRIPCFG?")) {
         uint8_t channel = 0;
         if (!parseByte(next(), board::kChannelCount, channel) ||
@@ -1105,6 +1163,8 @@ void SerialConsole::printHelp() {
     serial_.println(F("OFF <ch> | ALLOFF | RAINBOW <ch> | BRIGHT <ch> <0..255>"));
     serial_.println(F("WIFI CONFIG? | WIFI SETHEX <ssidHex> <pskHex|KEEP|-> | WIFI OFF"));
     serial_.println(F("STRIPCFG? <ch> | STRIP <ch> 1..170 | REVERSE <ch> 0|1 | RGBBUDGET <100..20000> | ARGBSTATUS"));
+    serial_.println(F("FX? <ch> | FX SET <ch> <pattern:1..4> <R1 G1 B1> <R2 G2 B2> <speed:1..10> <bright> <dir:0|1>"));
+    serial_.println(F("FX START|STOP <ch> | FX BOOT <ch> <0|1> | FX SAVE"));
     serial_.println(F("ARGBCFG <ch> <count> <reverse> <budgetMa> <brightness> (one NVS record)"));
     serial_.println(F("Binary ARGB: A5 5A ch countLE16 RGB... crc16LE (CCITT-FALSE)"));
 }

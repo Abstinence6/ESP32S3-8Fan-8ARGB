@@ -89,6 +89,12 @@ g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
   test/native/test_argb_warning.cpp -o "$out"
 "$out"
 
+# Nonblocking native RGB effects, explicit scene NVS and safety overlay.
+g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
+  test/native/mock/Arduino.cpp src/ArgbController.cpp \
+  test/native/test_argb_effects.cpp -o "$out"
+"$out"
+
 # Per-channel brightness is persisted independently of external RGB frames.
 g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
   test/native/mock/Arduino.cpp src/ArgbController.cpp \

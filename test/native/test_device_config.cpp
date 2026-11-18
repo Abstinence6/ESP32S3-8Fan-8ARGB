@@ -66,6 +66,14 @@ int main() {
     assert(Serial.out.find("STRIPCFG CH=1 LEDS=") != std::string::npos);
     assert(Serial.out.find("ARGBSTATUS LIMIT_MA=") != std::string::npos);
 
+    // Independent native LED effects are persisted only on an explicit SAVE.
+    Serial.out.clear();
+    Serial.send("FX SET 2 2 10 20 30 90 100 110 3 64 0\nFX BOOT 2 0\nFX SAVE\nFX? 2\n");
+    console.poll();
+    assert(Serial.out.find("OK FX_SAVED") != std::string::npos);
+    assert(Serial.out.find("FX CH=2 MODE=2") != std::string::npos);
+    assert(leds.getMode(1) == ArgbController::Mode::Effect);
+
     // Command line >239 bytes must not bypass parser or change the fans.
     Serial.out.clear();
     Serial.send(std::string(300, 'X') + "\nSTATUS\n");
