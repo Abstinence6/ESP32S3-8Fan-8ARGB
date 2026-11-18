@@ -13,6 +13,7 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from settings_widgets import DesktopSettingsPanel
 from hardware_sensor_ui import HardwareSensorPanel
 from argb_studio_ui import ArgbStudioPanel
+from native_effects_ui import NativeEffectsPanel
 from temperature_argb_ui import TemperatureArgbPanel
 from maintenance_ui import MaintenancePanel
 from device_settings_ui import DeviceSettingsPanel
@@ -1146,6 +1147,13 @@ class DashboardShell(QWidget):
         self.temperature_argb = TemperatureArgbPanel(self.controller)
         temperature_layout.addWidget(self.temperature_argb)
         self.argb_workspace_tabs.addTab(temperature_page, "Температура")
+        native_fx_page = QWidget()
+        native_fx_layout = QVBoxLayout(native_fx_page)
+        native_fx_layout.setContentsMargins(0, 12, 0, 0)
+        self.native_effects = NativeEffectsPanel(self.controller)
+        native_fx_layout.addWidget(self.native_effects)
+        native_fx_layout.addStretch(1)
+        self.argb_workspace_tabs.addTab(native_fx_page, "Ефекти ESP32")
 
         layout.addWidget(self.argb_workspace_tabs, 1)
         layout.addStretch(1)

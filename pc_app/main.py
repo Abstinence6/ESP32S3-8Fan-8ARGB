@@ -711,6 +711,7 @@ class FanArgbWindow(QMainWindow):
         self.app_policy.reset()
         if self.pid_tune_dialog is not None:
             self.pid_tune_dialog.set_connected(False)
+        self.dashboard.native_effects.set_supported(False)
         if self.dashboard.native_checkbox.isChecked():
             self.dashboard.native_checkbox.setChecked(False)
         if self.dashboard.studio.active:
@@ -793,6 +794,8 @@ class FanArgbWindow(QMainWindow):
             return
         if self.dashboard.temperature_argb.handle_line(line):
             return
+        if self.dashboard.native_effects.handle_line(line):
+            return
         if self.dashboard.device_settings.handle_line(line):
             return
         if self.dashboard.diagnostics.handle_line(line):
@@ -868,6 +871,7 @@ class FanArgbWindow(QMainWindow):
                 self.cooling_assist_supported = fields.get("ASSIST_NVS") == "1"
                 self.dashboard.device_settings.assist_dialog.set_supported(self.cooling_assist_supported)
                 self.runtime_curve_supported = fields.get("RTCURVE") == "1"
+                self.dashboard.native_effects.set_supported(fields.get("FX") == "1")
             except (ValueError, KeyError):
                 self.log("Невалідна відповідь VERSION?")
             return
