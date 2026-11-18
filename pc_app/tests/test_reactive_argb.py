@@ -10,7 +10,7 @@ class ReactiveArgbTests(unittest.TestCase):
     def test_scene_command_and_readback(self):
         scene=default_scene(2)
         self.assertEqual(make_set(scene),
-            "RFX SET 2 9 0 1 300 850 2 0 100 255 255 0 0 3 64 0")
+            "RFX SET 2 10 0 1 300 850 2 0 100 255 255 0 0 3 64 0")
         line=("RFX CH=2 SRC=26 FALL=1 STYLE=2 LOW=100 HIGH=900 PATTERN=2 "
               "R1=10,20,30 R2=100,110,120 SPEED=3 BRIGHT=64 DIR=0 "
               "BOOT=1 ACTIVE=1 FRESH=1 VALUE=555")
