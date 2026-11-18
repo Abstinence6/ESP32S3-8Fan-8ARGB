@@ -8,6 +8,7 @@ namespace {
 constexpr uint32_t kArgbMagic = 0x41524734UL; // ARG4
 constexpr uint32_t kBrightnessMagic = 0x42524731UL; // BRG1, separate CRC-checked NVS record
 constexpr uint32_t kExternalTimeoutMs = 3000;
+constexpr uint32_t kEffectMagic = 0x46584331UL; // FXC1
 }
 
 uint32_t ArgbController::checksum(const Config& config) {
@@ -24,6 +25,15 @@ uint32_t ArgbController::brightnessChecksum(const BrightnessConfig& config) {
     const uint8_t* data = reinterpret_cast<const uint8_t*>(&config);
     for (size_t i = 0; i < offsetof(BrightnessConfig, crc); ++i) {
         hash ^= data[i];
+        hash *= 16777619UL;
+    }
+    return hash;
+}
+uint32_t ArgbController::effectChecksum(const EffectStore& config) {
+    uint32_t hash = 2166136261UL;
+    const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&config);
+    for (size_t i = 0; i < offsetof(EffectStore, crc); ++i) {
+        hash ^= bytes[i];
         hash *= 16777619UL;
     }
     return hash;
@@ -70,6 +80,29 @@ bool ArgbController::begin() {
             savedBrightness_[i] = savedBrightness.levels[i];
         }
     }
+    for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
+        effects_[ch] = argbeffects::defaults();
+        savedEffects_[ch] = effects_[ch];
+    }
+    EffectStore stored = {};
+    bool validEffects = storage_.getBytesLength("effects") == sizeof(stored) &&
+        storage_.getBytes("effects", &stored, sizeof(stored)) == sizeof(stored) &&
+        stored.magic == kEffectMagic && stored.version == 1 &&
+        stored.crc == effectChecksum(stored);
+    if (validEffects)
+        for (uint8_t ch = 0; ch < board::kChannelCount; ++ch)
+            if (!argbeffects::valid(stored.scenes[ch]) || stored.boot[ch] > 1)
+                validEffects = false;
+    if (validEffects) {
+        for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
+            effects_[ch] = stored.scenes[ch];
+            savedEffects_[ch] = stored.scenes[ch];
+            bootEffects_[ch] = stored.boot[ch] != 0;
+            savedBootEffects_[ch] = bootEffects_[ch];
+            if (bootEffects_[ch]) startEffect(ch);
+        }
+    }
+    // Fresh or corrupt effect NVS preserves the historic ARGB-off boot.
     previousFrameMs_ = millis();
     return true;
 }
@@ -183,7 +216,7 @@ void ArgbController::drawSolid(uint8_t ch) {
 }
 bool ArgbController::setSolid(uint8_t ch, uint8_t r, uint8_t g, uint8_t b) {
     if (ch >= board::kChannelCount) return false;
-    if (modes_[ch] == Mode::External)
+    if (modes_[ch] == Mode::External || modes_[ch] == Mode::Effect)
         brightness_[ch] = savedBrightness_[ch];
     modes_[ch] = Mode::Solid;
     colors_[ch].r = r; colors_[ch].g = g; colors_[ch].b = b;
@@ -192,7 +225,7 @@ bool ArgbController::setSolid(uint8_t ch, uint8_t r, uint8_t g, uint8_t b) {
 }
 bool ArgbController::setOff(uint8_t ch) {
     if (ch >= board::kChannelCount) return false;
-    if (modes_[ch] == Mode::External)
+    if (modes_[ch] == Mode::External || modes_[ch] == Mode::Effect)
         brightness_[ch] = savedBrightness_[ch];
     modes_[ch] = Mode::Off;
     memset(frame_[ch], 0, sizeof(frame_[ch]));
@@ -202,9 +235,54 @@ bool ArgbController::setOff(uint8_t ch) {
 }
 bool ArgbController::setRainbow(uint8_t ch) {
     if (ch >= board::kChannelCount) return false;
-    if (modes_[ch] == Mode::External)
+    if (modes_[ch] == Mode::External || modes_[ch] == Mode::Effect)
         brightness_[ch] = savedBrightness_[ch];
     modes_[ch] = Mode::Rainbow;
+    return true;
+}
+bool ArgbController::setEffect(uint8_t ch, const argbeffects::Scene& config) {
+    if (ch >= board::kChannelCount || !argbeffects::valid(config)) return false;
+    effects_[ch] = config;
+    modes_[ch] = Mode::Effect;
+    brightness_[ch] = config.brightness;
+    argbeffects::render(config, strips_[ch].numPixels(), millis(), frame_[ch]);
+    markDirty(ch);
+    return true;
+}
+bool ArgbController::startEffect(uint8_t ch) {
+    return ch < board::kChannelCount && setEffect(ch, effects_[ch]);
+}
+bool ArgbController::setEffectBoot(uint8_t ch, bool enabled) {
+    if (ch >= board::kChannelCount) return false;
+    bootEffects_[ch] = enabled;
+    return true;
+}
+const argbeffects::Scene& ArgbController::effect(uint8_t ch) const {
+    static const argbeffects::Scene factory = argbeffects::defaults();
+    return ch < board::kChannelCount ? effects_[ch] : factory;
+}
+bool ArgbController::effectBoot(uint8_t ch) const {
+    return ch < board::kChannelCount && bootEffects_[ch];
+}
+bool ArgbController::saveEffects() {
+    bool changed = false;
+    for (uint8_t ch = 0; ch < board::kChannelCount; ++ch)
+        if (memcmp(&effects_[ch], &savedEffects_[ch], sizeof(effects_[ch])) ||
+            bootEffects_[ch] != savedBootEffects_[ch]) changed = true;
+    if (!changed) return true;
+    EffectStore stored = {};
+    stored.magic = kEffectMagic;
+    stored.version = 1;
+    for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
+        stored.scenes[ch] = effects_[ch];
+        stored.boot[ch] = bootEffects_[ch] ? 1 : 0;
+    }
+    stored.crc = effectChecksum(stored);
+    if (storage_.putBytes("effects", &stored, sizeof(stored)) != sizeof(stored)) return false;
+    for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
+        savedEffects_[ch] = effects_[ch];
+        savedBootEffects_[ch] = bootEffects_[ch];
+    }
     return true;
 }
 bool ArgbController::setPixels(uint8_t ch, const uint8_t* rgb, uint16_t count) {
@@ -307,6 +385,13 @@ void ArgbController::update(uint32_t nowMs) {
     if (nowMs - previousFrameMs_ >= board::kArgbFrameMs) {
         previousFrameMs_ = nowMs;
         for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
+            if (modes_[ch] == Mode::Effect) {
+                if (effects_[ch].pattern != static_cast<uint8_t>(argbeffects::Pattern::Gradient)) {
+                    argbeffects::render(effects_[ch], strips_[ch].numPixels(), nowMs, frame_[ch]);
+                    markDirty(ch);
+                }
+                continue;
+            }
             if (modes_[ch] != Mode::Rainbow) continue;
             const uint16_t count = strips_[ch].numPixels();
             for (uint16_t pixel = 0; pixel < count; ++pixel) {
