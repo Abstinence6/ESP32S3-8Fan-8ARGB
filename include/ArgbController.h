@@ -5,13 +5,14 @@
 #include <Preferences.h>
 #include "BoardConfig.h"
 #include "ArgbEffects.h"
+#include "ArgbReactive.h"
 
 // Eight RGB24 addressable outputs. Internal raw pixel buffers allow a single
 // *global* approximate power budget to be applied to every output, including
 // OpenRGB USB and Wi-Fi frames (there is no bypass of this limit).
 class ArgbController {
 public:
-    enum class Mode : uint8_t { Off, Solid, Rainbow, External, Effect };
+    enum class Mode : uint8_t { Off, Solid, Rainbow, External, Effect, Reactive };
     bool begin();
     bool setSolid(uint8_t channel, uint8_t red, uint8_t green, uint8_t blue);
     bool setOff(uint8_t channel);
@@ -20,6 +21,16 @@ public:
     bool startEffect(uint8_t channel);
     bool setEffectBoot(uint8_t channel, bool enabled);
     bool saveEffects();
+    // Reactive rules and external inputs never change any cooling output.
+    bool setReactive(uint8_t channel, const argbreaction::Config& config);
+    bool startReactive(uint8_t channel);
+    bool setReactiveBoot(uint8_t channel, bool enabled);
+    bool saveReactive();
+    const argbreaction::Config& reactive(uint8_t channel) const;
+    bool reactiveBoot(uint8_t channel) const;
+    bool setReactiveInput(uint8_t source, uint32_t value, uint32_t nowMs);
+    void invalidateReactiveInput(uint8_t source);
+    bool reactiveInput(uint8_t source, uint32_t nowMs, uint32_t& value) const;
     const argbeffects::Scene& effect(uint8_t channel) const;
     bool effectBoot(uint8_t channel) const;
     bool setPixels(uint8_t channel, const uint8_t* rgb, uint16_t count);
@@ -60,6 +71,18 @@ private:
         uint8_t levels[board::kChannelCount];
         uint32_t crc;
     };
+    struct ReactiveStore {
+        uint32_t magic;
+        uint8_t version;
+        uint8_t boot[board::kChannelCount];
+        argbreaction::Config scenes[board::kChannelCount];
+        uint32_t crc;
+    };
+    struct Input {
+        uint32_t value = 0;
+        uint32_t stampMs = 0;
+        bool valid = false;
+    };
     struct EffectStore {
         uint32_t magic;
         uint8_t version;
@@ -69,12 +92,14 @@ private:
         uint32_t crc;
     };
     static uint32_t effectChecksum(const EffectStore& config);
+    static uint32_t reactiveChecksum(const ReactiveStore& config);
     static uint32_t checksum(const Config& config);
     static uint32_t brightnessChecksum(const BrightnessConfig& config);
     Rgb effectiveColor(uint8_t channel, uint16_t pixel) const;
     uint8_t effectiveBrightness(uint8_t channel, uint16_t pixel) const;
     void render();
     void drawSolid(uint8_t channel);
+    void drawReactive(uint8_t channel, uint32_t nowMs);
     void markDirty(uint8_t channel);
 
     Adafruit_NeoPixel strips_[board::kChannelCount];
@@ -87,6 +112,11 @@ private:
     argbeffects::Scene savedEffects_[board::kChannelCount] = {};
     bool bootEffects_[board::kChannelCount] = {};
     bool savedBootEffects_[board::kChannelCount] = {};
+    argbreaction::Config reactive_[board::kChannelCount] = {};
+    argbreaction::Config savedReactive_[board::kChannelCount] = {};
+    bool bootReactive_[board::kChannelCount] = {};
+    bool savedBootReactive_[board::kChannelCount] = {};
+    Input inputs_[argbreaction::kMaxSource+1] = {};
     uint8_t safetyWarnings_[board::kChannelCount] = {};
     bool warningOn_ = false;
     bool reversed_[board::kChannelCount] = {};

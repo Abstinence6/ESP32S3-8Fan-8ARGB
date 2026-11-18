@@ -9,6 +9,7 @@ constexpr uint32_t kArgbMagic = 0x41524734UL; // ARG4
 constexpr uint32_t kBrightnessMagic = 0x42524731UL; // BRG1, separate CRC-checked NVS record
 constexpr uint32_t kExternalTimeoutMs = 3000;
 constexpr uint32_t kEffectMagic = 0x46584331UL; // FXC1
+constexpr uint32_t kReactiveMagic = 0x52584631UL; // RXF1
 }
 
 uint32_t ArgbController::checksum(const Config& config) {
@@ -35,6 +36,14 @@ uint32_t ArgbController::effectChecksum(const EffectStore& config) {
     for (size_t i = 0; i < offsetof(EffectStore, crc); ++i) {
         hash ^= bytes[i];
         hash *= 16777619UL;
+    }
+    return hash;
+}
+uint32_t ArgbController::reactiveChecksum(const ReactiveStore& config) {
+    uint32_t hash = 2166136261UL;
+    const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&config);
+    for (size_t i=0; i<offsetof(ReactiveStore, crc); ++i) {
+        hash ^= bytes[i]; hash *= 16777619UL;
     }
     return hash;
 }
@@ -102,7 +111,31 @@ bool ArgbController::begin() {
             if (bootEffects_[ch]) startEffect(ch);
         }
     }
-    // Fresh or corrupt effect NVS preserves the historic ARGB-off boot.
+    // Reactive settings have an independent CRC-checked NVS record so all
+    // older FX modes, brightness, geometry and cooling profiles survive.
+    for (uint8_t ch=0; ch<board::kChannelCount; ++ch) {
+        reactive_[ch] = argbreaction::defaults();
+        savedReactive_[ch] = reactive_[ch];
+    }
+    ReactiveStore reaction = {};
+    bool validReaction = storage_.getBytesLength("reactive") == sizeof(reaction) &&
+        storage_.getBytes("reactive", &reaction, sizeof(reaction)) == sizeof(reaction) &&
+        reaction.magic == kReactiveMagic && reaction.version == 1 &&
+        reaction.crc == reactiveChecksum(reaction);
+    if (validReaction)
+        for (uint8_t ch=0; ch<board::kChannelCount; ++ch)
+            if (!argbreaction::valid(reaction.scenes[ch]) || reaction.boot[ch] > 1)
+                validReaction = false;
+    if (validReaction)
+        for (uint8_t ch=0; ch<board::kChannelCount; ++ch) {
+            reactive_[ch] = reaction.scenes[ch];
+            savedReactive_[ch] = reaction.scenes[ch];
+            bootReactive_[ch] = reaction.boot[ch] != 0;
+            savedBootReactive_[ch] = bootReactive_[ch];
+            // An explicit reactive boot opt-in takes precedence over FX boot.
+            if (bootReactive_[ch]) startReactive(ch);
+        }
+    // Corrupt NVS reverts new reactive configurations to disabled/off.
     previousFrameMs_ = millis();
     return true;
 }
@@ -216,7 +249,8 @@ void ArgbController::drawSolid(uint8_t ch) {
 }
 bool ArgbController::setSolid(uint8_t ch, uint8_t r, uint8_t g, uint8_t b) {
     if (ch >= board::kChannelCount) return false;
-    if (modes_[ch] == Mode::External || modes_[ch] == Mode::Effect)
+    if (modes_[ch] == Mode::External || modes_[ch] == Mode::Effect ||
+        modes_[ch] == Mode::Reactive)
         brightness_[ch] = savedBrightness_[ch];
     modes_[ch] = Mode::Solid;
     colors_[ch].r = r; colors_[ch].g = g; colors_[ch].b = b;
@@ -225,7 +259,8 @@ bool ArgbController::setSolid(uint8_t ch, uint8_t r, uint8_t g, uint8_t b) {
 }
 bool ArgbController::setOff(uint8_t ch) {
     if (ch >= board::kChannelCount) return false;
-    if (modes_[ch] == Mode::External || modes_[ch] == Mode::Effect)
+    if (modes_[ch] == Mode::External || modes_[ch] == Mode::Effect ||
+        modes_[ch] == Mode::Reactive)
         brightness_[ch] = savedBrightness_[ch];
     modes_[ch] = Mode::Off;
     memset(frame_[ch], 0, sizeof(frame_[ch]));
@@ -235,7 +270,8 @@ bool ArgbController::setOff(uint8_t ch) {
 }
 bool ArgbController::setRainbow(uint8_t ch) {
     if (ch >= board::kChannelCount) return false;
-    if (modes_[ch] == Mode::External || modes_[ch] == Mode::Effect)
+    if (modes_[ch] == Mode::External || modes_[ch] == Mode::Effect ||
+        modes_[ch] == Mode::Reactive)
         brightness_[ch] = savedBrightness_[ch];
     modes_[ch] = Mode::Rainbow;
     return true;
@@ -282,6 +318,78 @@ bool ArgbController::saveEffects() {
     for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
         savedEffects_[ch] = effects_[ch];
         savedBootEffects_[ch] = bootEffects_[ch];
+    }
+    return true;
+}
+bool ArgbController::setReactiveInput(uint8_t source, uint32_t value, uint32_t nowMs) {
+    if (source == 0 || source > argbreaction::kMaxSource || value > argbreaction::kMaxValue)
+        return false;
+    inputs_[source].value = value;
+    inputs_[source].stampMs = nowMs;
+    inputs_[source].valid = true;
+    return true;
+}
+void ArgbController::invalidateReactiveInput(uint8_t source) {
+    if (source && source <= argbreaction::kMaxSource) inputs_[source].valid = false;
+}
+bool ArgbController::reactiveInput(uint8_t source, uint32_t nowMs, uint32_t& out) const {
+    if (!source || source > argbreaction::kMaxSource ||
+        !inputs_[source].valid || nowMs - inputs_[source].stampMs > argbreaction::kFreshMs)
+        return false;
+    out = inputs_[source].value;
+    return true;
+}
+void ArgbController::drawReactive(uint8_t ch, uint32_t nowMs) {
+    uint32_t value = 0;
+    const auto& cfg = reactive_[ch];
+    bool valid = reactiveInput(cfg.source, nowMs, value);
+    if (!valid && cfg.fallback)
+        valid = reactiveInput(cfg.fallback, nowMs, value);
+    argbreaction::render(cfg, strips_[ch].numPixels(), nowMs, value, valid, frame_[ch]);
+    markDirty(ch);
+}
+bool ArgbController::setReactive(uint8_t ch, const argbreaction::Config& cfg) {
+    if (ch >= board::kChannelCount || !argbreaction::valid(cfg)) return false;
+    reactive_[ch] = cfg;
+    modes_[ch] = Mode::Reactive;
+    brightness_[ch] = cfg.scene.brightness;
+    drawReactive(ch, millis());
+    return true;
+}
+bool ArgbController::startReactive(uint8_t ch) {
+    return ch < board::kChannelCount && setReactive(ch, reactive_[ch]);
+}
+bool ArgbController::setReactiveBoot(uint8_t ch, bool enabled) {
+    if (ch >= board::kChannelCount) return false;
+    bootReactive_[ch] = enabled;
+    return true;
+}
+const argbreaction::Config& ArgbController::reactive(uint8_t ch) const {
+    static const argbreaction::Config factory = argbreaction::defaults();
+    return ch < board::kChannelCount ? reactive_[ch] : factory;
+}
+bool ArgbController::reactiveBoot(uint8_t ch) const {
+    return ch < board::kChannelCount && bootReactive_[ch];
+}
+bool ArgbController::saveReactive() {
+    bool changed = false;
+    for (uint8_t ch=0; ch<board::kChannelCount; ++ch)
+        if (memcmp(&reactive_[ch], &savedReactive_[ch], sizeof(reactive_[ch])) ||
+            bootReactive_[ch] != savedBootReactive_[ch]) changed = true;
+    if (!changed) return true;
+    ReactiveStore stored = {};
+    stored.magic = kReactiveMagic;
+    stored.version = 1;
+    for (uint8_t ch=0; ch<board::kChannelCount; ++ch) {
+        stored.scenes[ch] = reactive_[ch];
+        stored.boot[ch] = bootReactive_[ch] ? 1 : 0;
+    }
+    stored.crc = reactiveChecksum(stored);
+    if (storage_.putBytes("reactive", &stored, sizeof(stored)) != sizeof(stored))
+        return false;
+    for (uint8_t ch=0; ch<board::kChannelCount; ++ch) {
+        savedReactive_[ch] = reactive_[ch];
+        savedBootReactive_[ch] = bootReactive_[ch];
     }
     return true;
 }
@@ -385,6 +493,10 @@ void ArgbController::update(uint32_t nowMs) {
     if (nowMs - previousFrameMs_ >= board::kArgbFrameMs) {
         previousFrameMs_ = nowMs;
         for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
+            if (modes_[ch] == Mode::Reactive) {
+                drawReactive(ch, nowMs);
+                continue;
+            }
             if (modes_[ch] == Mode::Effect) {
                 if (effects_[ch].pattern != static_cast<uint8_t>(argbeffects::Pattern::Gradient)) {
                     argbeffects::render(effects_[ch], strips_[ch].numPixels(), nowMs, frame_[ch]);
