@@ -27,6 +27,7 @@ class BackupTests(unittest.TestCase):
             "fanGroupsV1": '{"version":1,"groups":[{"name":"Front","channels":[1,2]}]}',
             "appProfileRulesV1": '{"version":1,"rules":[{"executable":"game.exe","profile":"Performance","priority":50}]}',
             "appProfilesEnabled": False,
+            "reactiveHostSourcesV1": '{"version":1,"slots":["metric:nwinfo/gpu/card/utilization","","","","","","",""]}',
             "startExe": "C:\\attacker.exe",
         })
         backup = export_settings(src)
@@ -34,7 +35,7 @@ class BackupTests(unittest.TestCase):
         self.assertNotIn("secret", serialized)
         self.assertNotIn("attacker", serialized)
         dst = Settings()
-        self.assertEqual(restore_settings(dst, backup), 6)
+        self.assertEqual(restore_settings(dst, backup), 7)
         self.assertEqual(dst.data["source1"], src.data["source1"])
 
     def test_malformed_key_rejected_before_writes(self):

@@ -50,6 +50,7 @@ from smart_control import SafeTemperatureFilter, AutoProfileSelector
 from tray_monitor import FaultNotificationGate
 from tach_health import TachHealthMonitor, dump_references
 from fan_groups_ui import FanGroupsDialog
+from reactive_argb import MAPPING_KEY, value_commands
 from application_profiles import (
     ApplicationProfilePolicy, loads as load_application_rules,
     runtime_commands, scan_processes,
@@ -119,6 +120,8 @@ class FanArgbWindow(QMainWindow):
         self.safe_filter = SafeTemperatureFilter()
         self.auto_selector = AutoProfileSelector()
         self.runtime_curve_supported = False
+        self.reactive_fx_supported = False
+        self._reactive_error = ""
         self.app_policy = ApplicationProfilePolicy()
         self.app_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ApplicationProfiles")
         self.app_scan_future: Future | None = None
@@ -611,6 +614,7 @@ class FanArgbWindow(QMainWindow):
             self.rgb_stream.reset()
             self.led_counts = None
             self.runtime_curve_supported = False
+            self.reactive_fx_supported = False
             self.app_active = None
             self.app_policy.reset()
             self.heartbeat.reset()
@@ -707,11 +711,13 @@ class FanArgbWindow(QMainWindow):
         self.cooling_assist_supported = False
         self.pid_tune_supported = False
         self.runtime_curve_supported = False
+        self.reactive_fx_supported = False
         self.app_active = None
         self.app_policy.reset()
         if self.pid_tune_dialog is not None:
             self.pid_tune_dialog.set_connected(False)
         self.dashboard.native_effects.set_supported(False)
+        self.dashboard.reactive_argb.set_supported(False)
         if self.dashboard.native_checkbox.isChecked():
             self.dashboard.native_checkbox.setChecked(False)
         if self.dashboard.studio.active:
@@ -796,6 +802,8 @@ class FanArgbWindow(QMainWindow):
             return
         if self.dashboard.native_effects.handle_line(line):
             return
+        if self.dashboard.reactive_argb.handle_line(line):
+            return
         if self.dashboard.device_settings.handle_line(line):
             return
         if self.dashboard.diagnostics.handle_line(line):
@@ -872,6 +880,10 @@ class FanArgbWindow(QMainWindow):
                 self.dashboard.device_settings.assist_dialog.set_supported(self.cooling_assist_supported)
                 self.runtime_curve_supported = fields.get("RTCURVE") == "1"
                 self.dashboard.native_effects.set_supported(fields.get("FX") == "1")
+                self.reactive_fx_supported = fields.get("RFX") == "1"
+                self.dashboard.reactive_argb.set_supported(self.reactive_fx_supported)
+                if self.reactive_fx_supported:
+                    self.dashboard.reactive_argb.readback()
             except (ValueError, KeyError):
                 self.log("Невалідна відповідь VERSION?")
             return
@@ -1049,6 +1061,7 @@ class FanArgbWindow(QMainWindow):
         self._update_source_boxes()
         self._update_secondary_box()
         self.dashboard.temperature_argb.refresh_sensors()
+        self.dashboard.reactive_argb.refresh_sensors()
 
         # Use the same safety-checked sensor routing as the headless agent.
         # GUI selection is live; the agent reads the corresponding QSettings.
@@ -1076,6 +1089,21 @@ class FanArgbWindow(QMainWindow):
         self._update_tray_tooltip()
         for command in plan.commands:
             self.send(command)
+        if self.port and self.reactive_fx_supported:
+            try:
+                host_commands = value_commands(
+                    str(self.settings.value(MAPPING_KEY,"")),
+                    self.temperatures, self.sensor_sampler.metrics,
+                )
+            except ValueError as exc:
+                message = str(exc)
+                if message != self._reactive_error:
+                    self.log("ARGB датчики: " + message)
+                self._reactive_error = message
+            else:
+                self._reactive_error = ""
+                for command in host_commands:
+                    self.send(command)
         self.send("STATUS")
 
     def _check_automatic_profile(self) -> None:

@@ -24,6 +24,7 @@ try:
     from .rgb_stream import AdaptiveRgbStream
     from .telemetry_store import TelemetryStore
     from .tach_health import TachHealthMonitor
+    from .reactive_argb import MAPPING_KEY, value_commands
     from .application_profiles import (
         ApplicationProfilePolicy, loads as load_application_rules,
         runtime_commands, scan_processes,
@@ -41,6 +42,7 @@ except ImportError:  # packaged as a standalone PyInstaller entrypoint
     from rgb_stream import AdaptiveRgbStream
     from telemetry_store import TelemetryStore
     from tach_health import TachHealthMonitor
+    from reactive_argb import MAPPING_KEY, value_commands
     from application_profiles import (
         ApplicationProfilePolicy, loads as load_application_rules,
         runtime_commands, scan_processes,
@@ -112,6 +114,7 @@ def run_agent() -> int:
     app_active: str | None = None
     app_last_lease = 0.0
     runtime_curve_supported = False
+    reactive_fx_supported = False
     telemetry = TelemetryStore()
     tach_monitor = TachHealthMonitor()
     last_refs_raw = str(settings.value("fanHealthRefsV1", ""))
@@ -137,6 +140,7 @@ def run_agent() -> int:
                         rgb_stream.reset()
                         led_counts = None
                         runtime_curve_supported = False
+                        reactive_fx_supported = False
                         app_active = None
                         app_policy.reset()
                         buffer = ""
@@ -176,6 +180,7 @@ def run_agent() -> int:
                             if line.startswith("FW VERSION="):
                                 values = dict(part.split("=", 1) for part in line.split() if "=" in part)
                                 runtime_curve_supported = values.get("RTCURVE") == "1"
+                                reactive_fx_supported = values.get("RFX") == "1"
                             status = parse_status(line.strip())
                             if status:
                                 telemetry.record_fan(
@@ -206,6 +211,13 @@ def run_agent() -> int:
                                     metrics=sensor_sampler.metrics,
                                 ):
                                     tx.send_command(msg)
+                                if reactive_fx_supported:
+                                    settings.sync()
+                                    for msg in value_commands(
+                                        str(settings.value(MAPPING_KEY,"")),
+                                        sample, sensor_sampler.metrics,
+                                    ):
+                                        tx.send_command(msg)
                                 for metric in sensor_sampler.metrics:
                                     telemetry.record_metric(
                                         metric.sensor_id, metric.name, metric.value, metric.unit
@@ -284,6 +296,7 @@ def run_agent() -> int:
                     tx = None
                     led_counts = None
                     runtime_curve_supported = False
+                    reactive_fx_supported = False
                     app_active = None
                     app_policy.reset()
                     rgb_stream.reset()

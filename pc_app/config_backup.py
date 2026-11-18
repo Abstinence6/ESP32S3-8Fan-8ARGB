@@ -14,7 +14,8 @@ _ALLOWED = re.compile(
     r"groupWeights[1-8]|dualEnabled[1-8]|customCurves|"
     r"autoProfiles|smoothTemperatures|minimizeToTray|"
     r"sacnEnabled|argbStudioPreset|nwinfoProviders|"
-    r"fanGroupsV1|fanHealthRefsV1|appProfileRulesV1|appProfilesEnabled)$"
+    r"fanGroupsV1|fanHealthRefsV1|appProfileRulesV1|appProfilesEnabled|"
+    r"reactiveHostSourcesV1)$"
 )
 
 
@@ -45,13 +46,16 @@ def validate_backup(data: object) -> dict[str, str]:
         from .fan_groups import loads as groups_loads
         from .application_profiles import loads as app_loads
         from .tach_health import load_references
+        from .reactive_argb import load_slots
     except ImportError:
         from fan_groups import loads as groups_loads
         from application_profiles import loads as app_loads
         from tach_health import load_references
+        from reactive_argb import load_slots
     for key, reader in (("fanGroupsV1", groups_loads),
                         ("appProfileRulesV1", app_loads),
-                        ("fanHealthRefsV1", load_references)):
+                        ("fanHealthRefsV1", load_references),
+                        ("reactiveHostSourcesV1", load_slots)):
         if key in values:
             reader(values[key])
     return values

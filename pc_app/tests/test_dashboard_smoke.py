@@ -121,7 +121,7 @@ class DashboardSmokeTests(unittest.TestCase):
         shell = self.window.dashboard
         self.assertEqual(shell.fan_workspace_tabs.count(), 3)
         self.assertEqual(shell.sensor_workspace_tabs.count(), 3)
-        self.assertEqual(shell.argb_workspace_tabs.count(), 5)
+        self.assertEqual(shell.argb_workspace_tabs.count(), 6)
         self.assertEqual(shell.service_workspace_tabs.count(), 5)
         self.window.show()
         for width in (1080, 1510):
@@ -354,7 +354,7 @@ class DashboardSmokeTests(unittest.TestCase):
     def test_v3_argb_zone_map_is_read_only_until_apply(self):
         shell = self.window.dashboard
         self.assertEqual(len(shell.argb_zone_tiles), 8)
-        self.assertEqual(shell.argb_workspace_tabs.count(), 5)
+        self.assertEqual(shell.argb_workspace_tabs.count(), 6)
         self.assertTrue(shell.argb_zone_tiles[1][0].property("selected"))
         shell.zone_box.setCurrentIndex(4)
         self.assertFalse(shell.argb_zone_tiles[1][0].property("selected"))

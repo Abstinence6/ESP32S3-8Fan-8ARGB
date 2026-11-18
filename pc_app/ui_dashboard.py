@@ -14,6 +14,7 @@ from settings_widgets import DesktopSettingsPanel
 from hardware_sensor_ui import HardwareSensorPanel
 from argb_studio_ui import ArgbStudioPanel
 from native_effects_ui import NativeEffectsPanel
+from reactive_argb_ui import ReactiveArgbPanel
 from temperature_argb_ui import TemperatureArgbPanel
 from maintenance_ui import MaintenancePanel
 from device_settings_ui import DeviceSettingsPanel
@@ -1154,6 +1155,14 @@ class DashboardShell(QWidget):
         native_fx_layout.addWidget(self.native_effects)
         native_fx_layout.addStretch(1)
         self.argb_workspace_tabs.addTab(native_fx_page, "Ефекти ESP32")
+
+        reactive_page = QWidget()
+        reactive_layout = QVBoxLayout(reactive_page)
+        reactive_layout.setContentsMargins(0, 12, 0, 0)
+        self.reactive_argb = ReactiveArgbPanel(self.controller)
+        reactive_layout.addWidget(self.reactive_argb)
+        reactive_layout.addStretch(1)
+        self.argb_workspace_tabs.addTab(reactive_page, "Реактивні датчики")
 
         layout.addWidget(self.argb_workspace_tabs, 1)
         layout.addStretch(1)
