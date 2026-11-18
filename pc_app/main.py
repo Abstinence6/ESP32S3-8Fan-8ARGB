@@ -30,11 +30,11 @@ from PySide6.QtWidgets import (
 
 from monitor import (
     GROUP_AVG, GROUP_MAX, GROUP_WEIGHTED, MAX_ALL, MAX_CPU_GPU,
-    TemperatureSensor, resolve_temperature,
+    TemperatureSensor,
 )
 from nwinfo_sensors import NwinfoSensorSampler
 from sacn_bridge import E131Listener, SACN_PORT, SERIAL_BAUD, encode_rgb_frame
-from protocol import validate_curve, DEFAULT_CURVE, make_curve_command, make_temperature_command, parse_curve, parse_status
+from protocol import validate_curve, DEFAULT_CURVE, make_curve_command, parse_curve, parse_status
 from serial_owner import SerialProxyClient
 from serial_tx import SerialTransmitter
 from openrgb_native import OpenRGBNativeServer
@@ -49,8 +49,11 @@ from smart_control import SafeTemperatureFilter, AutoProfileSelector
 from tray_monitor import FaultNotificationGate
 from tach_health import TachHealthMonitor
 from pid_autotune_ui import PidAutotuneDialog
-from cooling_assist import extract_power_watts, power_payload
 from telemetry_store import TelemetryStore
+from sensor_pipeline import (
+    FanSensorRoute, plan_sensor_telemetry,
+    choose_automatic_profile, automatic_profile_commands,
+)
 
 
 class FanArgbWindow(QMainWindow):
@@ -1002,68 +1005,57 @@ class FanArgbWindow(QMainWindow):
             self.telemetry.record_metric(
                 metric.sensor_id, metric.name, metric.value, metric.unit
             )
-        cpu_w, gpu_w = extract_power_watts(watts)
-        self.power_history.append((
-            time.time(), cpu_w if cpu_w is not None else float("nan"),
-            gpu_w if gpu_w is not None else float("nan"),
-        ))
-        if self.port and self.cooling_assist_supported:
-            self.send(power_payload(cpu_w, gpu_w))
-        self._refresh_history()
-        self._update_tray_tooltip()
         self._update_source_boxes()
         self._update_secondary_box()
         self.dashboard.temperature_argb.refresh_sensors()
 
-        # All group sensors must be present; otherwise ESP's 10s stale watchdog
-        # falls back to 100% PWM. Temperature traffic shares USB with RGB frames.
-        for ch, box in enumerate(self.source_boxes, start=1):
-            celsius = resolve_temperature(
-                str(box.currentData()), self.temperatures, self.sensor_groups[ch], self.sensor_weights[ch]
+        # Use the same safety-checked sensor routing as the headless agent.
+        # GUI selection is live; the agent reads the corresponding QSettings.
+        routes = tuple(
+            FanSensorRoute(
+                primary=str(box.currentData()),
+                secondary=str(self.settings.value(f"source2{ch}", MAX_ALL)),
+                group_ids=tuple(self.sensor_groups[ch]),
+                weights=self.sensor_weights[ch],
+                dual=self.fan_dual_enabled[ch],
             )
-            if self.dashboard.settings_panel.smoothing.isChecked():
-                celsius = self.safe_filter.update(ch, celsius, time.monotonic())
-            if celsius is not None:
-                try:
-                    self.send(make_temperature_command(ch, celsius))
-                except ValueError:
-                    pass
-            if self.fan_dual_enabled[ch]:
-                second = str(self.settings.value(f"source2{ch}", MAX_ALL))
-                celsius2 = resolve_temperature(second, self.temperatures, self.sensor_groups[ch], self.sensor_weights[ch])
-                if celsius2 is not None:
-                    try:
-                        cmd = make_temperature_command(ch, celsius2).replace("TEMP ", "TEMP2 ", 1)
-                        self.send(cmd)
-                    except ValueError:
-                        pass
+            for ch, box in enumerate(self.source_boxes, start=1)
+        )
+        plan = plan_sensor_telemetry(
+            routes, self.temperatures, watts, filter_engine=self.safe_filter,
+            smoothing=self.dashboard.settings_panel.smoothing.isChecked(),
+            now=time.monotonic(), include_power=self.cooling_assist_supported,
+        )
+        self.power_history.append((
+            time.time(),
+            plan.cpu_watts if plan.cpu_watts is not None else float("nan"),
+            plan.gpu_watts if plan.gpu_watts is not None else float("nan"),
+        ))
+        self._refresh_history()
+        self._update_tray_tooltip()
+        for command in plan.commands:
+            self.send(command)
         self.send("STATUS")
 
     def _check_automatic_profile(self) -> None:
         if not self.port or not self.dashboard.settings_panel.auto_profiles.isChecked():
             return
-        gpu_usage = [
-            m.value for m in self.sensor_sampler.metrics
-            if m.kind == "load" and "gpu" in m.name.casefold()
-            and ("utilization" in m.name.casefold() or "load" in m.name.casefold())
-        ]
-        desired = self.auto_selector.consider(
-            max(gpu_usage) if gpu_usage else None,
-            datetime.now().hour,
-            time.monotonic(),
+        now = time.monotonic()
+        desired = choose_automatic_profile(
+            self.sensor_sampler.metrics, self.auto_selector,
+            hour=datetime.now().hour, now=now,
         )
         if desired:
-            curves = [list(PRESETS[desired]) for _ in range(8)]
             try:
-                for ch, points in enumerate(curves, 1):
-                    if not self.send(make_curve_command(ch, points)):
+                for command in automatic_profile_commands(desired):
+                    if not self.send(command):
                         self.log("Автопрофіль: COM недоступний, зміни не завершено")
                         return
             except ValueError as exc:
                 self.log(f"Автопрофіль: {exc}")
                 return
-            for ch, points in enumerate(curves, 1):
-                self.curves[ch] = points
+            for ch in range(1, 9):
+                self.curves[ch] = list(PRESETS[desired])
             self.auto_selector.applied(desired, time.monotonic())
             self.profile_box.setCurrentText(desired)
             self._update_targets()

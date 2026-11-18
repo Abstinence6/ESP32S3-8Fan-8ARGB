@@ -5,7 +5,6 @@ This is a logon-session process, NOT a Windows service; it owns the ESP COM port
 """
 from __future__ import annotations
 
-import json
 import logging
 from logging.handlers import RotatingFileHandler
 import os
@@ -14,26 +13,24 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, Future
 
 try:
-    from .monitor import MAX_ALL, resolve_temperature
     from .nwinfo_sensors import NwinfoSensorSampler
-    from .cooling_assist import extract_power_watts, power_payload
-    from .protocol import make_temperature_command
+    from .sensor_pipeline import (
+        routes_from_settings, plan_sensor_telemetry,
+        choose_automatic_profile, automatic_profile_commands,
+    )
     from .smart_control import SafeTemperatureFilter, AutoProfileSelector
-    from .profiles import PRESETS
-    from .protocol import make_curve_command
     from .serial_owner import SerialOwnerServer
     from .serial_tx import SerialTransmitter
     from .telemetry_store import TelemetryStore
     from .tach_health import TachHealthMonitor
     from .protocol import parse_status
 except ImportError:  # packaged as a standalone PyInstaller entrypoint
-    from monitor import MAX_ALL, resolve_temperature
     from nwinfo_sensors import NwinfoSensorSampler
-    from cooling_assist import extract_power_watts, power_payload
-    from protocol import make_temperature_command
+    from sensor_pipeline import (
+        routes_from_settings, plan_sensor_telemetry,
+        choose_automatic_profile, automatic_profile_commands,
+    )
     from smart_control import SafeTemperatureFilter, AutoProfileSelector
-    from profiles import PRESETS
-    from protocol import make_curve_command
     from serial_owner import SerialOwnerServer
     from serial_tx import SerialTransmitter
     from telemetry_store import TelemetryStore
@@ -41,40 +38,17 @@ except ImportError:  # packaged as a standalone PyInstaller entrypoint
     from protocol import parse_status
 
 
-def load_assignments(settings: QSettings) -> list[tuple[str, list[str], dict[str, float], str, bool]]:
-    items = []
-    for ch in range(1, 9):
-        try:
-            group = json.loads(str(settings.value(f"groupSensors{ch}", "[]")))
-            weights = json.loads(str(settings.value(f"groupWeights{ch}", "{}")))
-            group = group if isinstance(group, list) else []
-            weights = weights if isinstance(weights, dict) else {}
-        except (ValueError, TypeError):
-            group, weights = [], {}
-        dual = str(settings.value(f"dualEnabled{ch}", "false")).lower() in ("true", "1")
-        items.append((str(settings.value(f"source{ch}", MAX_ALL)), group, weights,
-                      str(settings.value(f"source2{ch}", MAX_ALL)), dual))
-    return items
-
-
 def make_sensor_commands(settings: QSettings, sensors,
                          filter_engine: SafeTemperatureFilter | None = None,
-                         now: float | None = None) -> list[str]:
-    lines: list[str] = []
-    if now is None:
-        now = time.monotonic()
+                         now: float | None = None, *, metrics=None) -> list[str]:
+    """Compatibility entrypoint: GUI and agent now use the same planner."""
     smoothing = str(settings.value("smoothTemperatures", "true")).lower() in ("true", "1")
-    for ch, (assignment, group, weights, second, dual) in enumerate(load_assignments(settings), start=1):
-        primary = resolve_temperature(assignment, sensors, group, weights)
-        if filter_engine is not None and smoothing:
-            primary = filter_engine.update(ch, primary, now)
-        if primary is not None:
-            lines.append(make_temperature_command(ch, primary))
-        if dual:
-            aux = resolve_temperature(second, sensors, group, weights)
-            if aux is not None:
-                lines.append(make_temperature_command(ch, aux).replace("TEMP ", "TEMP2 ", 1))
-    return lines
+    plan = plan_sensor_telemetry(
+        routes_from_settings(settings), sensors, () if metrics is None else metrics,
+        filter_engine=filter_engine, smoothing=smoothing, now=now,
+        include_power=metrics is not None,
+    )
+    return list(plan.commands)
 
 
 def setup_logging() -> logging.Logger:
@@ -197,29 +171,24 @@ def run_agent() -> int:
                         try:
                             sample = temp_future.result()
                             if not owner.has_client and sample is not None:
-                                for msg in make_sensor_commands(settings, sample, smooth_filter):
+                                for msg in make_sensor_commands(
+                                    settings, sample, smooth_filter,
+                                    metrics=sensor_sampler.metrics,
+                                ):
                                     tx.send_command(msg)
-                                cpu_w, gpu_w = extract_power_watts(sensor_sampler.metrics)
-                                tx.send_command(power_payload(cpu_w, gpu_w))
                                 for metric in sensor_sampler.metrics:
                                     telemetry.record_metric(
                                         metric.sensor_id, metric.name, metric.value, metric.unit
                                     )
                                 settings.sync()
                                 if str(settings.value("autoProfiles", "false")).lower() in ("true", "1"):
-                                    gpu_load = [
-                                        m.value for m in sensor_sampler.metrics
-                                        if m.kind == "load" and "gpu" in m.name.casefold()
-                                        and ("utilization" in m.name.casefold()
-                                             or "load" in m.name.casefold())
-                                    ]
-                                    desired = auto_profiles.consider(
-                                        max(gpu_load) if gpu_load else None,
-                                        datetime.now().hour, time.monotonic()
+                                    desired = choose_automatic_profile(
+                                        sensor_sampler.metrics, auto_profiles,
+                                        hour=datetime.now().hour, now=time.monotonic(),
                                     )
                                     if desired:
-                                        for ch in range(1, 9):
-                                            tx.send_command(make_curve_command(ch, list(PRESETS[desired])))
+                                        for command in automatic_profile_commands(desired):
+                                            tx.send_command(command)
                                         auto_profiles.applied(desired, time.monotonic())
                                         log.info("Automatic profile applied: %s", desired)
                         except Exception as exc:
