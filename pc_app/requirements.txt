@@ -4,3 +4,7 @@ pyserial>=3.5,<4
 esptool==4.9.0
 
 psutil>=6,<8
+
+# Optional user-enabled audio loopback (never captures until opt-in)
+numpy>=1.26,<3
+soundcard>=0.4.5,<0.6; platform_system == "Windows"
