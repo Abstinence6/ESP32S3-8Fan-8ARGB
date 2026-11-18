@@ -14,6 +14,12 @@ g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
   src/CoolingController.cpp test/native/test_offline_profiles.cpp -o "$out"
 "$out"
 
+# Passive user-calibrated airflow/pressure tendency estimator.
+g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
+  test/native/mock/Arduino.cpp src/FanController.cpp \
+  test/native/test_airflow.cpp -o "$out"
+"$out"
+
 # Independent PID gains NVS; reject unqualified fan/driver/TACH.
 g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
   test/native/mock/Arduino.cpp src/FanController.cpp src/CoolingController.cpp \

@@ -19,7 +19,6 @@ int main() {
     assert(!bank.activate(1));
 
     // Capture currently persisted curve and an autonomous solid RGB scene.
-    auto original = *cooling.curve(0);
     assert(leds.setSolid(0, 11, 22, 33));
     const size_t before = Preferences::writeCount();
     assert(bank.capture(1));
