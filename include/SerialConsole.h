@@ -10,10 +10,11 @@ class MqttBridge;
 #include "HardwareTemperature.h"
 #include "TemperatureArgbSettings.h"
 #include "TemperaturePaletteSettings.h"
+#include "OfflineProfiles.h"
 
 class SerialConsole {
 public:
-    SerialConsole(Stream& serial, FanController& fans, ArgbController& leds, CoolingController& cooling, NetworkRgbBridge* wifi = nullptr, MqttBridge* mqtt = nullptr, PcPowerController* pc = nullptr, HardwareTemperature* hw = nullptr, TemperatureArgbSettings* temperatureArgb = nullptr, TemperaturePaletteSettings* temperaturePalette = nullptr);
+    SerialConsole(Stream& serial, FanController& fans, ArgbController& leds, CoolingController& cooling, NetworkRgbBridge* wifi = nullptr, MqttBridge* mqtt = nullptr, PcPowerController* pc = nullptr, HardwareTemperature* hw = nullptr, TemperatureArgbSettings* temperatureArgb = nullptr, TemperaturePaletteSettings* temperaturePalette = nullptr, OfflineProfiles* profiles = nullptr);
     void begin();
     void poll();
 
@@ -42,6 +43,7 @@ private:
     HardwareTemperature* hw_;
     TemperatureArgbSettings* temperatureArgb_;
     TemperaturePaletteSettings* temperaturePalette_;
+    OfflineProfiles* profiles_;
     bool selfTestActive_ = false;
     uint32_t selfTestStartMs_ = 0;
     uint32_t selfTestBasePulses_[board::kChannelCount] = {};

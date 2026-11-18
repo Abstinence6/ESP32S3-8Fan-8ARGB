@@ -55,6 +55,11 @@ public:
     bool runtimeKeepalive(uint32_t nowMs);
     void runtimeClear();
     bool runtimeProfileActive(uint32_t nowMs) const;
+    // Persistent offline profile override: never changes the saved base curve,
+    // sensor freshness, manual-mode precedence, or driver interlock.
+    bool setOfflineCurves(const CurvePoint (&curves)[board::kChannelCount][kCurvePoints]);
+    void clearOfflineCurves() { offlineEnabled_ = false; }
+    bool offlineProfileActive() const { return offlineEnabled_; }
     bool startCalibration(uint8_t ch, uint32_t nowMs, bool smart = false);
     bool cancelCalibration();
     bool calibrationActive() const { return activeCalibration_ >= 0; }
@@ -174,6 +179,8 @@ private:
     uint32_t runtimeRefreshMs_ = 0;
     bool runtimeTransaction_ = false;
     bool runtimeEnabled_ = false;
+    CurvePoint offlineCurves_[board::kChannelCount][kCurvePoints] = {};
+    bool offlineEnabled_ = false;
     bool persisted_[board::kChannelCount] = {};
     Mode fanMode_[board::kChannelCount] = {};
     Mode previousCalibrationMode_ = Mode::Auto;

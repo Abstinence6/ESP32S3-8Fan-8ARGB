@@ -46,6 +46,7 @@ public:
     uint32_t estimatedFullCurrent() const;
     uint32_t estimatedLimitedCurrent() const;
     Mode getMode(uint8_t channel) const;
+    bool solidColor(uint8_t channel, uint8_t& r, uint8_t& g, uint8_t& b) const;
     uint8_t getBrightness(uint8_t channel) const;
     uint8_t getStoredBrightness(uint8_t channel) const;
     void update(uint32_t nowMs);

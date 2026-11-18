@@ -8,8 +8,8 @@
 #include <string.h>
 
 SerialConsole::SerialConsole(Stream& serial, FanController& fans, ArgbController& leds,
-                             CoolingController& cooling, NetworkRgbBridge* wifi, MqttBridge* mqtt, PcPowerController* pc, HardwareTemperature* hw, TemperatureArgbSettings* temperatureArgb, TemperaturePaletteSettings* temperaturePalette)
-    : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling), wifi_(wifi), mqtt_(mqtt), pc_(pc), hw_(hw), temperatureArgb_(temperatureArgb), temperaturePalette_(temperaturePalette) {}
+                             CoolingController& cooling, NetworkRgbBridge* wifi, MqttBridge* mqtt, PcPowerController* pc, HardwareTemperature* hw, TemperatureArgbSettings* temperatureArgb, TemperaturePaletteSettings* temperaturePalette, OfflineProfiles* profiles)
+    : serial_(serial), fans_(fans), leds_(leds), cooling_(cooling), wifi_(wifi), mqtt_(mqtt), pc_(pc), hw_(hw), temperatureArgb_(temperatureArgb), temperaturePalette_(temperaturePalette), profiles_(profiles) {}
 
 void SerialConsole::begin() {
     serial_.println(F("8Fan/8ARGB ready | protocol v8 | type HELP"));
@@ -467,7 +467,7 @@ void SerialConsole::handleLine(char* line) {
         serial_.print(temperaturePalette_ ? 1 : 0);
         serial_.print(F(" PIDTUNE_NVS="));
         serial_.print(cooling_.pidTuningSupported() ? 1 : 0);
-        serial_.println(F(" RTCURVE=1 FX=1 RFX=1"));
+        serial_.println(F(" RTCURVE=1 FX=1 RFX=1 OFFLINE=1"));
         return;
     }
     if (strcmp(command, "HTSCAN") == 0) {
@@ -892,6 +892,38 @@ void SerialConsole::handleLine(char* line) {
         if (!ok) { serial_.println(F("ERR STRIP config")); return; }
         serial_.println(F("OK STRIP_SAVED")); return;
     }
+    if (!strcmp(command, "PROFILE?")) {
+        if (!profiles_ || !noMore()) return error();
+        serial_.print(F("PROFILE ACTIVE=")); serial_.print(profiles_->active());
+        serial_.print(F(" BOOT=")); serial_.print(profiles_->boot());
+        serial_.print(F(" SLOTS="));
+        for (uint8_t slot=1; slot<=OfflineProfiles::kSlots; ++slot)
+            serial_.print(profiles_->valid(slot) ? '1' : '0');
+        serial_.println("");
+        return;
+    }
+    if (!strcmp(command, "PROFILE")) {
+        if (!profiles_) { serial_.println(F("ERR PROFILE unavailable")); return; }
+        char* op=next();
+        if (!op) return error();
+        for (char* q=op; *q; ++q)
+            *q=static_cast<char>(toupper(static_cast<unsigned char>(*q)));
+        uint8_t slot=0;
+        bool ok=false;
+        if (!strcmp(op,"CLEAR") && noMore()) ok=profiles_->clear();
+        else if (!strcmp(op,"SAVE")) {
+            if (!parseByte(next(), OfflineProfiles::kSlots, slot) || !slot || !noMore()) return error();
+            ok=profiles_->capture(slot);
+        } else if (!strcmp(op,"SELECT")) {
+            if (!parseByte(next(), OfflineProfiles::kSlots, slot) || !slot || !noMore()) return error();
+            ok=profiles_->activate(slot);
+        } else if (!strcmp(op,"BOOT")) {
+            if (!parseByte(next(), OfflineProfiles::kSlots, slot) || !noMore()) return error();
+            ok=profiles_->setBoot(slot);
+        } else return error();
+        serial_.println(ok ? F("OK PROFILE") : F("ERR PROFILE invalid or NVS"));
+        return;
+    }
     if (!strcmp(command, "RVAL")) {
         uint8_t slot = 0;
         uint32_t value = 0;
@@ -1257,6 +1289,7 @@ void SerialConsole::printHelp() {
     serial_.println(F("FX START|STOP <ch> | FX BOOT <ch> <0|1> | FX SAVE"));
     serial_.println(F("RFX? <ch> | RFX SET <ch> <source> <fallback> <style> <low10> <high10> <pattern> <6 RGB> <speed> <brightness> <dir>"));
     serial_.println(F("RFX START|STOP <ch> | RFX BOOT <ch> <0|1> | RFX SAVE | RVAL <slot:1..8> <value*10>"));
+    serial_.println(F("PROFILE? | PROFILE SAVE|SELECT <1..3> | PROFILE CLEAR | PROFILE BOOT <0..3>"));
     serial_.println(F("ARGBCFG <ch> <count> <reverse> <budgetMa> <brightness> (one NVS record)"));
     serial_.println(F("Binary ARGB: A5 5A ch countLE16 RGB... crc16LE (CCITT-FALSE)"));
 }

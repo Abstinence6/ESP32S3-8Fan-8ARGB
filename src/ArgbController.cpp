@@ -247,6 +247,13 @@ void ArgbController::drawSolid(uint8_t ch) {
     markDirty(ch);
     // LED output deferred to update() so fan control/serial input get priority.
 }
+bool ArgbController::solidColor(uint8_t ch, uint8_t& r,
+                                uint8_t& g, uint8_t& b) const {
+    if (ch >= board::kChannelCount) return false;
+    r = colors_[ch].r; g = colors_[ch].g; b = colors_[ch].b;
+    return true;
+}
+
 bool ArgbController::setSolid(uint8_t ch, uint8_t r, uint8_t g, uint8_t b) {
     if (ch >= board::kChannelCount) return false;
     if (modes_[ch] == Mode::External || modes_[ch] == Mode::Effect ||

@@ -12,6 +12,7 @@
 #include "PidGainsSettings.h"
 #include "TemperatureArgbSettings.h"
 #include "TemperaturePaletteSettings.h"
+#include "OfflineProfiles.h"
 #include <string.h>
 
 #if defined(ARDUINO_ARCH_ESP32)
@@ -25,13 +26,14 @@ ArgbController leds;
 CoolingAssistSettings coolingAssist;
 PidGainsSettings pidGainsSettings;
 CoolingController cooling(fans, Serial, &coolingAssist, &pidGainsSettings);
+OfflineProfiles offlineProfiles(cooling, leds);
 NetworkRgbBridge wifiRgb(leds);
 PcPowerController pcPower;
 HardwareTemperature hardwareTemp;
 TemperatureArgbSettings temperatureArgbSettings;
 TemperaturePaletteSettings temperaturePaletteSettings;
 MqttBridge mqtt(cooling, fans, leds, wifiRgb, &pcPower);
-SerialConsole console(Serial, fans, leds, cooling, &wifiRgb, &mqtt, &pcPower, &hardwareTemp, &temperatureArgbSettings, &temperaturePaletteSettings);
+SerialConsole console(Serial, fans, leds, cooling, &wifiRgb, &mqtt, &pcPower, &hardwareTemp, &temperatureArgbSettings, &temperaturePaletteSettings, &offlineProfiles);
 
 void setup() {
 #if !ARDUINO_USB_CDC_ON_BOOT
@@ -62,6 +64,7 @@ void setup() {
         Serial.println(F("FATAL: unable to initialize ARGB strips"));
         while (true) delay(1000);
     }
+    if (!offlineProfiles.begin()) Serial.println(F("WARN: offline profile NVS unavailable"));
     pcPower.begin();
     if (!hardwareTemp.begin()) Serial.println(F("WARN: hardware DS18B20 NVS unavailable"));
     wifiRgb.begin();

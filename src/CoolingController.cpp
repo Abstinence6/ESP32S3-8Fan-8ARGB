@@ -222,6 +222,16 @@ const CoolingController::CurvePoint* CoolingController::curve(uint8_t ch, bool s
     return secondary ? saved_[ch].secondCurve : saved_[ch].curve;
 }
 
+bool CoolingController::setOfflineCurves(
+    const CurvePoint (&curves)[board::kChannelCount][kCurvePoints]) {
+    if (activeCalibration_ >= 0) return false;
+    for (uint8_t ch = 0; ch < board::kChannelCount; ++ch)
+        if (!validCurve(curves[ch])) return false;
+    memcpy(offlineCurves_, curves, sizeof(offlineCurves_));
+    offlineEnabled_ = true;
+    return true;
+}
+
 bool CoolingController::runtimeBegin(uint32_t nowMs) {
     if (activeCalibration_ >= 0 || runtimeTransaction_) return false;
     runtimeTransaction_ = true;
@@ -688,8 +698,12 @@ void CoolingController::update(uint32_t nowMs) {
             desiredRpm_[ch] = fixedRpm_[ch];
             regulate = true;
         } else {
-            targetPwm = interpolate(runtimeProfileActive(nowMs)
-                ? runtimeCurves_[ch] : saved_[ch].curve, filteredTemp_[ch]);
+            // Leased host profiles win while fresh; offline scenes persist
+            // without the PC. Both remain subject to all existing fan safety.
+            const CurvePoint* curvePoints = runtimeProfileActive(nowMs)
+                ? runtimeCurves_[ch]
+                : offlineEnabled_ ? offlineCurves_[ch] : saved_[ch].curve;
+            targetPwm = interpolate(curvePoints, filteredTemp_[ch]);
             if (saved_[ch].dualEnabled) {
                 const uint8_t second = interpolate(saved_[ch].secondCurve, filteredTemp2_[ch]);
                 if (second > targetPwm) targetPwm = second;
