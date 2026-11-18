@@ -28,6 +28,7 @@ public:
     bool saveReactive();
     const argbreaction::Config& reactive(uint8_t channel) const;
     bool reactiveBoot(uint8_t channel) const;
+    bool reactiveActive() const;
     bool setReactiveInput(uint8_t source, uint32_t value, uint32_t nowMs);
     void invalidateReactiveInput(uint8_t source);
     bool reactiveInput(uint8_t source, uint32_t nowMs, uint32_t& value) const;

@@ -100,7 +100,12 @@ void loop() {
     // Native visual sensors are sampled AFTER cooling/safety. They must never
     // change PWM, PID or the thermal watchdog. Unavailable readings expire.
     const uint32_t rgbNow = millis();
-    for (uint8_t ch=0; ch<board::kChannelCount; ++ch) {
+    static uint32_t lastReactiveSensorsMs = 0;
+    // Avoid expensive DS18B20 ROM formatting in the cooling loop on every
+    // iteration. Live RGB input changes at most once per 250 ms.
+    if (leds.reactiveActive() && rgbNow-lastReactiveSensorsMs >= 250U) {
+      lastReactiveSensorsMs = rgbNow;
+      for (uint8_t ch=0; ch<board::kChannelCount; ++ch) {
         if (fans.tachReliable(ch))
             leds.setReactiveInput(1U+ch, fans.getRpm(ch)*10U, rgbNow);
         else
@@ -118,6 +123,7 @@ void loop() {
         else
             leds.invalidateReactiveInput(17U+ch);
         leds.setReactiveInput(33U+ch, cooling.appliedPwm(ch)*10U, rgbNow);
+      }
     }
     // Network callbacks may stamp fresh frames after the loop timestamp.
     leds.update(rgbNow);

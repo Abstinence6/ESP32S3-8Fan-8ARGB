@@ -371,6 +371,11 @@ const argbreaction::Config& ArgbController::reactive(uint8_t ch) const {
 bool ArgbController::reactiveBoot(uint8_t ch) const {
     return ch < board::kChannelCount && bootReactive_[ch];
 }
+bool ArgbController::reactiveActive() const {
+    for (uint8_t ch=0; ch<board::kChannelCount; ++ch)
+        if (modes_[ch] == Mode::Reactive) return true;
+    return false;
+}
 bool ArgbController::saveReactive() {
     bool changed = false;
     for (uint8_t ch=0; ch<board::kChannelCount; ++ch)

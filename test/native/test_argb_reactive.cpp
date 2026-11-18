@@ -36,6 +36,7 @@ int main() {
     const size_t startWrites = Preferences::writeCount();
     assert(leds.setReactive(1, cfg));
     assert(leds.getMode(1) == ArgbController::Mode::Reactive);
+    assert(leds.reactiveActive());
     assert(Preferences::writeCount() == startWrites);
     assert(leds.setReactiveInput(26, 550, 1000));
     uint32_t actual = 0;
@@ -67,6 +68,7 @@ int main() {
     const uint8_t rgb[3] = {255,0,0};
     assert(optin.setPixels(1, rgb, 1)); // OpenRGB overrides a reactive zone
     assert(optin.getMode(1) == ArgbController::Mode::External);
+    assert(!optin.reactiveActive());
     optin.update(10000);
     assert(optin.getMode(1) == ArgbController::Mode::Off);
     Preferences storage;
