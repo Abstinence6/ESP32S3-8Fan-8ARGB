@@ -17,6 +17,11 @@ int main() {
     argbreaction::render(cfg, 30, 1000, 550, true, pixels);
     assert(pixels[0] != 0 || pixels[1] != 0 || pixels[2] != 0);
     assert(pixels[29*3] == 0 && pixels[29*3+1] == 0);
+    cfg.scene.direction = 1;
+    argbreaction::render(cfg, 30, 1000, 550, true, pixels);
+    assert(pixels[0] == 0 && pixels[0+1] == 0);
+    assert(pixels[29*3] != 0 || pixels[29*3+1] != 0);
+    cfg.scene.direction = 0;
     argbreaction::render(cfg, 30, 2000, 0, false, pixels);
     assert(pixels[0] > pixels[2]); // Missing is amber, not blue/healthy.
     cfg.fallback = 25; // external slots are not valid autonomous fallbacks

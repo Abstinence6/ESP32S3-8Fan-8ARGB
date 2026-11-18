@@ -99,8 +99,9 @@ esp32fan/esp32s3/reactive/8/set
 ```
 
 Example: publish `825` to slot 1 for 82.5%. In Home Assistant use a
-template automation publishing `round(states('sensor.gpu_load')|float(0)
-* 10)` to the topic (adapt to the real sensor entity); do not publish
+template automation publishing
+`{{ ((states('sensor.gpu_load') | float(0)) * 10) | round(0) | int }}`
+to the topic (adapt to the real sensor entity); do not publish
 retained old state on start. MQTT broker authentication and topic ACLs
 should restrict publishers. Source 25..32 receives the same value
 whether updated by USB or MQTT, with **last-arrival-wins** semantics.

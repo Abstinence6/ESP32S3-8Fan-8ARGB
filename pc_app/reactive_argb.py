@@ -54,7 +54,7 @@ def validate_scene(s: ReactiveScene) -> ReactiveScene:
     return s
 
 def default_scene(channel: int = 1) -> ReactiveScene:
-    return ReactiveScene(channel, 9, 0, 1, 300, 850, 2,
+    return ReactiveScene(channel, 8 + channel, 0, 1, 300, 850, 2,
                          (0,100,255), (255,0,0), 3, 64, 0)
 
 def make_set(s: ReactiveScene) -> str:

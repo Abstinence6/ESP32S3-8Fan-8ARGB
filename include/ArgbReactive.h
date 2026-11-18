@@ -57,12 +57,13 @@ inline void render(const Config& cfg, uint16_t count, uint32_t nowMs,
         const uint16_t filled = static_cast<uint16_t>(
             (static_cast<uint32_t>(amount)*count + 254U) / 255U);
         for (uint16_t pixel=0; pixel<count; ++pixel) {
+            const uint16_t position = cfg.scene.direction ? count - pixel - 1U : pixel;
             const uint8_t blendAt = (style == Style::Color) ? amount :
-                static_cast<uint8_t>(static_cast<uint32_t>(pixel) * 255U /
+                static_cast<uint8_t>(static_cast<uint32_t>(position) * 255U /
                     (count > 1 ? count-1 : 1));
             for (uint8_t component=0; component<3; ++component) {
                 dest[pixel*3U+component] =
-                    (style == Style::Bar && pixel >= filled) ? 0 :
+                    (style == Style::Bar && position >= filled) ? 0 :
                     argbeffects::blend(cfg.scene.primary[component],
                                        cfg.scene.secondary[component], blendAt);
             }
