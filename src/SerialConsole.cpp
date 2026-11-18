@@ -934,7 +934,7 @@ void SerialConsole::handleLine(char* line) {
         serial_.print(F(" BOOT=")); serial_.print(profiles_->boot());
         serial_.print(F(" SLOTS="));
         for (uint8_t slot=1; slot<=OfflineProfiles::kSlots; ++slot)
-            serial_.print(profiles_->valid(slot) ? '1' : '0');
+            serial_.print(profiles_->valid(slot) ? "1" : "0");
         serial_.println("");
         return;
     }
