@@ -132,6 +132,14 @@ bool SerialConsole::parseU16(const char* token, uint16_t maximum, uint16_t& out)
     return true;
 }
 
+bool SerialConsole::parseU32(const char* token, uint32_t maximum, uint32_t& out) {
+    if (!token || !*token || *token == '-' || *token == '+') return false;
+    char* end = nullptr;
+    const unsigned long n = strtoul(token, &end, 10);
+    if (*end || n > maximum) return false;
+    out = static_cast<uint32_t>(n);
+    return true;
+}
 bool SerialConsole::parseByte(const char* token, uint8_t maximum, uint8_t& out) {
     uint16_t result = 0;
     if (!parseU16(token, maximum, result)) return false;
@@ -459,7 +467,7 @@ void SerialConsole::handleLine(char* line) {
         serial_.print(temperaturePalette_ ? 1 : 0);
         serial_.print(F(" PIDTUNE_NVS="));
         serial_.print(cooling_.pidTuningSupported() ? 1 : 0);
-        serial_.println(F(" RTCURVE=1 FX=1"));
+        serial_.println(F(" RTCURVE=1 FX=1 RFX=1"));
         return;
     }
     if (strcmp(command, "HTSCAN") == 0) {
@@ -884,6 +892,88 @@ void SerialConsole::handleLine(char* line) {
         if (!ok) { serial_.println(F("ERR STRIP config")); return; }
         serial_.println(F("OK STRIP_SAVED")); return;
     }
+    if (!strcmp(command, "RVAL")) {
+        uint8_t slot = 0;
+        uint32_t value = 0;
+        if (!parseByte(next(), board::kChannelCount, slot) || !slot ||
+            !parseU32(next(), argbreaction::kMaxValue, value) || !noMore())
+            return error();
+        // External inputs can animate LEDs, but have no access to fan control.
+        leds_.setReactiveInput(static_cast<uint8_t>(24U+slot), value, millis());
+        serial_.println(F("OK RVAL")); return;
+    }
+    if (!strcmp(command, "RFX?")) {
+        uint8_t ch = 0;
+        if (!parseByte(next(), board::kChannelCount, ch) || !ch || !noMore()) return error();
+        const auto& cfg = leds_.reactive(ch-1);
+        uint32_t sample = 0;
+        const bool fresh = leds_.reactiveInput(cfg.source, millis(), sample) ||
+            (cfg.fallback && leds_.reactiveInput(cfg.fallback, millis(), sample));
+        serial_.print(F("RFX CH=")); serial_.print(ch);
+        serial_.print(F(" SRC=")); serial_.print(cfg.source);
+        serial_.print(F(" FALL=")); serial_.print(cfg.fallback);
+        serial_.print(F(" STYLE=")); serial_.print(cfg.style);
+        serial_.print(F(" LOW=")); serial_.print(cfg.low);
+        serial_.print(F(" HIGH=")); serial_.print(cfg.high);
+        serial_.print(F(" PATTERN=")); serial_.print(cfg.scene.pattern);
+        serial_.print(F(" R1=")); serial_.print(cfg.scene.primary[0]);
+        serial_.print(F(",")); serial_.print(cfg.scene.primary[1]);
+        serial_.print(F(",")); serial_.print(cfg.scene.primary[2]);
+        serial_.print(F(" R2=")); serial_.print(cfg.scene.secondary[0]);
+        serial_.print(F(",")); serial_.print(cfg.scene.secondary[1]);
+        serial_.print(F(",")); serial_.print(cfg.scene.secondary[2]);
+        serial_.print(F(" SPEED=")); serial_.print(cfg.scene.speed);
+        serial_.print(F(" BRIGHT=")); serial_.print(cfg.scene.brightness);
+        serial_.print(F(" DIR=")); serial_.print(cfg.scene.direction);
+        serial_.print(F(" BOOT=")); serial_.print(leds_.reactiveBoot(ch-1) ? 1 : 0);
+        serial_.print(F(" ACTIVE=")); serial_.print(leds_.getMode(ch-1) == ArgbController::Mode::Reactive ? 1 : 0);
+        serial_.print(F(" FRESH=")); serial_.print(fresh ? 1 : 0);
+        serial_.print(F(" VALUE=")); serial_.println(fresh ? sample : 0);
+        return;
+    }
+    if (!strcmp(command, "RFX")) {
+        char* op = next();
+        if (!op) return error();
+        for (char* p = op; *p; ++p)
+            *p = static_cast<char>(toupper(static_cast<unsigned char>(*p)));
+        if (!strcmp(op,"SAVE")) {
+            if (!noMore() || !leds_.saveReactive()) {
+                serial_.println(F("ERR RFX NVS")); return;
+            }
+            serial_.println(F("OK RFX_SAVED")); return;
+        }
+        uint8_t ch = 0;
+        if (!parseByte(next(), board::kChannelCount, ch) || !ch) return error();
+        --ch;
+        bool ok = false;
+        if (!strcmp(op,"START") && noMore()) ok = leds_.startReactive(ch);
+        else if (!strcmp(op,"STOP") && noMore()) ok = leds_.setOff(ch);
+        else if (!strcmp(op,"BOOT")) {
+            uint8_t enabled = 0;
+            if (!parseByte(next(), 1, enabled) || !noMore()) return error();
+            ok = leds_.setReactiveBoot(ch, enabled != 0);
+        } else if (!strcmp(op,"SET")) {
+            argbreaction::Config cfg = {};
+            if (!parseByte(next(), argbreaction::kMaxSource, cfg.source) || !cfg.source ||
+                !parseByte(next(), argbreaction::kMaxSource, cfg.fallback) ||
+                !parseByte(next(), 4, cfg.style) ||
+                !parseU32(next(), argbreaction::kMaxValue, cfg.low) ||
+                !parseU32(next(), argbreaction::kMaxValue, cfg.high) ||
+                !parseByte(next(), 4, cfg.scene.pattern) ||
+                !parseByte(next(), 255, cfg.scene.primary[0]) ||
+                !parseByte(next(), 255, cfg.scene.primary[1]) ||
+                !parseByte(next(), 255, cfg.scene.primary[2]) ||
+                !parseByte(next(), 255, cfg.scene.secondary[0]) ||
+                !parseByte(next(), 255, cfg.scene.secondary[1]) ||
+                !parseByte(next(), 255, cfg.scene.secondary[2]) ||
+                !parseByte(next(), 10, cfg.scene.speed) ||
+                !parseByte(next(), 255, cfg.scene.brightness) ||
+                !parseByte(next(), 1, cfg.scene.direction) || !noMore()) return error();
+            ok = leds_.setReactive(ch, cfg);
+        } else return error();
+        serial_.println(ok ? F("OK RFX") : F("ERR RFX invalid"));
+        return;
+    }
     if (!strcmp(command, "FX?")) {
         uint8_t channel = 0;
         if (!parseByte(next(), board::kChannelCount, channel) || !channel || !noMore())
@@ -1165,6 +1255,8 @@ void SerialConsole::printHelp() {
     serial_.println(F("STRIPCFG? <ch> | STRIP <ch> 1..170 | REVERSE <ch> 0|1 | RGBBUDGET <100..20000> | ARGBSTATUS"));
     serial_.println(F("FX? <ch> | FX SET <ch> <pattern:1..4> <R1 G1 B1> <R2 G2 B2> <speed:1..10> <bright> <dir:0|1>"));
     serial_.println(F("FX START|STOP <ch> | FX BOOT <ch> <0|1> | FX SAVE"));
+    serial_.println(F("RFX? <ch> | RFX SET <ch> <source> <fallback> <style> <low10> <high10> <pattern> <6 RGB> <speed> <brightness> <dir>"));
+    serial_.println(F("RFX START|STOP <ch> | RFX BOOT <ch> <0|1> | RFX SAVE | RVAL <slot:1..8> <value*10>"));
     serial_.println(F("ARGBCFG <ch> <count> <reverse> <budgetMa> <brightness> (one NVS record)"));
     serial_.println(F("Binary ARGB: A5 5A ch countLE16 RGB... crc16LE (CCITT-FALSE)"));
 }

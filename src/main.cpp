@@ -97,9 +97,30 @@ void loop() {
     pcPower.update(now);
     wifiRgb.update(now);
     mqtt.update(now);
+    // Native visual sensors are sampled AFTER cooling/safety. They must never
+    // change PWM, PID or the thermal watchdog. Unavailable readings expire.
+    const uint32_t rgbNow = millis();
+    for (uint8_t ch=0; ch<board::kChannelCount; ++ch) {
+        if (fans.tachReliable(ch))
+            leds.setReactiveInput(1U+ch, fans.getRpm(ch)*10U, rgbNow);
+        else
+            leds.invalidateReactiveInput(1U+ch);
+        if (cooling.temperatureFresh(ch, rgbNow))
+            leds.setReactiveInput(9U+ch, cooling.temperature(ch), rgbNow);
+        else
+            leds.invalidateReactiveInput(9U+ch);
+        char rom[17] = {};
+        uint16_t temp = 0;
+        uint32_t age = 0;
+        bool valid = false;
+        if (hardwareTemp.sensorInfo(ch, rom, temp, valid, age, rgbNow) && valid)
+            leds.setReactiveInput(17U+ch, temp, rgbNow);
+        else
+            leds.invalidateReactiveInput(17U+ch);
+        leds.setReactiveInput(33U+ch, cooling.appliedPwm(ch)*10U, rgbNow);
+    }
     // Network callbacks may stamp fresh frames after the loop timestamp.
-    // Re-read time so unsigned timeout arithmetic never sees a future frame.
-    leds.update(millis());
+    leds.update(rgbNow);
 #if defined(ARDUINO_ARCH_ESP32)
     // Never feed before the temperature/fan safety logic and communication tasks.
     if (watchdogArmed) esp_task_wdt_reset();

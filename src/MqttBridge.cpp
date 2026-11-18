@@ -333,6 +333,14 @@ bool MqttBridge::applyCommand(const char* topic, const char* payload, uint32_t n
                                                nowMs, !strcmp(suffix, "temp2/set"));
         return false;
     }
+    if (!strncmp(p, "reactive/", 9)) {
+        p += 9;
+        if (*p < '1' || *p > '8' || strcmp(p+1, "/set")) return false;
+        unsigned value = 0;
+        if (!parseUInt(payload, argbreaction::kMaxValue, value)) return false;
+        return leds_.setReactiveInput(static_cast<uint8_t>(25U+(*p-'1')),
+                                      value, nowMs);
+    }
     if (!strncmp(p, "light/", 6)) {
         p += 6;
         if (*p < '1' || *p > '8' || p[1] != '/') return false;
@@ -503,7 +511,7 @@ void MqttBridge::update(uint32_t nowMs) {
         char topic[96];
         for (const char* wildcard : {"fan/+/set", "fan/+/power/set", "fan/+/mode/set",
                                      "fan/+/temp/set", "fan/+/temp2/set", "light/+/set",
-                                     "light/+/rgb/set"}) {
+                                     "light/+/rgb/set", "reactive/+/set"}) {
             snprintf(topic, sizeof(topic), "%s/%s", baseTopic_, wildcard);
             mqtt_.subscribe(topic);
         }
