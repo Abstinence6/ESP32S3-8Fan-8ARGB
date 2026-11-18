@@ -1,5 +1,5 @@
 import unittest
-from pc_app.tach_health import TachHealthMonitor
+from pc_app.tach_health import TachHealthMonitor, dump_references, load_references
 
 
 class TachTests(unittest.TestCase):
@@ -18,6 +18,21 @@ class TachTests(unittest.TestCase):
             self.assertIsNone(m.observe(5, pwm=100, rpm=0, has_feedback=False))
         for pwm, rpm in [(20, 500), (30, 1500), (40, 700), (50, 1800)]:
             self.assertIsNone(m.observe(3, pwm=pwm, rpm=rpm, has_feedback=True))
+
+    def test_reference_capture_and_persistent_degradation_alert(self):
+        m = TachHealthMonitor()
+        for rpm in (1190, 1200, 1205, 1200):
+            self.assertIsNone(m.observe(1, pwm=100, rpm=rpm, has_feedback=True))
+        ref = m.candidate_reference(1)
+        self.assertIsNotNone(ref)
+        m.set_reference(1, *ref)
+        self.assertEqual(load_references(m.export_references()), {1: ref})
+        alerts = [m.observe(1, pwm=100, rpm=850, has_feedback=True)
+                  for _ in range(9)]
+        self.assertTrue(any(a and "еталона" in a for a in alerts))
+        self.assertEqual(m.status(1), "Падіння RPM")
+        with self.assertRaises(ValueError):
+            load_references('{"version":1,"fans":{"2":[10,0]}}')
 
     def test_stable_rpm_does_not_report_fault(self):
         m = TachHealthMonitor()

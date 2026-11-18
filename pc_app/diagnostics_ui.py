@@ -36,18 +36,26 @@ class DiagnosticPanel(QGroupBox):
         bundle.clicked.connect(self.export_bundle)
         line.addWidget(bundle)
         root.addLayout(line)
-        self.table = QTableWidget(8, 8)
+        self.table = QTableWidget(8, 9)
         self.table.setHorizontalHeaderLabels(
-            ["Канал", "PWM", "RPM", "TACH", "Джерело", "Вік, мс", "Fail-safe", "Оцінка"]
+            ["Канал", "PWM", "RPM", "TACH", "Джерело", "Вік, мс", "Fail-safe", "Оцінка", "Fan Health"]
         )
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
         for i in range(8):
             self.table.setItem(i, 0, QTableWidgetItem(str(i + 1)))
-            for col in range(1, 8):
+            for col in range(1, 9):
                 self.table.setItem(i, col, QTableWidgetItem("—"))
         self.table.setMaximumHeight(300)
         root.addWidget(self.table)
+        health = QHBoxLayout()
+        save_ref = QPushButton("Зберегти RPM-еталон вибраного FAN")
+        save_ref.clicked.connect(self.controller.capture_fan_reference)
+        health.addWidget(save_ref)
+        clear_ref = QPushButton("Скинути RPM-еталон")
+        clear_ref.clicked.connect(self.controller.forget_fan_reference)
+        health.addWidget(clear_ref)
+        root.addLayout(health)
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self.refresh)
         self.poll_timer.start(15000)
@@ -74,6 +82,10 @@ class DiagnosticPanel(QGroupBox):
         ), 1):
             self.table.setItem(row, col, QTableWidgetItem(value))
         return True
+
+    def update_fan_health(self, channel: int, label: str) -> None:
+        if 1 <= channel <= 8:
+            self.table.setItem(channel - 1, 8, QTableWidgetItem(label))
 
     def export_bundle(self) -> None:
         path, _ = QFileDialog.getSaveFileName(

@@ -99,6 +99,10 @@ def run_agent() -> int:
     auto_profiles = AutoProfileSelector()
     telemetry = TelemetryStore()
     tach_monitor = TachHealthMonitor()
+    try:
+        tach_monitor.import_references(str(settings.value("fanHealthRefsV1", "")))
+    except ValueError:
+        log.warning("Invalid Fan Health reference settings; passive check disabled")
     next_connect = 0.0
     query_due = 0.0
     next_status = 0.0
@@ -183,6 +187,14 @@ def run_agent() -> int:
                                         metric.sensor_id, metric.name, metric.value, metric.unit
                                     )
                                 settings.sync()
+                                # The GUI may have captured a fresh baseline while
+                                # this agent was yielding COM to the GUI.
+                                try:
+                                    stored_refs = str(settings.value("fanHealthRefsV1", ""))
+                                    if stored_refs != tach_monitor.export_references():
+                                        tach_monitor.import_references(stored_refs)
+                                except ValueError:
+                                    pass
                                 if str(settings.value("autoProfiles", "false")).lower() in ("true", "1"):
                                     desired = choose_automatic_profile(
                                         sensor_sampler.metrics, auto_profiles,

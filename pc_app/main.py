@@ -48,7 +48,7 @@ from ui_dashboard_model import make_scene_commands
 from ui_dashboard import DashboardShell
 from smart_control import SafeTemperatureFilter, AutoProfileSelector
 from tray_monitor import FaultNotificationGate
-from tach_health import TachHealthMonitor
+from tach_health import TachHealthMonitor, dump_references
 from fan_groups_ui import FanGroupsDialog
 from pid_autotune_ui import PidAutotuneDialog
 from telemetry_store import TelemetryStore
@@ -115,6 +115,10 @@ class FanArgbWindow(QMainWindow):
         self.auto_selector = AutoProfileSelector()
         self.fault_gate = FaultNotificationGate()
         self.tach_monitor = TachHealthMonitor()
+        try:
+            self.tach_monitor.import_references(str(self.settings.value("fanHealthRefsV1", "")))
+        except ValueError:
+            pass  # Do not overwrite a corrupt user backup.
         self.telemetry = TelemetryStore()
         self._quit_requested = False
         self._last_hwtemp_line = ""
@@ -799,6 +803,9 @@ class FanArgbWindow(QMainWindow):
                 status.channel, pwm=status.pwm, rpm=status.rpm,
                 has_feedback=status.rpm_feedback, fault=status.fault,
             )
+            if hasattr(self.dashboard.diagnostics, "update_fan_health"):
+                self.dashboard.diagnostics.update_fan_health(
+                    status.channel, self.tach_monitor.status(status.channel))
             if tach_warning:
                 self.log("TACH: " + tach_warning)
                 self.telemetry.record_alert("TACH", tach_warning)
@@ -1414,6 +1421,28 @@ class FanArgbWindow(QMainWindow):
         data = [self.curves[ch] for ch in range(1,9)]
         self.settings.setValue("customCurves", json.dumps(data))
         self.log("Custom-профіль збережено на ПК")
+
+    def capture_fan_reference(self) -> None:
+        reference = self.tach_monitor.candidate_reference(self.current_fan)
+        if reference is None:
+            QMessageBox.warning(self, "Fan Health",
+                                "Для еталона потрібні щонайменше 4 стабільні вимірювання TACH при PWM ≥35%.")
+            return
+        pwm, rpm = reference
+        choice = QMessageBox.question(
+            self, "Fan Health",
+            f"Зберегти еталон для FAN {self.current_fan}: {rpm} RPM при {pwm}% PWM?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if choice != QMessageBox.StandardButton.Yes:
+            return
+        self.tach_monitor.set_reference(self.current_fan, pwm, rpm)
+        self.settings.setValue("fanHealthRefsV1", self.tach_monitor.export_references())
+        self.log(f"Fan Health FAN {self.current_fan}: еталон {rpm} RPM @ {pwm}%")
+
+    def forget_fan_reference(self) -> None:
+        self.tach_monitor.clear_reference(self.current_fan)
+        self.settings.setValue("fanHealthRefsV1", self.tach_monitor.export_references())
+        self.log(f"Fan Health FAN {self.current_fan}: еталон скинуто")
 
     def open_fan_groups(self) -> None:
         FanGroupsDialog(self.settings, self.send, self).exec()
