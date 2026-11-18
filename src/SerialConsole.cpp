@@ -458,7 +458,8 @@ void SerialConsole::handleLine(char* line) {
         serial_.print(F(" TPAL_NVS="));
         serial_.print(temperaturePalette_ ? 1 : 0);
         serial_.print(F(" PIDTUNE_NVS="));
-        serial_.println(cooling_.pidTuningSupported() ? 1 : 0);
+        serial_.print(cooling_.pidTuningSupported() ? 1 : 0);
+        serial_.println(F(" RTCURVE=1"));
         return;
     }
     if (strcmp(command, "HTSCAN") == 0) {
@@ -619,6 +620,37 @@ void SerialConsole::handleLine(char* line) {
             if (!secondary && hw_) hw_->notePc(ch-1, now);
         }
         serial_.println(F("OK"));
+        return;
+    }
+    if (!strcmp(command, "RTCURVE?")) {
+        if (!noMore()) return error();
+        serial_.print(F("RTCURVE ACTIVE="));
+        serial_.println(cooling_.runtimeProfileActive(millis()) ? 1 : 0);
+        return;
+    }
+    if (!strcmp(command, "RTCURVE")) {
+        char* op = next();
+        if (!op) return error();
+        for (char* p = op; *p; ++p)
+            *p = static_cast<char>(toupper(static_cast<unsigned char>(*p)));
+        bool ok = false;
+        const uint32_t now = millis();
+        if (!strcmp(op, "BEGIN") && noMore()) ok = cooling_.runtimeBegin(now);
+        else if (!strcmp(op, "COMMIT") && noMore()) ok = cooling_.runtimeCommit(now);
+        else if (!strcmp(op, "KEEPALIVE") && noMore()) ok = cooling_.runtimeKeepalive(now);
+        else if (!strcmp(op, "CLEAR") && noMore()) {
+            cooling_.runtimeClear(); ok = true;
+        } else if (!strcmp(op, "SET")) {
+            uint8_t ch = 0;
+            if (!parseByte(next(), board::kChannelCount, ch) || !ch) return error();
+            CoolingController::CurvePoint points[CoolingController::kCurvePoints];
+            for (uint8_t i = 0; i < CoolingController::kCurvePoints; ++i)
+                if (!parseByte(next(), 125, points[i].tempC) ||
+                    !parseByte(next(), 100, points[i].pwm)) return error();
+            if (!noMore()) return error();
+            ok = cooling_.runtimeStage(ch - 1, points, now);
+        } else return error();
+        serial_.println(ok ? F("OK RTCURVE") : F("ERR RTCURVE invalid or busy"));
         return;
     }
     if (strcmp(command, "CURVE") == 0 || strcmp(command, "CURVE?") == 0 ||
@@ -1060,6 +1092,7 @@ void SerialConsole::printHelp() {
     serial_.println(F("FAN <ch> <0..100> | ALLFAN <0..100> (manual override)"));
     serial_.println(F("FANMASK MANUAL <mask:1..255> <0..100> | FANMASK AUTO <mask>"));
     serial_.println(F("CURVE? <ch> | CURVE <ch> <T1> <PWM1> ... <T5> <PWM5>"));
+    serial_.println(F("RTCURVE? | RTCURVE BEGIN | SET <ch> <T1> <PWM1> ... <T5> <PWM5> | COMMIT | KEEPALIVE | CLEAR"));
     serial_.println(F("CAL START <ch> | CAL SMART <ch> | CAL GET <ch> | CAL CANCEL"));
     serial_.println(F("TEMP2 / CURVE2 / CURVE2? for second thermal source; DUAL <ch> 0|1"));
     serial_.println(F("PID <ch> 0|1 | RPM <ch> <rpm> (requires calibration)"));

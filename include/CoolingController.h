@@ -48,6 +48,13 @@ public:
     // Preflight every selected channel before any mutation. Mask bit 0 = fan 1.
     bool setManualMask(uint8_t mask, uint8_t pwm);
     bool setAutoMask(uint8_t mask);
+    // Full eight-channel RAM-only transaction; no Preferences/NVS writes.
+    bool runtimeBegin(uint32_t nowMs);
+    bool runtimeStage(uint8_t ch, const CurvePoint* points, uint32_t nowMs);
+    bool runtimeCommit(uint32_t nowMs);
+    bool runtimeKeepalive(uint32_t nowMs);
+    void runtimeClear();
+    bool runtimeProfileActive(uint32_t nowMs) const;
     bool startCalibration(uint8_t ch, uint32_t nowMs, bool smart = false);
     bool cancelCalibration();
     bool calibrationActive() const { return activeCalibration_ >= 0; }
@@ -160,6 +167,13 @@ private:
     Stream& events_;
     Preferences storage_;
     StoredFan saved_[board::kChannelCount] = {};
+    CurvePoint runtimeCurves_[board::kChannelCount][kCurvePoints] = {};
+    CurvePoint runtimeStaging_[board::kChannelCount][kCurvePoints] = {};
+    uint8_t runtimeStageMask_ = 0;
+    uint32_t runtimeTransactionMs_ = 0;
+    uint32_t runtimeRefreshMs_ = 0;
+    bool runtimeTransaction_ = false;
+    bool runtimeEnabled_ = false;
     bool persisted_[board::kChannelCount] = {};
     Mode fanMode_[board::kChannelCount] = {};
     Mode previousCalibrationMode_ = Mode::Auto;

@@ -135,6 +135,25 @@ int main() {
     assert(Serial.out.find("CURVE 1 20 30 30 40 45 60 60 80 75 100") != std::string::npos);
     assert(Serial.out.find("PONG 5") != std::string::npos);
 
+    // Transactional volatile profiles must never overwrite saved NVS curves.
+    Serial.out.clear();
+    Serial.send("RTCURVE BEGIN\n");
+    for (unsigned ch = 1; ch <= 8; ++ch)
+        Serial.send("RTCURVE SET " + std::to_string(ch) +
+                    " 25 75 35 80 50 85 65 95 80 100\n");
+    Serial.send("RTCURVE COMMIT\nRTCURVE?\n");
+    console.poll();
+    assert(Serial.out.find("RTCURVE ACTIVE=1") != std::string::npos);
+    assert(cooling.runtimeProfileActive(mock::currentMs));
+    assert(cooling.curve(0)[0].pwm == 30); // Persistent curve unchanged.
+    mock::currentMs += 20001U;
+    cooling.update(mock::currentMs);
+    assert(!cooling.runtimeProfileActive(mock::currentMs));
+    Serial.out.clear();
+    Serial.send("RTCURVE?\n");
+    console.poll();
+    assert(Serial.out.find("RTCURVE ACTIVE=0") != std::string::npos);
+
     // A calibration sweep logs 21 PWM/RPM samples, then saves them to NVS.
     Serial.out.clear();
     cooling.setTemperature(2, 450, mock::currentMs);

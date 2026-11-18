@@ -222,6 +222,43 @@ const CoolingController::CurvePoint* CoolingController::curve(uint8_t ch, bool s
     return secondary ? saved_[ch].secondCurve : saved_[ch].curve;
 }
 
+bool CoolingController::runtimeBegin(uint32_t nowMs) {
+    if (activeCalibration_ >= 0 || runtimeTransaction_) return false;
+    runtimeTransaction_ = true;
+    runtimeTransactionMs_ = nowMs;
+    runtimeStageMask_ = 0;
+    return true;
+}
+bool CoolingController::runtimeStage(uint8_t ch, const CurvePoint* points, uint32_t nowMs) {
+    if (!runtimeTransaction_ || nowMs - runtimeTransactionMs_ > 10000U ||
+        ch >= board::kChannelCount || !validCurve(points)) return false;
+    memcpy(runtimeStaging_[ch], points, sizeof(runtimeStaging_[ch]));
+    runtimeStageMask_ |= static_cast<uint8_t>(1U << ch);
+    return true;
+}
+bool CoolingController::runtimeCommit(uint32_t nowMs) {
+    if (!runtimeTransaction_ || nowMs - runtimeTransactionMs_ > 10000U ||
+        runtimeStageMask_ != 0xFFU || activeCalibration_ >= 0) return false;
+    memcpy(runtimeCurves_, runtimeStaging_, sizeof(runtimeCurves_));
+    runtimeTransaction_ = false;
+    runtimeStageMask_ = 0;
+    runtimeRefreshMs_ = nowMs;
+    runtimeEnabled_ = true;
+    return true;
+}
+bool CoolingController::runtimeProfileActive(uint32_t nowMs) const {
+    return runtimeEnabled_ && nowMs - runtimeRefreshMs_ <= 20000U;
+}
+bool CoolingController::runtimeKeepalive(uint32_t nowMs) {
+    if (!runtimeProfileActive(nowMs)) return false;
+    runtimeRefreshMs_ = nowMs;
+    return true;
+}
+void CoolingController::runtimeClear() {
+    runtimeEnabled_ = false;
+    runtimeTransaction_ = false;
+    runtimeStageMask_ = 0;
+}
 bool CoolingController::setFanType(uint8_t ch, FanController::Type type) {
     if (ch >= board::kChannelCount || activeCalibration_ == ch) return false;
     if (type != FanController::Type::TwoPin && type != FanController::Type::ThreePin) return false;
@@ -554,6 +591,9 @@ void CoolingController::updateStall(uint8_t ch, uint32_t nowMs) {
 }
 
 void CoolingController::update(uint32_t nowMs) {
+    if (runtimeEnabled_ && !runtimeProfileActive(nowMs)) runtimeClear();
+    if (runtimeTransaction_ && nowMs - runtimeTransactionMs_ > 10000U)
+        runtimeTransaction_ = false;
     if (activeCalibration_ >= 0) {
         const uint8_t ch = static_cast<uint8_t>(activeCalibration_);
         if (!freshPair(ch, nowMs) || overTemperature(ch)) {
@@ -648,7 +688,8 @@ void CoolingController::update(uint32_t nowMs) {
             desiredRpm_[ch] = fixedRpm_[ch];
             regulate = true;
         } else {
-            targetPwm = interpolate(saved_[ch].curve, filteredTemp_[ch]);
+            targetPwm = interpolate(runtimeProfileActive(nowMs)
+                ? runtimeCurves_[ch] : saved_[ch].curve, filteredTemp_[ch]);
             if (saved_[ch].dualEnabled) {
                 const uint8_t second = interpolate(saved_[ch].secondCurve, filteredTemp2_[ch]);
                 if (second > targetPwm) targetPwm = second;
