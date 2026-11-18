@@ -49,6 +49,7 @@ from ui_dashboard import DashboardShell
 from smart_control import SafeTemperatureFilter, AutoProfileSelector
 from tray_monitor import FaultNotificationGate
 from tach_health import TachHealthMonitor
+from fan_groups_ui import FanGroupsDialog
 from pid_autotune_ui import PidAutotuneDialog
 from telemetry_store import TelemetryStore
 from sensor_pipeline import (
@@ -243,6 +244,9 @@ class FanArgbWindow(QMainWindow):
         controls.addWidget(all_auto)
         table_layout.addLayout(controls)
         group_row = QHBoxLayout()
+        fan_group_button = QPushButton("Групи вентиляторів…")
+        fan_group_button.clicked.connect(self.open_fan_groups)
+        group_row.addWidget(fan_group_button)
         group_edit = QPushButton("☑ Вибрати датчики групи для вентилятора…")
         group_edit.clicked.connect(self.edit_sensor_group)
         group_row.addWidget(group_edit)
@@ -1410,6 +1414,9 @@ class FanArgbWindow(QMainWindow):
         data = [self.curves[ch] for ch in range(1,9)]
         self.settings.setValue("customCurves", json.dumps(data))
         self.log("Custom-профіль збережено на ПК")
+
+    def open_fan_groups(self) -> None:
+        FanGroupsDialog(self.settings, self.send, self).exec()
 
     def apply_profile(self) -> None:
         name = self.profile_box.currentText()

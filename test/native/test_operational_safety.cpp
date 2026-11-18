@@ -28,6 +28,28 @@ int main() {
         assert(cooling.mode(i) == CoolingController::Mode::Auto);
     }
 
+    // Group mask commands must obey the same non-qualified driver lock.
+    Serial.out.clear();
+    Serial.send("FANMASK MANUAL 3 30\n");
+    console.poll();
+    assert(Serial.out.find("ERR fan mask control blocked") != std::string::npos);
+    assert(cooling.mode(0) == CoolingController::Mode::Auto);
+    assert(cooling.mode(1) == CoolingController::Mode::Auto);
+    assert(cooling.mode(2) == CoolingController::Mode::Auto);
+    Serial.out.clear();
+    Serial.send("FANMASK MANUAL 3 100\n");
+    console.poll();
+    assert(Serial.out.find("OK FANMASK") != std::string::npos);
+    assert(cooling.mode(0) == CoolingController::Mode::Manual);
+    assert(cooling.mode(1) == CoolingController::Mode::Manual);
+    assert(cooling.mode(2) == CoolingController::Mode::Auto);
+    Serial.out.clear();
+    Serial.send("FANMASK AUTO 3\n");
+    console.poll();
+    assert(Serial.out.find("OK FANMASK") != std::string::npos);
+    assert(cooling.mode(0) == CoolingController::Mode::Auto);
+    assert(cooling.mode(1) == CoolingController::Mode::Auto);
+
     // No tach data yet: non-invasive health report must not claim detection.
     Serial.out.clear();
     Serial.send("HEALTH\n");

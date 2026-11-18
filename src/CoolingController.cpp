@@ -291,6 +291,22 @@ bool CoolingController::setAuto(uint8_t ch) {
     if (!freshPair(ch, millis())) fans_.setPercent(ch, 100);
     return true;
 }
+bool CoolingController::setManualMask(uint8_t mask, uint8_t pwm) {
+    if (!mask || activeCalibration_ >= 0) return false;
+    for (uint8_t ch = 0; ch < board::kChannelCount; ++ch)
+        if ((mask & (1U << ch)) && !canSetManual(ch, pwm)) return false;
+    // setManual rechecks temperature, faults and startup on each output.
+    // After preflight, all selected calls are valid and cannot weaken safety.
+    for (uint8_t ch = 0; ch < board::kChannelCount; ++ch)
+        if (mask & (1U << ch)) setManual(ch, pwm);
+    return true;
+}
+bool CoolingController::setAutoMask(uint8_t mask) {
+    if (!mask || activeCalibration_ >= 0) return false;
+    for (uint8_t ch = 0; ch < board::kChannelCount; ++ch)
+        if (mask & (1U << ch)) setAuto(ch);
+    return true;
+}
 
 void CoolingController::setTemperatureFrom(uint8_t ch, uint16_t deciC,
                                             uint32_t nowMs, bool secondary,

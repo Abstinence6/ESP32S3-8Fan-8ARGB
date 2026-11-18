@@ -971,6 +971,23 @@ void SerialConsole::handleLine(char* line) {
         if (!noMore() || !cooling_.clearHistory()) return error();
         serial_.println(F("OK")); return;
     }
+    if (!strcmp(command, "FANMASK")) {
+        char* op = next();
+        uint8_t mask = 0, percent = 0;
+        if (!op) return error();
+        for (char* p = op; *p; ++p) *p = static_cast<char>(toupper(static_cast<unsigned char>(*p)));
+        if (!parseByte(next(), 255, mask) || !mask) return error();
+        bool ok = false;
+        if (!strcmp(op, "MANUAL")) {
+            if (!parseByte(next(), 100, percent) || !noMore()) return error();
+            ok = cooling_.setManualMask(mask, percent);
+        } else if (!strcmp(op, "AUTO")) {
+            if (!noMore()) return error();
+            ok = cooling_.setAutoMask(mask);
+        } else return error();
+        serial_.println(ok ? F("OK FANMASK") : F("ERR fan mask control blocked"));
+        return;
+    }
     if (strcmp(command, "FAN") == 0 || strcmp(command, "ALLFAN") == 0) {
         const bool all = (strcmp(command, "ALLFAN") == 0);
         uint8_t ch = 0, percent = 0;
@@ -1041,6 +1058,7 @@ void SerialConsole::printHelp() {
     serial_.println(F("PWRDATA <cpuW|65535> <gpuW|65535> (expires after 6s)"));
     serial_.println(F("TEMP <ch> <0..1250> | AUTO <ch> | ALLAUTO"));
     serial_.println(F("FAN <ch> <0..100> | ALLFAN <0..100> (manual override)"));
+    serial_.println(F("FANMASK MANUAL <mask:1..255> <0..100> | FANMASK AUTO <mask>"));
     serial_.println(F("CURVE? <ch> | CURVE <ch> <T1> <PWM1> ... <T5> <PWM5>"));
     serial_.println(F("CAL START <ch> | CAL SMART <ch> | CAL GET <ch> | CAL CANCEL"));
     serial_.println(F("TEMP2 / CURVE2 / CURVE2? for second thermal source; DUAL <ch> 0|1"));

@@ -45,6 +45,9 @@ public:
     bool canSetManual(uint8_t ch, uint8_t pwm) const;
     bool setFixedRpm(uint8_t ch, uint16_t rpm);
     bool setAuto(uint8_t ch);
+    // Preflight every selected channel before any mutation. Mask bit 0 = fan 1.
+    bool setManualMask(uint8_t mask, uint8_t pwm);
+    bool setAutoMask(uint8_t mask);
     bool startCalibration(uint8_t ch, uint32_t nowMs, bool smart = false);
     bool cancelCalibration();
     bool calibrationActive() const { return activeCalibration_ >= 0; }
