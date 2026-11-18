@@ -37,6 +37,7 @@ from sacn_bridge import E131Listener, SACN_PORT, SERIAL_BAUD, encode_rgb_frame
 from protocol import validate_curve, DEFAULT_CURVE, make_curve_command, parse_curve, parse_status
 from serial_owner import SerialProxyClient
 from serial_tx import SerialTransmitter
+from rgb_stream import AdaptiveRgbStream
 from openrgb_native import OpenRGBNativeServer
 from port_recovery import PortRecovery, SerialHeartbeat
 from profiles import PRESETS
@@ -119,8 +120,7 @@ class FanArgbWindow(QMainWindow):
         self.temperature_future: Future | None = None
         self.sacn = E131Listener()
         self.openrgb_native = OpenRGBNativeServer()
-        self.sacn_pending: dict[int, bytes] = {}
-        self.sacn_last_sent = 0.0
+        self.rgb_stream = AdaptiveRgbStream()
         self.sacn_forwarded = 0
         self._build_ui()
         self._setup_tray()
@@ -583,6 +583,7 @@ class FanArgbWindow(QMainWindow):
                 )
                 using_agent = False
             self.tx = SerialTransmitter(self.port)
+            self.rgb_stream.reset()
             self.led_counts = None
             self.heartbeat.reset()
             self.read_buffer = ""
@@ -669,6 +670,7 @@ class FanArgbWindow(QMainWindow):
                 pass
         if self.tx is not None:
             self.tx.clear()
+        self.rgb_stream.reset()
         self.tx = None
         self.port = None
         self.heartbeat.reset()
@@ -1654,6 +1656,7 @@ class FanArgbWindow(QMainWindow):
         self.dashboard.device_settings.wifi_ssid.setFocus()
 
     def toggle_native_openrgb(self, enabled: bool) -> None:
+        self.rgb_stream.reset()
         if enabled and self.dashboard.temperature_argb.active:
             self.dashboard.temperature_argb.stop()
         if not enabled:
@@ -1682,16 +1685,19 @@ class FanArgbWindow(QMainWindow):
 
     def poll_native_openrgb(self) -> None:
         frames = self.openrgb_native.read_latest()
-        if not self.port or self.led_counts is None:
+        if (not self.port or self.led_counts is None or
+                not self.dashboard.native_checkbox.isChecked()):
             return
-        for ch, rgb in frames.items():
-            try:
-                if not self.queue_rgb(ch, encode_rgb_frame(ch, rgb)):
-                    break
-            except ValueError as exc:
-                self.log(f"OpenRGB SDK кадр відхилено: {exc}")
+        now = time.monotonic()
+        try:
+            self.rgb_stream.offer(frames, self.led_counts, now=now)
+            self.rgb_stream.dispatch(self.queue_rgb, now=now)
+        except (ValueError, OSError, serial.SerialException) as exc:
+            self.log(f"OpenRGB SDK кадр відхилено: {exc}")
+            self.disconnect()
 
     def toggle_sacn(self, enabled: bool) -> None:
+        self.rgb_stream.reset()
         if enabled and self.dashboard.temperature_argb.active:
             self.dashboard.temperature_argb.stop()
         if enabled and self.dashboard.native_checkbox.isChecked():
@@ -1700,7 +1706,6 @@ class FanArgbWindow(QMainWindow):
             self.dashboard.studio.stop()
         if not enabled:
             self.sacn.stop()
-            self.sacn_pending.clear()
             self.bridge_status.setText("Вимкнено")
             self.dashboard.set_bridge_state(False)
             self.settings.setValue("sacnEnabled", False)
@@ -1722,32 +1727,24 @@ class FanArgbWindow(QMainWindow):
     def poll_sacn(self) -> None:
         if self.sacn.sock is None:
             return
-        # Keep the last frame per strip; drop stale frames when effects run faster
-        # than USB transfer. Fan temperatures and Serial commands stay responsive.
-        self.sacn_pending.update(self.sacn.read_latest())
-        now = time.monotonic()
-        if not self.port or self.led_counts is None or now - self.sacn_last_sent < 0.04 or not self.sacn_pending:
+        frames = self.sacn.read_latest()
+        if not self.port or self.led_counts is None:
+            self.rgb_stream.reset()  # no stale replay after reconnect
             return
-        self.sacn_last_sent = now
-        frames = self.sacn_pending
-        self.sacn_pending = {}
-        for ch, rgb in sorted(frames.items()):
-            count = min(self.led_counts[ch - 1], 170)
-            rgb = rgb[:3 * count]
-            if len(rgb) < 3:
-                continue
-            try:
-                packet = encode_rgb_frame(ch, rgb)
-                if not self.queue_rgb(ch, packet):
-                    raise OSError("RGB frame rejected")
-                self.sacn_forwarded = self.tx.frames_sent if self.tx else 0
-            except (ValueError, serial.SerialException, OSError) as exc:
-                self.log(f"ARGB E1.31 → USB ERROR: {exc}")
-                self.disconnect()
-                return
-        if frames and self.tx and (self.tx.frames_sent % 50) < len(frames):
+        now = time.monotonic()
+        try:
+            self.rgb_stream.offer(frames, self.led_counts, now=now)
+            queued = self.rgb_stream.dispatch(self.queue_rgb, now=now)
+        except (ValueError, serial.SerialException, OSError) as exc:
+            self.log(f"ARGB E1.31 → USB ERROR: {exc}")
+            self.disconnect()
+            return
+        if queued and self.tx is not None:
+            self.sacn_forwarded = self.tx.frames_sent
             self.bridge_status.setText(
-                f"Прийом: 127.0.0.1:{SACN_PORT} ({self.sacn_forwarded} кадрів → ESP)"
+                f"Прийом: 127.0.0.1:{SACN_PORT} "
+                f"({self.sacn_forwarded} кадрів → ESP · "
+                f"ліміт ≈{self.rgb_stream.target_fps(now=now):.1f} FPS/зону)"
             )
             self.dashboard.set_bridge_state(True, self.sacn_forwarded)
 

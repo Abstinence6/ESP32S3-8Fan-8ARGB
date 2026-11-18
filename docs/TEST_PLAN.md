@@ -69,3 +69,18 @@ project: no hardware qualification is implied by a successful CI run.
 - Reject ARGB budgets below the estimated total idle LED current; verify the
   actual physical current separately (software limits do not replace fuses).
 - Stale temperatures must publish `unknown` to the retained MQTT topic.
+
+
+## Shared PC sensor and adaptive RGB regression checks
+
+- Foreground GUI and headless agent use the same eight-route sensor planner:
+  missing/invalid primary or secondary sensors never fabricate temperatures.
+- Both modes share validated CPU/GPU watt forwarding and GPU-load profile
+  selection; NVS curve writes still depend on firmware acknowledgement.
+- E1.31 and native OpenRGB share an adaptive scene budget (at most 25 FPS per
+  changing zone, reducing the cap for eight 170-pixel strips at 60 kB/s).
+- Identical frames are coalesced/suppressed, with an under-3-second keepalive
+  while the source remains active. Disconnect/owner handoff drops old frames.
+- RGB byte-rate limiting is still enforced in SerialTransmitter; control
+  commands always have priority. Real USB and ESP rendering FPS require
+  oscilloscope/bench measurement.

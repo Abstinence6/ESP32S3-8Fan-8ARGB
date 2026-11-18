@@ -312,3 +312,20 @@ GitHub Actions artifacts із push не є Releases. Поки немає опу�
 але **маніфест не має цифрового підпису**. Це не замінює автентифікацію
 GitHub, перевірку постачальника і відомої плати. Автоматичні перепрошивання
 та запуск завантажених EXE заборонені.
+
+
+## Shared sensor planner and adaptive USB RGB (main)
+
+GUI and the background agent now use the same `sensor_pipeline.py` to route
+primary/secondary temperature readings, smoothing, `PWRDATA`, and automatic
+GPU-load profiles. Lost sensors are omitted so the ESP32 10-second fail-safe
+continues to work.
+
+Both OpenRGB E1.31 and the native SDK use `rgb_stream.py` for adaptive scene
+pacing. Up to 25 scene updates/s are queued when the active LED count fits the
+60 kB/s RGB allocation; many long, changing strips automatically lower the
+rate. Repeated identical frames are suppressed but refreshed within 2 seconds
+while new source frames keep arriving, avoiding the firmware's 3-second
+external-frame timeout. SerialTransmitter still enforces its byte budget and
+keeps temperature and control writes ahead of RGB. Live limits are estimates,
+not measured electrical or USB performance.

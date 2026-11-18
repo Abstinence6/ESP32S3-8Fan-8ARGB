@@ -21,6 +21,7 @@ try:
     from .smart_control import SafeTemperatureFilter, AutoProfileSelector
     from .serial_owner import SerialOwnerServer
     from .serial_tx import SerialTransmitter
+    from .rgb_stream import AdaptiveRgbStream
     from .telemetry_store import TelemetryStore
     from .tach_health import TachHealthMonitor
     from .protocol import parse_status
@@ -33,6 +34,7 @@ except ImportError:  # packaged as a standalone PyInstaller entrypoint
     from smart_control import SafeTemperatureFilter, AutoProfileSelector
     from serial_owner import SerialOwnerServer
     from serial_tx import SerialTransmitter
+    from rgb_stream import AdaptiveRgbStream
     from telemetry_store import TelemetryStore
     from tach_health import TachHealthMonitor
     from protocol import parse_status
@@ -66,9 +68,9 @@ def run_agent() -> int:
     import serial
     from PySide6.QtCore import QSettings
     try:
-        from .sacn_bridge import E131Listener, SERIAL_BAUD, encode_rgb_frame
+        from .sacn_bridge import E131Listener, SERIAL_BAUD
     except ImportError:
-        from sacn_bridge import E131Listener, SERIAL_BAUD, encode_rgb_frame
+        from sacn_bridge import E131Listener, SERIAL_BAUD
     settings = QSettings("FanARGB", "FanARGBControl")
     log = setup_logging()
     output: serial.Serial | None = None
@@ -102,8 +104,7 @@ def run_agent() -> int:
     next_status = 0.0
     client_was_connected = False
     next_temps = 0.0
-    last_rgb = 0.0
-    last_frames: dict[int, bytes] = {}
+    rgb_stream = AdaptiveRgbStream()
     try:
         while True:
             now = time.monotonic()
@@ -113,6 +114,7 @@ def run_agent() -> int:
                     try:
                         output = serial.Serial(port_name, SERIAL_BAUD, timeout=0, write_timeout=0.25)
                         tx = SerialTransmitter(output)
+                        rgb_stream.reset()
                         led_counts = None
                         buffer = ""
                         log.info("Connected to %s", port_name)
@@ -124,7 +126,7 @@ def run_agent() -> int:
                         log.warning("Unable to connect %s: %s", port_name, exc)
             owner.poll(tx if tx is not None else output)
             if owner.has_client != client_was_connected:
-                last_frames.clear() # never replay stale RGB across GUI handoff
+                rgb_stream.reset() # never replay stale RGB across GUI handoff
                 if tx is not None:
                     tx.clear()
                 client_was_connected = owner.has_client
@@ -194,15 +196,12 @@ def run_agent() -> int:
                         except Exception as exc:
                             log.warning("Sensor read failed; ESP thermal watchdog stays active: %s", exc)
                         temp_future = None
-                    last_frames.update(listener.read_latest())
-                    if not owner.has_client and led_counts is not None and now - last_rgb >= 0.04 and last_frames:
-                        last_rgb = now
-                        sending, last_frames = last_frames, {}
-                        for ch, rgb in sorted(sending.items()):
-                            rgb = rgb[:led_counts[ch-1] * 3]
-                            if len(rgb) < 3: continue
-                            packet = encode_rgb_frame(ch, rgb)
-                            tx.queue_rgb(ch, packet)
+                    frames = listener.read_latest()
+                    if not owner.has_client and led_counts is not None:
+                        rgb_stream.offer(frames, led_counts, now=now)
+                        rgb_stream.dispatch(tx.queue_rgb, now=now)
+                    else:
+                        rgb_stream.reset()
                     if tx is not None:
                         tx.flush_rgb(now, max_frames=4)
                 except (serial.SerialException, OSError, ValueError) as exc:
@@ -214,11 +213,12 @@ def run_agent() -> int:
                         tx.clear()
                     tx = None
                     led_counts = None
-                    last_frames.clear()
+                    rgb_stream.reset()
                     next_connect = now + 5.0
             else:
                 # Drop unattended frames while no COM port is available.
                 listener.read_latest()
+                rgb_stream.reset()
             time.sleep(0.02)
     except KeyboardInterrupt:
         return 0
