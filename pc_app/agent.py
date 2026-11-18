@@ -25,6 +25,7 @@ try:
     from .telemetry_store import TelemetryStore
     from .tach_health import TachHealthMonitor
     from .reactive_argb import MAPPING_KEY, value_commands
+    from .audio_capture import LoopbackAudioCapture, audio_command
     from .application_profiles import (
         ApplicationProfilePolicy, loads as load_application_rules,
         runtime_commands, scan_processes,
@@ -43,6 +44,7 @@ except ImportError:  # packaged as a standalone PyInstaller entrypoint
     from telemetry_store import TelemetryStore
     from tach_health import TachHealthMonitor
     from reactive_argb import MAPPING_KEY, value_commands
+    from audio_capture import LoopbackAudioCapture, audio_command
     from application_profiles import (
         ApplicationProfilePolicy, loads as load_application_rules,
         runtime_commands, scan_processes,
@@ -115,6 +117,12 @@ def run_agent() -> int:
     app_last_lease = 0.0
     runtime_curve_supported = False
     reactive_fx_supported = False
+    audio_supported = False
+    audio_capture = LoopbackAudioCapture()
+    audio_enabled = str(settings.value("audioCaptureEnabled","false")).lower() in ("true","1")
+    last_audio_sync = 0.0
+    last_audio_attempt = 0.0
+    last_audio_error = ""
     telemetry = TelemetryStore()
     tach_monitor = TachHealthMonitor()
     last_refs_raw = str(settings.value("fanHealthRefsV1", ""))
@@ -141,6 +149,7 @@ def run_agent() -> int:
                         led_counts = None
                         runtime_curve_supported = False
                         reactive_fx_supported = False
+                        audio_supported = False
                         app_active = None
                         app_policy.reset()
                         buffer = ""
@@ -157,6 +166,8 @@ def run_agent() -> int:
                 if tx is not None:
                     tx.clear()
                 client_was_connected = owner.has_client
+                if owner.has_client:
+                    audio_capture.stop()
                 app_active = None  # GUI owns policy while attached.
                 app_policy.reset()
                 if not owner.has_client:
@@ -181,6 +192,7 @@ def run_agent() -> int:
                                 values = dict(part.split("=", 1) for part in line.split() if "=" in part)
                                 runtime_curve_supported = values.get("RTCURVE") == "1"
                                 reactive_fx_supported = values.get("RFX") == "1"
+                                audio_supported = values.get("AUDIO") == "1"
                             status = parse_status(line.strip())
                             if status:
                                 telemetry.record_fan(
@@ -278,6 +290,26 @@ def run_agent() -> int:
                         if app_active and now - app_last_lease > 6.0:
                             tx.send_command("RTCURVE KEEPALIVE")
                             app_last_lease = now
+                    # Foreground GUI exclusively owns audio capture when attached.
+                    if now-last_audio_sync>=2.0:
+                        settings.sync()
+                        audio_enabled=str(settings.value("audioCaptureEnabled","false")).lower() in ("true","1")
+                        last_audio_sync=now
+                    if (not owner.has_client and not query_due and audio_supported and
+                            audio_enabled):
+                        if (not audio_capture.running and
+                                (last_audio_attempt == 0.0 or now-last_audio_attempt>=10.0)):
+                            audio_capture.start()
+                            last_audio_attempt=now
+                        levels=audio_capture.read_latest(now)
+                        if levels is not None:
+                            tx.send_command(audio_command(levels))
+                        problem=audio_capture.error
+                        if problem and problem!=last_audio_error:
+                            log.warning("Audio loopback unavailable: %s",problem)
+                            last_audio_error=problem
+                    elif audio_capture.running:
+                        audio_capture.stop()
                     frames = listener.read_latest()
                     if not owner.has_client and led_counts is not None:
                         rgb_stream.offer(frames, led_counts, now=now)
@@ -297,6 +329,8 @@ def run_agent() -> int:
                     led_counts = None
                     runtime_curve_supported = False
                     reactive_fx_supported = False
+                    audio_supported = False
+                    audio_capture.stop()
                     app_active = None
                     app_policy.reset()
                     rgb_stream.reset()
@@ -314,6 +348,7 @@ def run_agent() -> int:
         temp_executor.shutdown(wait=False, cancel_futures=True)
         process_executor.shutdown(wait=False, cancel_futures=True)
         sensor_sampler.close()
+        audio_capture.stop()
         telemetry.close()
         if output is not None:
             output.close()

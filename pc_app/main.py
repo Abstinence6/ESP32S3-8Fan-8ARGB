@@ -51,6 +51,7 @@ from tray_monitor import FaultNotificationGate
 from tach_health import TachHealthMonitor, dump_references
 from fan_groups_ui import FanGroupsDialog
 from reactive_argb import MAPPING_KEY, value_commands
+from audio_capture import LoopbackAudioCapture, audio_command
 from application_profiles import (
     ApplicationProfilePolicy, loads as load_application_rules,
     runtime_commands, scan_processes,
@@ -121,6 +122,9 @@ class FanArgbWindow(QMainWindow):
         self.auto_selector = AutoProfileSelector()
         self.runtime_curve_supported = False
         self.reactive_fx_supported = False
+        self.audio_supported = False
+        self.audio_capture = LoopbackAudioCapture()
+        self._last_audio_error = ""
         self._reactive_error = ""
         self.app_policy = ApplicationProfilePolicy()
         self.app_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ApplicationProfiles")
@@ -152,6 +156,9 @@ class FanArgbWindow(QMainWindow):
         self.tx_timer = QTimer(self)
         self.tx_timer.timeout.connect(self.flush_serial_tx)
         self.tx_timer.start(15)
+        self.audio_timer = QTimer(self)
+        self.audio_timer.timeout.connect(self.poll_audio_levels)
+        self.audio_timer.start(90)
         self.reconnect_timer = QTimer(self)
         self.reconnect_timer.timeout.connect(self._try_reconnect)
         self.reconnect_timer.start(5000)
@@ -692,7 +699,30 @@ class FanArgbWindow(QMainWindow):
             self.send("HTEMP?")
             self.dashboard.device_settings.refresh_online()
 
+    def set_audio_capture_enabled(self, enabled: bool) -> None:
+        # Persistent opt-in; never access audio before the user activates it.
+        self.settings.setValue("audioCaptureEnabled", bool(enabled))
+        if enabled and self.port and self.audio_supported:
+            self.audio_capture.start()
+        else:
+            self.audio_capture.stop()
+
+    def poll_audio_levels(self) -> None:
+        if not self.port or not self.audio_supported:
+            return
+        problem = self.audio_capture.error
+        if problem and problem != self._last_audio_error:
+            self.log("Audio loopback: " + problem)
+            self.dashboard.audio_reactive.status.setText(
+                "Помилка захоплення системного звуку: " + problem)
+            self._last_audio_error = problem
+        data = self.audio_capture.read_latest()
+        if data is not None:
+            self.send(audio_command(data))
+
     def disconnect(self, manual: bool = False) -> None:
+        self.audio_capture.stop()
+        self.audio_supported = False
         if manual:
             self._reconnect_armed = False
         if self.port:
@@ -718,6 +748,7 @@ class FanArgbWindow(QMainWindow):
             self.pid_tune_dialog.set_connected(False)
         self.dashboard.native_effects.set_supported(False)
         self.dashboard.reactive_argb.set_supported(False)
+        self.dashboard.audio_reactive.set_supported(False)
         if self.dashboard.native_checkbox.isChecked():
             self.dashboard.native_checkbox.setChecked(False)
         if self.dashboard.studio.active:
@@ -804,6 +835,8 @@ class FanArgbWindow(QMainWindow):
             return
         if self.dashboard.reactive_argb.handle_line(line):
             return
+        if self.dashboard.audio_reactive.handle_line(line):
+            return
         if self.dashboard.device_settings.handle_line(line):
             return
         if self.dashboard.diagnostics.handle_line(line):
@@ -880,6 +913,12 @@ class FanArgbWindow(QMainWindow):
                 self.dashboard.device_settings.assist_dialog.set_supported(self.cooling_assist_supported)
                 self.runtime_curve_supported = fields.get("RTCURVE") == "1"
                 self.dashboard.native_effects.set_supported(fields.get("FX") == "1")
+                self.audio_supported = fields.get("AUDIO") == "1"
+                self.dashboard.audio_reactive.set_supported(self.audio_supported)
+                if self.audio_supported:
+                    self.dashboard.audio_reactive.readback()
+                    if str(self.settings.value("audioCaptureEnabled","false")).lower() in ("true","1"):
+                        self.audio_capture.start()
                 self.reactive_fx_supported = fields.get("RFX") == "1"
                 self.dashboard.reactive_argb.set_supported(self.reactive_fx_supported)
                 if self.reactive_fx_supported:
@@ -1924,6 +1963,7 @@ class FanArgbWindow(QMainWindow):
         if self.tray_icon is not None:
             self.tray_icon.hide()
         self.dashboard.studio.stop()
+        self.audio_capture.stop()
         self.openrgb_native.stop()
         self.sacn.stop()
         self.temperature_executor.shutdown(wait=False, cancel_futures=True)
