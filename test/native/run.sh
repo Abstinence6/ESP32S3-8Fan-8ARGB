@@ -8,6 +8,12 @@ g++ -std=c++17 -Wall -Wextra -Werror -DFAN_DC_PWM_VALIDATED=1 -Itest/native/mock
   src/CoolingController.cpp src/NetworkRgbBridge.cpp src/MqttBridge.cpp src/PcPowerController.cpp src/HardwareTemperature.cpp src/SerialConsole.cpp src/main.cpp test/native/test_main.cpp -o "$out"
 "$out"
 
+# Persistent offline cooling and RGB profiles, including NVS rollback.
+g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
+  test/native/mock/Arduino.cpp src/FanController.cpp src/ArgbController.cpp \
+  src/CoolingController.cpp test/native/test_offline_profiles.cpp -o "$out"
+"$out"
+
 # Independent PID gains NVS; reject unqualified fan/driver/TACH.
 g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
   test/native/mock/Arduino.cpp src/FanController.cpp src/CoolingController.cpp \

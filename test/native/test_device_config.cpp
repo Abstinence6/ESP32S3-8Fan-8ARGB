@@ -31,10 +31,13 @@ int main() {
     assert(leds.begin());
     CoolingController cooling(fans, Serial);
     assert(cooling.begin());
+    OfflineProfiles offline(cooling, leds);
+    assert(offline.begin());
     NetworkRgbBridge wifi(leds);
     MqttBridge mqtt(cooling, fans, leds, wifi);
     assert(mqtt.begin());
-    SerialConsole console(Serial, fans, leds, cooling, &wifi, &mqtt);
+    SerialConsole console(Serial, fans, leds, cooling, &wifi, &mqtt, nullptr,
+                          nullptr, nullptr, nullptr, &offline);
     console.begin();
     Serial.out.clear();
 
@@ -65,6 +68,19 @@ int main() {
     assert(Serial.out.find("ERR WIFI config") != std::string::npos); // mock Wi-Fi deliberately disabled
     assert(Serial.out.find("STRIPCFG CH=1 LEDS=") != std::string::npos);
     assert(Serial.out.find("ARGBSTATUS LIMIT_MA=") != std::string::npos);
+
+    // Device-only profile capture, activation and safe flash persistence.
+    Serial.out.clear();
+    Serial.send("PROFILE?\nPROFILE SELECT 1\nPROFILE SAVE 1\nPROFILE SELECT 1\nPROFILE BOOT 1\nPROFILE?\n");
+    console.poll();
+    assert(Serial.out.find("ERR PROFILE invalid or NVS") != std::string::npos);
+    assert(Serial.out.find("PROFILE ACTIVE=1 BOOT=1 SLOTS=100") != std::string::npos);
+    assert(offline.active() == 1);
+    Serial.out.clear();
+    Serial.send("PROFILE CLEAR\nPROFILE BOOT 0\n");
+    console.poll();
+    assert(!cooling.offlineProfileActive());
+    assert(offline.boot() == 0);
 
     // Independent native LED effects are persisted only on an explicit SAVE.
     Serial.out.clear();
