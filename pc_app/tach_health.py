@@ -101,10 +101,12 @@ class TachHealthMonitor:
         if reference and abs(pwm - reference[0]) <= 3:
             if baseline < reference[1] * 0.80:
                 entry.degraded_samples += 1
-                if entry.degraded_samples >= 3 and entry.flagged != "degraded":
-                    entry.flagged = "degraded"
-                    reduction = round((1 - baseline / reference[1]) * 100)
-                    return f"Fan {channel}: RPM нижче еталона на {reduction}% при {pwm}% PWM"
+                if entry.degraded_samples >= 3:
+                    if entry.flagged != "degraded":
+                        entry.flagged = "degraded"
+                        reduction = round((1 - baseline / reference[1]) * 100)
+                        return f"Fan {channel}: RPM нижче еталона на {reduction}% при {pwm}% PWM"
+                    return None  # Do not overwrite the active degradation with a noise warning.
             else:
                 entry.degraded_samples = 0
                 if entry.flagged == "degraded":

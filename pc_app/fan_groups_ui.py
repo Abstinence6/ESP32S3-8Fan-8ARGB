@@ -4,16 +4,21 @@ try:
     from .fan_groups import FanGroup, command, dumps, loads, validate
 except ImportError:
     from fan_groups import FanGroup, command, dumps, loads, validate
+try:
+    from .fan_groups import profile_commands
+except ImportError:
+    from fan_groups import profile_commands
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QListWidget,
     QLineEdit, QCheckBox, QPushButton, QLabel, QMessageBox, QInputDialog)
 
 class FanGroupsDialog(QDialog):
-    def __init__(self, settings, send, parent=None):
+    def __init__(self, settings, send, parent=None, manual_changed=None):
         super().__init__(parent)
         self.setWindowTitle("Групи вентиляторів")
         self.setMinimumWidth(460)
         self.settings = settings
         self.send = send
+        self.manual_changed = manual_changed
         try:
             self.groups = list(loads(str(settings.value("fanGroupsV1", ""))))
         except ValueError:
@@ -42,7 +47,8 @@ class FanGroupsDialog(QDialog):
             edit.addWidget(button)
         layout.addLayout(edit)
         control = QHBoxLayout()
-        for title, callback in (("→ Авто", self._auto), ("PWM вручну…", self._manual)):
+        for title, callback in (("→ Авто", self._auto), ("PWM вручну…", self._manual),
+                                ("Профіль групи…", self._profile)):
             button = QPushButton(title)
             button.clicked.connect(callback)
             control.addWidget(button)
@@ -115,3 +121,22 @@ class FanGroupsDialog(QDialog):
         value, ok = QInputDialog.getInt(self, "Груповий PWM", "PWM, %:", 100, 0, 100)
         if ok:
             self._send(group, "manual", value)
+
+    def _profile(self):
+        group = self._chosen()
+        if group is None: return
+        name,ok = QInputDialog.getItem(self,"Профіль групи","Крива:",[
+            "Silent","Balanced","Performance"],1,False)
+        if not ok: return
+        answer = QMessageBox.question(
+            self, "Збереження кривих",
+            f"Записати криву {name} у NVS для FAN {', '.join(map(str,group.channels))}? "
+            "Кожен канал зберігається окремо; при втраті COM можливе часткове застосування.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes: return
+        if self.manual_changed is not None:
+            self.manual_changed()
+        for command_text in profile_commands(group,name):
+            if not self.send(command_text):
+                QMessageBox.warning(self,"Групи","Передачу перервано; перечитай поточні криві.")
+                return

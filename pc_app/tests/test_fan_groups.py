@@ -1,5 +1,5 @@
 import unittest
-from pc_app.fan_groups import FanGroup, command, dumps, loads, validate
+from pc_app.fan_groups import FanGroup, command, dumps, loads, validate, profile_commands
 
 class FanGroupTests(unittest.TestCase):
     def test_roundtrip_and_mask(self):
@@ -16,6 +16,10 @@ class FanGroupTests(unittest.TestCase):
                 loads(raw)
         with self.assertRaises(ValueError):
             command(FanGroup("A", (1,)), "manual", 101)
+        commands = profile_commands(FanGroup("Front", (1,2)), "Silent")
+        self.assertEqual(len(commands), 2)
+        self.assertTrue(commands[0].startswith("CURVE 1 "))
+        self.assertTrue(commands[1].startswith("CURVE 2 "))
 
 if __name__ == "__main__":
     unittest.main()

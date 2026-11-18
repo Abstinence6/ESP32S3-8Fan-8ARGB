@@ -112,6 +112,12 @@ class NativeEffectsPanel(QGroupBox):
         self._send(f"FX? {self.channel.currentData()}")
 
     def handle_line(self,line):
+        if line == "OK FX_SAVED":
+            self.status.setText("ESP32 підтвердив збереження сцен у NVS")
+            return True
+        if line.startswith("ERR FX"):
+            self.status.setText("ESP32 відхилив команду: " + line)
+            return True
         state = parse_fx_line(line)
         if state is None: return False
         if state.channel == self.channel.currentData():

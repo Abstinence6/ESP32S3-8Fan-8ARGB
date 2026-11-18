@@ -1518,7 +1518,7 @@ class FanArgbWindow(QMainWindow):
         self.app_policy.reset()
 
     def open_fan_groups(self) -> None:
-        FanGroupsDialog(self.settings, self.send, self).exec()
+        FanGroupsDialog(self.settings, self.send, self, self._disable_auto_for_manual_change).exec()
 
     def apply_profile(self) -> None:
         name = self.profile_box.currentText()

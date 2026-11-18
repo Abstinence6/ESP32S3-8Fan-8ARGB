@@ -73,3 +73,16 @@ def command(group: FanGroup, action: str, duty: int | None = None) -> str:
     if action == "manual" and type(duty) is int and 0 <= duty <= 100:
         return f"FANMASK MANUAL {group.mask} {duty}"
     raise ValueError("Invalid group command")
+
+def profile_commands(group: FanGroup, profile: str) -> tuple[str, ...]:
+    """Explicit persistent curve commands, for a user-confirmed group action."""
+    validate([group])
+    try:
+        from .profiles import PRESETS
+        from .protocol import make_curve_command
+    except ImportError:
+        from profiles import PRESETS
+        from protocol import make_curve_command
+    if profile not in PRESETS:
+        raise ValueError("Invalid fan-group profile")
+    return tuple(make_curve_command(ch, list(PRESETS[profile])) for ch in group.channels)
