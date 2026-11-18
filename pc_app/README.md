@@ -329,3 +329,22 @@ while new source frames keep arriving, avoiding the firmware's 3-second
 external-frame timeout. SerialTransmitter still enforces its byte budget and
 keeps temperature and control writes ahead of RGB. Live limits are estimates,
 not measured electrical or USB performance.
+
+## New controls: fan groups, application profiles, Fan Health, native scenes
+
+- **Fans → Групи вентиляторів:** store unique named groups of channels 1..8
+  and request atomic Auto or Manual mask control. A group can also receive a
+  user-confirmed persistent Silent/Balanced/Performance temperature curve.
+- **Fans → Профілі за програмами:** opt-in rules for exact Windows process
+  names, prioritized and debounced, with runtime-only `RTCURVE` values that
+  expire after 20 seconds without the connected GUI or agent refreshing them.
+- **Service → Diagnostics:** capture/reset the TACH baseline for a selected
+  three-pin fan after stable RPM samples. Fan Health records anomalies; it
+  never controls power or asserts a missing TACH means the fan has stopped.
+- **ARGB → Ефекти ESP32:** preview Gradient/Wave/Breathe/Chase directly on
+  ESP32, independently for each strip, and explicitly persist scene and
+  optional power-on playback. OpenRGB can still take over; fault warning
+  pixels and the global LED current estimate take precedence.
+
+These additions are capability-negotiated through `VERSION?` (`RTCURVE`,
+`FX` flags), and preserve the existing serial, MQTT and NVS settings.

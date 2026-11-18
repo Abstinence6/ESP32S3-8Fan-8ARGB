@@ -14,3 +14,12 @@ driver, the firmware rejects any request below 100% as usual.
 A successful Serial write means the bytes were queued, not that the ESP
 confirmed a transition; inspect the returned `OK FANMASK` and `STATUS`
 to verify hardware state. This feature cannot make the power stage fail-ON.
+
+## Named group profiles
+
+The Windows group editor also offers a user-confirmed Silent/Balanced/Performance
+curve for the selected group's members. Unlike manual/auto mask commands, this
+is a series of existing `CURVE` NVS writes, one per selected channel. The UI
+warns that interrupted USB delivery may result in a partial profile change.
+Explicit profile edits disable automatic process/GPU rules so they cannot
+silently overwrite the selected group settings.

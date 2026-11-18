@@ -233,3 +233,29 @@ be copied to this ESP32-S3 firmware. Commands are available through Serial
 (`PC STATUS|ON|OFF|FORCE`), the Windows companion and MQTT/Home Assistant
 Discovery (when enabled). Full wiring, safeguards and compile-time GPIO
 configuration: [docs/PC_POWER.md](docs/PC_POWER.md).
+
+## New in firmware v11: fan groups, Fan Health, runtime profiles, local ARGB
+
+- `FANMASK MANUAL <mask> <duty>` / `FANMASK AUTO <mask>` manage a selected
+  set of fans in one checked firmware operation. Named groups and group curves
+  are configured through the Windows fan page.
+- Fan Health can capture a stable RPM reference in Diagnostics and report
+  persistent loss of RPM using the existing Windows/SQLite alert path. It is
+  passive and cannot assert 2-pin fan rotation without feedback.
+- The opt-in Windows **application profile editor** uses only running process
+  executable names, with stable priority selection; cooling curves are sent
+  as 20-second leased `RTCURVE` profiles in RAM, not periodically written
+  to flash. The headless agent uses the same rules.
+- ESP32-native **Gradient, Wave, Breathe, Chase** effects can be edited in
+  the new ARGB tab, saved explicitly into CRC-checked NVS and optionally
+  enabled on startup. All frames retain global current estimation and
+  non-destructive fan safety warning overlays.
+
+[Fan groups](docs/FAN_GROUPS.md) ·
+[Application profiles](docs/APPLICATION_PROFILES.md) ·
+[Native ARGB effects](docs/ARGB_NATIVE_EFFECTS.md).
+
+**Electrical hardware qualification is STILL pending.** None of these
+features bypasses the 100% unqualified DC supply PWM interlock or provides
+MCU-independent fan power during reset. Do not enable 2/3-pin duty switching
+until the physical high-side power stage has been validated.

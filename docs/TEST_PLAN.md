@@ -84,3 +84,20 @@ project: no hardware qualification is implied by a successful CI run.
 - RGB byte-rate limiting is still enforced in SerialTransmitter; control
   commands always have priority. Real USB and ESP rendering FPS require
   oscilloscope/bench measurement.
+
+## New features regression checklist
+
+- Named fan-group mask command is rejected without a qualified high-side
+  driver; preflight is all-or-nothing and excludes nonmember channels.
+- Background and foreground process policy chooses the same prioritized
+  application, debounces changes and never logs command-line arguments.
+- `RTCURVE` requires all eight valid curves before COMMIT, never writes NVS,
+  expires after 20s without KEEPALIVE, and respects the existing 10s sensor
+  timeout, calibration guard, TACH and thermal failsafe.
+- Fan Health only flags verified 3-pin RPM trends with an explicit stable
+  reference and never claims two-pin operation without a TACH sensor.
+- Native effects run without Windows and use one existing RGB24 buffer per
+  channel. Boot is OFF unless explicitly saved as opted in; malformed scene
+  CRC restores safe defaults. Global current cap and safety overlay apply.
+- Windows settings backup validates new group/application/Fan Health data and
+  never imports arbitrary executable paths or authentication credentials.

@@ -24,6 +24,9 @@ class BackupTests(unittest.TestCase):
             "mqttPassword": "secret",
             "wifiPassword": "secret2",
             "sacnEnabled": True,
+            "fanGroupsV1": '{"version":1,"groups":[{"name":"Front","channels":[1,2]}]}',
+            "appProfileRulesV1": '{"version":1,"rules":[{"executable":"game.exe","profile":"Performance","priority":50}]}',
+            "appProfilesEnabled": False,
             "startExe": "C:\\attacker.exe",
         })
         backup = export_settings(src)
@@ -31,7 +34,7 @@ class BackupTests(unittest.TestCase):
         self.assertNotIn("secret", serialized)
         self.assertNotIn("attacker", serialized)
         dst = Settings()
-        self.assertEqual(restore_settings(dst, backup), 3)
+        self.assertEqual(restore_settings(dst, backup), 6)
         self.assertEqual(dst.data["source1"], src.data["source1"])
 
     def test_malformed_key_rejected_before_writes(self):
@@ -41,6 +44,11 @@ class BackupTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             restore_settings(destination, backup)
         self.assertEqual(destination.data["autoProfiles"], "false")
+        dangerous = {"schema":1,"application":"FanARGBControl","settings":{
+            "appProfileRulesV1": '{"version":1,"rules":[{"executable":"C:/bad.exe","profile":"Performance","priority":50}]}'
+        }}
+        with self.assertRaises(ValueError):
+            restore_settings(destination,dangerous)
 
 
 if __name__ == "__main__":

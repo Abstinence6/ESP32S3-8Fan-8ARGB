@@ -13,7 +13,8 @@ _ALLOWED = re.compile(
     r"^(?:source[1-8]|source2[1-8]|groupSensors[1-8]|"
     r"groupWeights[1-8]|dualEnabled[1-8]|customCurves|"
     r"autoProfiles|smoothTemperatures|minimizeToTray|"
-    r"sacnEnabled|argbStudioPreset|nwinfoProviders)$"
+    r"sacnEnabled|argbStudioPreset|nwinfoProviders|"
+    r"fanGroupsV1|fanHealthRefsV1|appProfileRulesV1|appProfilesEnabled)$"
 )
 
 
@@ -38,6 +39,21 @@ def validate_backup(data: object) -> dict[str, str]:
         if (not isinstance(key, str) or not _ALLOWED.fullmatch(key)
                 or not isinstance(value, str) or len(value) > 25000):
             raise ValueError("Untrusted setting key or value")
+    # New structured preferences have their own strict validators. A backup
+    # never carries full process paths, credentials or arbitrary executable code.
+    try:
+        from .fan_groups import loads as groups_loads
+        from .application_profiles import loads as app_loads
+        from .tach_health import load_references
+    except ImportError:
+        from fan_groups import loads as groups_loads
+        from application_profiles import loads as app_loads
+        from tach_health import load_references
+    for key, reader in (("fanGroupsV1", groups_loads),
+                        ("appProfileRulesV1", app_loads),
+                        ("fanHealthRefsV1", load_references)):
+        if key in values:
+            reader(values[key])
     return values
 
 
