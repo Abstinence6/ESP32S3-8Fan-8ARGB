@@ -54,6 +54,17 @@ int main() {
     assert(lights.getMode(1) == ArgbController::Mode::Solid);
     assert(!afterReboot.applyCommand((base+"/light/2/rgb/set").c_str(), "256,0,14", 1200));
     assert(afterReboot.applyCommand((base+"/light/2/set").c_str(), "OFF", 1200));
+    // MQTT reactive slots accept only bounded nonnegative data and never
+    // change cooling or 12V outputs. Same slots as USB RVAL.
+    assert(afterReboot.applyCommand((base+"/reactive/3/set").c_str(), "883", 2000));
+    uint32_t sample = 0;
+    assert(lights.reactiveInput(27, 2001, sample) && sample == 883);
+    assert(!afterReboot.applyCommand((base+"/reactive/9/set").c_str(), "883", 2000));
+    assert(!afterReboot.applyCommand((base+"/reactive/3/set").c_str(), "-1", 2000));
+    assert(!afterReboot.applyCommand((base+"/reactive/3/set").c_str(), "10000001", 2000));
+    assert(!afterReboot.applyCommand("esp32fan/untrusted/reactive/3/set", "990", 2000));
+    assert(fans.getPercent(0) == 100);
+
     // Stage multiple MQTT changes without mutating NVS or the active broker.
     const size_t beforeTxWrites = Preferences::writeCount();
     assert(afterReboot.txBegin());

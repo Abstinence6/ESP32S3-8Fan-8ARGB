@@ -95,6 +95,12 @@ g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
   test/native/test_argb_effects.cpp -o "$out"
 "$out"
 
+# Source-reactive LED modes, local fallback, stale telemetry, NVS and current guard.
+g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
+  test/native/mock/Arduino.cpp src/ArgbController.cpp \
+  test/native/test_argb_reactive.cpp -o "$out"
+"$out"
+
 # Per-channel brightness is persisted independently of external RGB frames.
 g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
   test/native/mock/Arduino.cpp src/ArgbController.cpp \

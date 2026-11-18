@@ -74,6 +74,21 @@ int main() {
     assert(Serial.out.find("FX CH=2 MODE=2") != std::string::npos);
     assert(leds.getMode(1) == ArgbController::Mode::Effect);
 
+    // Reactive scene protocol accepts only explicit bounded metric values.
+    Serial.out.clear();
+    Serial.send("RFX SET 2 26 1 2 100 900 2 10 20 30 100 110 120 3 64 0\n"
+                "RVAL 2 550\nRFX BOOT 2 0\nRFX SAVE\nRFX? 2\n");
+    console.poll();
+    assert(Serial.out.find("OK RFX_SAVED") != std::string::npos);
+    assert(Serial.out.find("RFX CH=2 SRC=26 FALL=1 STYLE=2") != std::string::npos);
+    assert(Serial.out.find(" FRESH=1 VALUE=550") != std::string::npos);
+    assert(leds.getMode(1) == ArgbController::Mode::Reactive);
+    Serial.out.clear();
+    Serial.send("RVAL 9 100\nRVAL 1 10000001\nRFX SET 2 26 25 2 0 1000 2 1 2 3 4 5 6 3 64 0\n");
+    console.poll();
+    assert(Serial.out.find("ERR arguments") != std::string::npos);
+    assert(Serial.out.find("ERR RFX invalid") != std::string::npos);
+
     // Command line >239 bytes must not bypass parser or change the fans.
     Serial.out.clear();
     Serial.send(std::string(300, 'X') + "\nSTATUS\n");
