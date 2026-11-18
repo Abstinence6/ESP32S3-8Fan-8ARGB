@@ -100,7 +100,7 @@ class OfflineProfilesDialog(QDialog):
         self.info.setText(
             f"Активний: {state.active or 'базовий'}, після reset: "
             f"{state.boot or 'базовий'}; збережені: "+
-            ", ".join(str(i+1) for i,v in enumerate(state.saved) if v or ()) )
+            ", ".join(str(i+1) for i,v in enumerate(state.saved) if v) )
         return True
 
 

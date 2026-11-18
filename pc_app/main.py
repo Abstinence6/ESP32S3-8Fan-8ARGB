@@ -50,6 +50,7 @@ from smart_control import SafeTemperatureFilter, AutoProfileSelector
 from tray_monitor import FaultNotificationGate
 from tach_health import TachHealthMonitor, dump_references
 from fan_groups_ui import FanGroupsDialog
+from autonomy_ui import OfflineProfilesDialog, AirflowDialog
 from reactive_argb import MAPPING_KEY, value_commands
 from audio_capture import LoopbackAudioCapture, audio_command
 from application_profiles import (
@@ -123,6 +124,10 @@ class FanArgbWindow(QMainWindow):
         self.runtime_curve_supported = False
         self.reactive_fx_supported = False
         self.audio_supported = False
+        self.offline_supported = False
+        self.airflow_supported = False
+        self.offline_dialog = None
+        self.airflow_dialog = None
         self.audio_capture = LoopbackAudioCapture()
         self._last_audio_error = ""
         self._reactive_error = ""
@@ -272,6 +277,12 @@ class FanArgbWindow(QMainWindow):
         fan_group_button = QPushButton("Групи вентиляторів…")
         fan_group_button.clicked.connect(self.open_fan_groups)
         group_row.addWidget(fan_group_button)
+        offline_button = QPushButton("Автономні профілі ESP32…")
+        offline_button.clicked.connect(self.open_offline_profiles)
+        group_row.addWidget(offline_button)
+        airflow_button = QPushButton("Airflow Assistant…")
+        airflow_button.clicked.connect(self.open_airflow_assistant)
+        group_row.addWidget(airflow_button)
         group_edit = QPushButton("☑ Вибрати датчики групи для вентилятора…")
         group_edit.clicked.connect(self.edit_sensor_group)
         group_row.addWidget(group_edit)
@@ -749,6 +760,8 @@ class FanArgbWindow(QMainWindow):
         self.dashboard.native_effects.set_supported(False)
         self.dashboard.reactive_argb.set_supported(False)
         self.dashboard.audio_reactive.set_supported(False)
+        self.offline_supported = False
+        self.airflow_supported = False
         if self.dashboard.native_checkbox.isChecked():
             self.dashboard.native_checkbox.setChecked(False)
         if self.dashboard.studio.active:
@@ -837,6 +850,10 @@ class FanArgbWindow(QMainWindow):
             return
         if self.dashboard.audio_reactive.handle_line(line):
             return
+        if self.offline_dialog and self.offline_dialog.handle_line(line):
+            return
+        if self.airflow_dialog and self.airflow_dialog.handle_line(line):
+            return
         if self.dashboard.device_settings.handle_line(line):
             return
         if self.dashboard.diagnostics.handle_line(line):
@@ -913,6 +930,8 @@ class FanArgbWindow(QMainWindow):
                 self.dashboard.device_settings.assist_dialog.set_supported(self.cooling_assist_supported)
                 self.runtime_curve_supported = fields.get("RTCURVE") == "1"
                 self.dashboard.native_effects.set_supported(fields.get("FX") == "1")
+                self.offline_supported = fields.get("OFFLINE") == "1"
+                self.airflow_supported = fields.get("AIRFLOW") == "1"
                 self.audio_supported = fields.get("AUDIO") == "1"
                 self.dashboard.audio_reactive.set_supported(self.audio_supported)
                 if self.audio_supported:
@@ -1589,6 +1608,24 @@ class FanArgbWindow(QMainWindow):
             self.send("RTCURVE CLEAR")
         self.app_active = None
         self.app_policy.reset()
+
+    def open_offline_profiles(self) -> None:
+        if not self.port or not self.offline_supported:
+            QMessageBox.warning(self, "Автономні профілі",
+                "Підключи ESP32 з підтримкою OFFLINE=1")
+            return
+        if self.offline_dialog is None:
+            self.offline_dialog = OfflineProfilesDialog(self)
+        self.offline_dialog.exec()
+
+    def open_airflow_assistant(self) -> None:
+        if not self.port or not self.airflow_supported:
+            QMessageBox.warning(self, "Airflow Assistant",
+                "Підключи ESP32 з підтримкою AIRFLOW=1")
+            return
+        if self.airflow_dialog is None:
+            self.airflow_dialog = AirflowDialog(self)
+        self.airflow_dialog.exec()
 
     def open_fan_groups(self) -> None:
         FanGroupsDialog(self.settings, self.send, self, self._disable_auto_for_manual_change).exec()
