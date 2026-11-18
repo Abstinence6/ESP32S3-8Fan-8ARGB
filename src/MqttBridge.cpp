@@ -340,9 +340,11 @@ bool MqttBridge::applyCommand(const char* topic, const char* payload, uint32_t n
         char extra=0;
         if (sscanf(payload,"%u,%u,%u,%u%c",&bass,&mid,&treble,&peak,&extra)!=4 ||
             bass>255 || mid>255 || treble>255 || peak>255) return false;
-        argbaudio::Levels levels={
-            static_cast<uint8_t>(bass),static_cast<uint8_t>(mid),
-            static_cast<uint8_t>(treble),static_cast<uint8_t>(peak)};
+        argbaudio::Levels levels={};
+        levels.bass=static_cast<uint8_t>(bass);
+        levels.mid=static_cast<uint8_t>(mid);
+        levels.treble=static_cast<uint8_t>(treble);
+        levels.peak=static_cast<uint8_t>(peak);
         leds_.setAudioLevels(levels,nowMs);
         return true;
     }
