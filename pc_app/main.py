@@ -50,6 +50,11 @@ from smart_control import SafeTemperatureFilter, AutoProfileSelector
 from tray_monitor import FaultNotificationGate
 from tach_health import TachHealthMonitor, dump_references
 from fan_groups_ui import FanGroupsDialog
+from application_profiles import (
+    ApplicationProfilePolicy, loads as load_application_rules,
+    runtime_commands, scan_processes,
+)
+from application_profiles_ui import ApplicationProfilesDialog
 from pid_autotune_ui import PidAutotuneDialog
 from telemetry_store import TelemetryStore
 from sensor_pipeline import (
@@ -113,6 +118,12 @@ class FanArgbWindow(QMainWindow):
         self._last_sensor_issue: str | None = None
         self.safe_filter = SafeTemperatureFilter()
         self.auto_selector = AutoProfileSelector()
+        self.runtime_curve_supported = False
+        self.app_policy = ApplicationProfilePolicy()
+        self.app_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ApplicationProfiles")
+        self.app_scan_future: Future | None = None
+        self.app_active: str | None = None
+        self.app_last_lease = 0.0
         self.fault_gate = FaultNotificationGate()
         self.tach_monitor = TachHealthMonitor()
         try:
@@ -256,6 +267,12 @@ class FanArgbWindow(QMainWindow):
         group_row.addWidget(group_edit)
         group_row.addWidget(QLabel("Режим AVG/MAX вибирається в таблиці вище"))
         table_layout.addLayout(group_row)
+        app_row = QHBoxLayout()
+        app_profiles_button = QPushButton("Профілі за програмами…")
+        app_profiles_button.clicked.connect(self.open_application_profiles)
+        app_row.addWidget(app_profiles_button)
+        app_row.addWidget(QLabel("Тимчасові криві ESP32 · без записів NVS"))
+        table_layout.addLayout(app_row)
         left_layout.addWidget(table_box)
 
         sensors_box = QGroupBox("Усі доступні температурні датчики ПК")
@@ -593,6 +610,9 @@ class FanArgbWindow(QMainWindow):
             self.tx = SerialTransmitter(self.port)
             self.rgb_stream.reset()
             self.led_counts = None
+            self.runtime_curve_supported = False
+            self.app_active = None
+            self.app_policy.reset()
             self.heartbeat.reset()
             self.read_buffer = ""
             self.settings.setValue("port", port_name)
@@ -686,6 +706,9 @@ class FanArgbWindow(QMainWindow):
         self.led_counts = None
         self.cooling_assist_supported = False
         self.pid_tune_supported = False
+        self.runtime_curve_supported = False
+        self.app_active = None
+        self.app_policy.reset()
         if self.pid_tune_dialog is not None:
             self.pid_tune_dialog.set_connected(False)
         if self.dashboard.native_checkbox.isChecked():
@@ -844,6 +867,7 @@ class FanArgbWindow(QMainWindow):
                     self.pid_tune_dialog.set_supported(self.pid_tune_supported)
                 self.cooling_assist_supported = fields.get("ASSIST_NVS") == "1"
                 self.dashboard.device_settings.assist_dialog.set_supported(self.cooling_assist_supported)
+                self.runtime_curve_supported = fields.get("RTCURVE") == "1"
             except (ValueError, KeyError):
                 self.log("Невалідна відповідь VERSION?")
             return
@@ -1051,9 +1075,41 @@ class FanArgbWindow(QMainWindow):
         self.send("STATUS")
 
     def _check_automatic_profile(self) -> None:
-        if not self.port or not self.dashboard.settings_panel.auto_profiles.isChecked():
+        if not self.port:
             return
         now = time.monotonic()
+        opt_in = str(self.settings.value("appProfilesEnabled", "false")).lower() in ("true", "1")
+        if opt_in and self.runtime_curve_supported:
+            if self.app_scan_future is None:
+                self.app_scan_future = self.app_executor.submit(scan_processes)
+            if self.app_scan_future.done():
+                future = self.app_scan_future
+                self.app_scan_future = self.app_executor.submit(scan_processes)
+                try:
+                    running = future.result()
+                    rules = load_application_rules(str(self.settings.value("appProfileRulesV1", "")))
+                    decision = self.app_policy.consider(rules, running, now=now)
+                except (ValueError, ImportError, OSError) as exc:
+                    self.log(f"Профілі програм: {exc}")
+                else:
+                    if decision.ready and decision.profile != self.app_active:
+                        actions = (runtime_commands(decision.profile) if decision.profile
+                                   else ("RTCURVE CLEAR",))
+                        if all(self.send(cmd) for cmd in actions):
+                            self.app_active = decision.profile
+                            self.app_last_lease = now
+                            self.log("Профіль застосунку: " + (decision.profile or "базовий"))
+                    elif decision.ready and self.app_active and now - self.app_last_lease > 6.0:
+                        if self.send("RTCURVE KEEPALIVE"):
+                            self.app_last_lease = now
+            if self.app_active:
+                return # Prevent lower-priority GPU automation from changing the base curve.
+        elif self.app_active is not None:
+            self.send("RTCURVE CLEAR")
+            self.app_active = None
+            self.app_policy.reset()
+        if not self.dashboard.settings_panel.auto_profiles.isChecked():
+            return
         desired = choose_automatic_profile(
             self.sensor_sampler.metrics, self.auto_selector,
             hour=datetime.now().hour, now=now,
@@ -1118,6 +1174,10 @@ class FanArgbWindow(QMainWindow):
         if box.isChecked():
             box.setChecked(False)
             self.log("Автопрофілі вимкнено: застосовано ручне налаштування кривих")
+        if str(self.settings.value("appProfilesEnabled", "false")).lower() in ("true", "1"):
+            self.settings.setValue("appProfilesEnabled", False)
+            self._application_rules_changed()
+            self.log("Профілі програм вимкнено: ручні налаштування мають пріоритет")
 
     def _tray_profile(self, profile: str) -> None:
         self.profile_box.setCurrentText(profile)
@@ -1443,6 +1503,15 @@ class FanArgbWindow(QMainWindow):
         self.tach_monitor.clear_reference(self.current_fan)
         self.settings.setValue("fanHealthRefsV1", self.tach_monitor.export_references())
         self.log(f"Fan Health FAN {self.current_fan}: еталон скинуто")
+
+    def open_application_profiles(self) -> None:
+        ApplicationProfilesDialog(self.settings, self._application_rules_changed, self).exec()
+
+    def _application_rules_changed(self) -> None:
+        if self.app_active and self.port:
+            self.send("RTCURVE CLEAR")
+        self.app_active = None
+        self.app_policy.reset()
 
     def open_fan_groups(self) -> None:
         FanGroupsDialog(self.settings, self.send, self).exec()
@@ -1820,6 +1889,7 @@ class FanArgbWindow(QMainWindow):
         self.openrgb_native.stop()
         self.sacn.stop()
         self.temperature_executor.shutdown(wait=False, cancel_futures=True)
+        self.app_executor.shutdown(wait=False, cancel_futures=True)
         self.sensor_sampler.close()
         self.telemetry.close()
         self.disconnect(manual=True)

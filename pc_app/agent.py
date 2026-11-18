@@ -24,6 +24,10 @@ try:
     from .rgb_stream import AdaptiveRgbStream
     from .telemetry_store import TelemetryStore
     from .tach_health import TachHealthMonitor
+    from .application_profiles import (
+        ApplicationProfilePolicy, loads as load_application_rules,
+        runtime_commands, scan_processes,
+    )
     from .protocol import parse_status
 except ImportError:  # packaged as a standalone PyInstaller entrypoint
     from nwinfo_sensors import NwinfoSensorSampler
@@ -37,6 +41,10 @@ except ImportError:  # packaged as a standalone PyInstaller entrypoint
     from rgb_stream import AdaptiveRgbStream
     from telemetry_store import TelemetryStore
     from tach_health import TachHealthMonitor
+    from application_profiles import (
+        ApplicationProfilePolicy, loads as load_application_rules,
+        runtime_commands, scan_processes,
+    )
     from protocol import parse_status
 
 
@@ -91,12 +99,19 @@ def run_agent() -> int:
         return 2
     temp_future: Future | None = None
     temp_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="SensorAgent")
+    process_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ProcessProfile")
     sensor_sampler = NwinfoSensorSampler()
     stored_providers = str(settings.value("nwinfoProviders", ""))
     if stored_providers:
         sensor_sampler.set_enabled(set(stored_providers.split(",")))
     smooth_filter = SafeTemperatureFilter()
     auto_profiles = AutoProfileSelector()
+    app_policy = ApplicationProfilePolicy()
+    app_scan_future: Future | None = None
+    app_next_scan = 0.0
+    app_active: str | None = None
+    app_last_lease = 0.0
+    runtime_curve_supported = False
     telemetry = TelemetryStore()
     tach_monitor = TachHealthMonitor()
     try:
@@ -120,6 +135,9 @@ def run_agent() -> int:
                         tx = SerialTransmitter(output)
                         rgb_stream.reset()
                         led_counts = None
+                        runtime_curve_supported = False
+                        app_active = None
+                        app_policy.reset()
                         buffer = ""
                         log.info("Connected to %s", port_name)
                         # DTR may reset ESP. Do not block the agent/GUI for 2.2 s.
@@ -134,12 +152,14 @@ def run_agent() -> int:
                 if tx is not None:
                     tx.clear()
                 client_was_connected = owner.has_client
+                app_active = None  # GUI owns policy while attached.
+                app_policy.reset()
                 if not owner.has_client:
                     next_status = 0.0  # refresh immediately after GUI releases COM
             if output is not None:
                 try:
                     if query_due and now >= query_due:
-                        tx.write(b"PING\nLEDS\nSTATUS\n")
+                        tx.write(b"PING\nVERSION?\nLEDS\nSTATUS\n")
                         query_due = 0.0
                     if not owner.has_client and not query_due and now >= next_status:
                         tx.send_command("STATUS")
@@ -152,6 +172,9 @@ def run_agent() -> int:
                         if len(buffer) > 8192: buffer = ""
                         while "\n" in buffer:
                             line, buffer = buffer.split("\n", 1)
+                            if line.startswith("FW VERSION="):
+                                values = dict(part.split("=", 1) for part in line.split() if "=" in part)
+                                runtime_curve_supported = values.get("RTCURVE") == "1"
                             status = parse_status(line.strip())
                             if status:
                                 telemetry.record_fan(
@@ -208,6 +231,32 @@ def run_agent() -> int:
                         except Exception as exc:
                             log.warning("Sensor read failed; ESP thermal watchdog stays active: %s", exc)
                         temp_future = None
+                    # Process enumeration runs outside the serial/cooling loop.
+                    if not owner.has_client and not query_due and runtime_curve_supported:
+                        if app_scan_future is None and now >= app_next_scan:
+                            app_scan_future = process_executor.submit(scan_processes)
+                            app_next_scan = now + 5.0
+                        if app_scan_future is not None and app_scan_future.done():
+                            try:
+                                running = app_scan_future.result()
+                                settings.sync()
+                                enabled = str(settings.value("appProfilesEnabled", "false")).lower() in ("true", "1")
+                                rules = load_application_rules(str(settings.value("appProfileRulesV1", ""))) if enabled else ()
+                                decision = app_policy.consider(rules, running, now=now)
+                                if decision.ready and decision.profile != app_active:
+                                    actions = runtime_commands(decision.profile) if decision.profile else ("RTCURVE CLEAR",)
+                                    for command in actions:
+                                        tx.send_command(command)
+                                    app_active = decision.profile
+                                    app_last_lease = now
+                                    log.info("Application cooling profile: %s", app_active or "base")
+                            except (ValueError, ImportError, OSError) as exc:
+                                log.warning("Application-profile scan failed: %s", exc)
+                            finally:
+                                app_scan_future = None
+                        if app_active and now - app_last_lease > 6.0:
+                            tx.send_command("RTCURVE KEEPALIVE")
+                            app_last_lease = now
                     frames = listener.read_latest()
                     if not owner.has_client and led_counts is not None:
                         rgb_stream.offer(frames, led_counts, now=now)
@@ -225,6 +274,9 @@ def run_agent() -> int:
                         tx.clear()
                     tx = None
                     led_counts = None
+                    runtime_curve_supported = False
+                    app_active = None
+                    app_policy.reset()
                     rgb_stream.reset()
                     next_connect = now + 5.0
             else:
@@ -238,6 +290,7 @@ def run_agent() -> int:
         owner.close()
         listener.stop()
         temp_executor.shutdown(wait=False, cancel_futures=True)
+        process_executor.shutdown(wait=False, cancel_futures=True)
         sensor_sampler.close()
         telemetry.close()
         if output is not None:
