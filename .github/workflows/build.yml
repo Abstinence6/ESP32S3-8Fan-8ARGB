@@ -128,11 +128,14 @@ jobs:
           python scripts/merge_flash_images.py --directory dist/esp32s3_n16r8_native_usb \
             --output dist/esp32s3_n16r8_native_usb/ESP32S3-N16R8-NativeUSB-FULL.bin
           cp docs/N16R8_NATIVE_USB_WORKING.md dist/esp32s3_n16r8_native_usb/INSTRUCTIONS.txt
+          cp docs/N16R8_BOOT_VALIDATION.md dist/esp32s3_n16r8_native_usb/BOOT_VALIDATION.md
+          cp scripts/preflight_n16r8_image.py dist/esp32s3_n16r8_native_usb/preflight_n16r8_image.py
           python scripts/build_manifest.py --component firmware \
             --environment esp32s3_n16r8_native_usb \
             --directory dist/esp32s3_n16r8_native_usb --commit "$GITHUB_SHA" \
             --file bootloader.bin --file partitions.bin --file boot_app0.bin \
             --file firmware.bin --file ESP32S3-N16R8-NativeUSB-FULL.bin
+          python scripts/preflight_n16r8_image.py --image dist/esp32s3_n16r8_native_usb/ESP32S3-N16R8-NativeUSB-FULL.bin --manifest dist/esp32s3_n16r8_native_usb/manifest.json
       - uses: actions/upload-artifact@v4
         with:
           name: ESP32S3-N16R8-NativeUSB-FULL
