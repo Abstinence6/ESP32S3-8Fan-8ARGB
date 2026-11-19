@@ -430,7 +430,7 @@ class DashboardShell(QWidget):
     def _create_overview(self) -> None:
         page, layout = self._content(
             "Головна",
-            "Стан охолодження, підключення та швидкий доступ до налаштувань.",
+            "Стан ESP32 і керування вентиляторами.",
         )
         banner = QFrame()
         banner.setObjectName("systemBanner")
@@ -487,49 +487,6 @@ class DashboardShell(QWidget):
             setattr(self, f"summary_{key}", value)
         strip_layout.addLayout(summary)
         layout.addWidget(telemetry)
-
-        self.setup_guide = QFrame()
-        self.setup_guide.setObjectName("nativeQuickStart")
-        guide = QVBoxLayout(self.setup_guide)
-        guide.setContentsMargins(17, 14, 17, 14)
-        guide.setSpacing(8)
-        guide.addWidget(_label("ЯК ПОЧАТИ", "sectionLabel"))
-        guide.addWidget(_label("Підключи ESP32 через USB", "labelTitle"))
-        guide.addWidget(_label(
-            "1. Вибери COM-порт угорі.  2. Натисни «Підключити».  "
-            "3. Перевір датчики й показники вентиляторів.",
-            "minor", True,
-        ))
-        guide_actions = QHBoxLayout()
-        refresh_button = QPushButton("Оновити COM-порти")
-        refresh_button.clicked.connect(self.controller.refresh_ports)
-        guide_actions.addWidget(refresh_button)
-        sensors_button = QPushButton("Перевірити датчики")
-        sensors_button.clicked.connect(lambda: self.show_page("sensors"))
-        guide_actions.addWidget(sensors_button)
-        guide_actions.addStretch(1)
-        guide.addLayout(guide_actions)
-        layout.addWidget(self.setup_guide)
-
-        quick = QFrame()
-        quick.setObjectName("nativeActions")
-        quick_layout = QVBoxLayout(quick)
-        quick_layout.setContentsMargins(17, 13, 17, 14)
-        quick_layout.addWidget(_label("ШВИДКІ ДІЇ", "sectionLabel"))
-        actions = QGridLayout()
-        actions.setSpacing(8)
-        for index, (caption, key) in enumerate((
-            ("Вентилятори", "fans"),
-            ("Підсвітка", "argb"),
-            ("Температури", "sensors"),
-            ("Діагностика", "service"),
-        )):
-            button = QPushButton(caption)
-            button.clicked.connect(lambda checked=False, page=key: self.show_page(page))
-            actions.addWidget(button, 0, index)
-            actions.setColumnStretch(index, 1)
-        quick_layout.addLayout(actions)
-        layout.addWidget(quick)
 
         heading = QHBoxLayout()
         heading.setSpacing(12)
@@ -621,13 +578,6 @@ class DashboardShell(QWidget):
         empty_box.addWidget(self.attention_empty_text)
         self.attention_empty_card.setVisible(False)
         layout.addWidget(self.attention_empty_card)
-        info_text = _label(
-            "Індикатори PWM та RPM — лише телеметрія. Фільтр «Проблемні» "
-            "не змінює керування. За втрати температури діє fail-safe; "
-            "живлення вентиляторів під час reset залежить від силової схеми.",
-            "minor", True,
-        )
-        layout.addWidget(info_text)
         layout.addStretch(1)
         self._add_page("overview", page)
         self._reflow_fan_cards()
@@ -737,7 +687,7 @@ class DashboardShell(QWidget):
                 f"Усі {self.available_channel_mask.bit_count()} доступних вентиляторів передають актуальний стан без аварій. "
                 "Повернись до «Усі канали», щоб побачити їхні параметри."
             )
-        metrics_columns = 4 if available >= 850 else 2
+        metrics_columns = 4  # always one compact row
         if metrics_columns != self._summary_grid_columns:
             self._summary_grid_columns = metrics_columns
             for card in self._summary_cards:
@@ -1540,7 +1490,6 @@ class DashboardShell(QWidget):
                 labels["state"].setProperty("role", "minor")
                 labels["state"].style().unpolish(labels["state"])
                 labels["state"].style().polish(labels["state"])
-        self.setup_guide.setVisible(not connected)
         self.sidebar_connection_hint.setText(
             f"ESP32 · {port_name}" if connected else "ESP32 не підключено"
         )

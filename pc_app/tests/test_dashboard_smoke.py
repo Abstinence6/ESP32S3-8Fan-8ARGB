@@ -149,7 +149,7 @@ class DashboardSmokeTests(unittest.TestCase):
             self.assertLessEqual(max(summary_widths) - min(summary_widths), 3)
             if width == 1080:
                 self.assertEqual(shell._fan_grid_columns, 3)
-                self.assertEqual(shell._summary_grid_columns, 2)
+                self.assertEqual(shell._summary_grid_columns, 4)
             else:
                 self.assertEqual(shell._fan_grid_columns, 4)
                 self.assertEqual(shell._summary_grid_columns, 4)
