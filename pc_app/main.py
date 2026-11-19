@@ -1581,6 +1581,76 @@ class FanArgbWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "ESP", "Підключи ESP32 до збереження кривої")
 
+    def apply_fan_quick_preset(self, channel: int, preset: str) -> None:
+        """One explicit, independently confirmed, NVS-backed fan profile change."""
+        if not 1 <= channel <= 8 or preset not in (
+            "Silent", "Default", "Maximum", "Custom"
+        ):
+            return
+        if not self.port or not self.dashboard._channel_mask_known:
+            QMessageBox.information(
+                self, "Профіль вентилятора",
+                "Підключи ESP32 і дочекайся інформації про доступні канали."
+            )
+            return
+        if not self.dashboard.is_channel_available(channel):
+            QMessageBox.warning(
+                self, "Недоступний канал",
+                f"FAN {channel:02d} вимкнено у конфігурації цієї плати."
+            )
+            return
+        if preset == "Silent":
+            curve = list(PRESETS["Silent"])
+        elif preset == "Default":
+            curve = list(DEFAULT_CURVE)
+        elif preset == "Maximum":
+            curve = [(25, 100), (35, 100), (50, 100), (65, 100), (80, 100)]
+        else:
+            try:
+                stored = json.loads(str(self.settings.value("customCurves", "[]")))
+                if not isinstance(stored, list) or len(stored) != 8:
+                    raise ValueError("Missing custom profile")
+                curve = [tuple(point) for point in stored[channel - 1]]
+                if not validate_curve(curve):
+                    raise ValueError("Invalid custom profile")
+            except (TypeError, ValueError, IndexError, KeyError):
+                QMessageBox.information(
+                    self, "Custom",
+                    "Немає збереженої власної кривої. Відредагуй криву "
+                    "цього вентилятора і збережи Custom-профіль."
+                )
+                self.dashboard.open_fan(channel)
+                return
+        command = make_curve_command(channel, curve)
+        answer = QMessageBox.question(
+            self, f"FAN {channel:02d} · {preset}",
+            f"Змінити тільки FAN {channel:02d} на {preset}?\n\n"
+            "Крива буде записана в NVS контролера. "
+            "Для каналу буде відновлено автоматичне керування. "
+            "Аварійні та температурні захисти залишаться активними.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if not self.send(command):
+            QMessageBox.warning(self, "Профіль", "Не вдалося надіслати CURVE.")
+            return
+        if not self.send(f"AUTO {channel}"):
+            QMessageBox.warning(
+                self, "Профіль",
+                "CURVE надіслана, але AUTO не надіслано. "
+                "Перевір стан ESP32 — зміни могли застосуватися частково."
+            )
+            return
+        self._disable_auto_for_manual_change()
+        self.curves[channel] = curve
+        if self.current_fan == channel:
+            self._update_targets()
+        self.log(
+            f"FAN {channel:02d}: {preset} — CURVE/AUTO надіслано; "
+            "чекаємо відповіді контролера"
+        )
+
     def save_custom_profile(self) -> None:
         data = [self.curves[ch] for ch in range(1,9)]
         self.settings.setValue("customCurves", json.dumps(data))
