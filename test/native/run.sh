@@ -156,3 +156,14 @@ g++ -std=c++17 -Wall -Wextra -Werror -DFANARGB_N16R8_SAFE=1 \
   test/native/mock/Arduino.cpp src/FanController.cpp src/ArgbController.cpp \
   src/CoolingController.cpp test/native/test_n16r8_safe.cpp -o "$out"
 "$out"
+
+# Dedicated physical-rewire candidate: all 8 channels work without using
+# N16R8 Octal PSRAM pins. Verify both DC-locked and DC-qualified variants.
+for dc in 0 1; do
+  g++ -std=c++17 -Wall -Wextra -Werror -DFANARGB_N16R8_SAFE=1 \
+    -DFANARGB_N16R8_FAN2_REROUTED=1 -DFAN_DC_PWM_VALIDATED="$dc" \
+    -Itest/native/mock -Iinclude \
+    test/native/mock/Arduino.cpp src/FanController.cpp src/ArgbController.cpp \
+    src/CoolingController.cpp test/native/test_n16r8_rerouted.cpp -o "$out"
+  "$out"
+done

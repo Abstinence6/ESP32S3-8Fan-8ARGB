@@ -12,17 +12,25 @@ namespace board {
 static constexpr uint8_t kChannelCount = 8;
 
 // On WROOM-1-N16R8, GPIO35/36/37 are permanently wired to Octal PSRAM.
-// The existing PCB map routes all three to the logical channel 2. Its
-// PWM, TACH and ARGB must be disabled until the PCB is physically rerouted.
+// The original PCB map routes all three to logical channel 2. They stay
+// disabled by default. An opt-in build can use three *different* GPIOs only
+// AFTER all three FAN2/ARGB2 signals are physically rewired and checked.
+#ifndef FANARGB_N16R8_FAN2_REROUTED
+#define FANARGB_N16R8_FAN2_REROUTED 0
+#endif
 #ifndef FANARGB_N16R8_SAFE
 #define FANARGB_N16R8_SAFE 0
 #endif
 static constexpr bool kN16R8Safe = (FANARGB_N16R8_SAFE != 0);
+static constexpr bool kN16R8Fan2Rerouted = (FANARGB_N16R8_FAN2_REROUTED != 0);
+static_assert(!kN16R8Fan2Rerouted || kN16R8Safe,
+              "FAN2 GPIO reroute is only valid with N16R8 flash/PSRAM safety enabled");
 constexpr bool channelEnabled(uint8_t ch) {
-    return ch < kChannelCount && (!kN16R8Safe || ch != 1U);
+    return ch < kChannelCount &&
+        (!kN16R8Safe || ch != 1U || kN16R8Fan2Rerouted);
 }
 constexpr uint8_t enabledChannelMask() {
-    return kN16R8Safe ? 0xFDU : 0xFFU;
+    return (kN16R8Safe && !kN16R8Fan2Rerouted) ? 0xFDU : 0xFFU;
 }
 
 // Two native ESP32-S3 GPIO per fan: one PWM and one tachometer input.
@@ -37,14 +45,17 @@ static constexpr uint8_t kDefaultFanType = 3;
 #endif
 static constexpr bool kDcSupplyPwmValidated = (FAN_DC_PWM_VALIDATED != 0);
 // User PCB routing: channel 1..8 is PWM / TACH / ARGB.
-// GPIO35..37 require a module WITHOUT Octal Flash/PSRAM on these pins.
+// On an opt-in, physically rewired N16R8 board: FAN2 PWM=GPIO8 (module pin 12),
+// FAN2 TACH=GPIO11 (module pin 19), ARGB2=GPIO17 (module pin 10).
+// These are suggested free digital GPIO, NOT proven connected on the user's PCB.
+// GPIO35..37 remain unavailable to all peripheral roles on N16R8.
 // GPIO46 (ARGB7) is a bootstrapping pin: external circuitry must not
 // assert its level during reset/firmware-download mode.
 // Validate actual ESP32-S3 module, RMT/NeoPixel waveforms, TACH pullups
 // and 12 V high-side driver before powering fans or LED strips.
-static constexpr uint8_t kFanPwmPins[kChannelCount] = {21, 35, 39, 42, 6, 16, 10, 14};
-static constexpr uint8_t kFanTachPins[kChannelCount] = {47, 36, 40, 2, 5, 15, 9, 13};
-static constexpr uint8_t kArgbDataPins[kChannelCount] = {48, 37, 41, 1, 4, 7, 46, 12};
+static constexpr uint8_t kFanPwmPins[kChannelCount] = {21, kN16R8Fan2Rerouted ? 8 : 35, 39, 42, 6, 16, 10, 14};
+static constexpr uint8_t kFanTachPins[kChannelCount] = {47, kN16R8Fan2Rerouted ? 11 : 36, 40, 2, 5, 15, 9, 13};
+static constexpr uint8_t kArgbDataPins[kChannelCount] = {48, kN16R8Fan2Rerouted ? 17 : 37, 41, 1, 4, 7, 46, 12};
 // C++11-compatible constexpr check (Arduino-ESP32 2.x may use gnu++11).
 constexpr uint8_t pinAt(uint8_t index) {
     return index < kChannelCount ? kFanPwmPins[index] :
@@ -58,6 +69,11 @@ constexpr bool uniquePinsFrom(uint8_t first, uint8_t next) {
          uniquePinsFrom(first, next + 1));
 }
 static_assert(uniquePinsFrom(0, 1), "PWM/TACH/ARGB GPIO assignments must be distinct");
+static_assert(!kN16R8Fan2Rerouted || (
+                  kFanPwmPins[1] == 8 && kFanTachPins[1] == 11 &&
+                  kArgbDataPins[1] == 17 && enabledChannelMask() == 0xFF &&
+                  kFanPwmPins[1] != 19 && kFanTachPins[1] != 20),
+              "Opt-in FAN2 reroute must use verified non-PSRAM, non-USB GPIO");
 static_assert(kArgbDataPins[kChannelCount - 1] <= 48, "Last ARGB GPIO is invalid");
 static constexpr uint16_t kArgbLedCounts[kChannelCount] = {30, 30, 30, 30, 30, 30, 30, 30};
 // sACN: one universe per channel, up to 170 RGB pixels (510 DMX slots).
