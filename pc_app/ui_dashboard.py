@@ -25,22 +25,23 @@ from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
     QLabel, QLayout, QPushButton, QProgressBar, QRadioButton, QScrollArea, QSplitter,
     QStackedWidget, QVBoxLayout, QWidget, QDialog, QLineEdit, QListWidget,
-    QListWidgetItem, QSizePolicy, QTabWidget,
+    QListWidgetItem, QSizePolicy, QTabWidget, QToolButton, QStyle,
 )
 
 
 FAN_TELEMETRY_TTL = 15.0  # > two 5 s STATUS polls, tolerant of USB jitter
 
 PAGES = (
-    ("overview", "Огляд", "Огляд системи", "Поточний стан охолодження"),
-    ("fans", "Вентилятори", "Вентилятори", "Криві, швидкість, режими"),
-    ("sensors", "Датчики", "Датчики обладнання", "Температури та телеметрія"),
-    ("argb", "Підсвітка", "Підсвітка ARGB", "Сцени та OpenRGB"),
-    ("pc", "Живлення ПК", "Живлення ПК", "Керування PWR_SW"),
-    ("esp32", "Контролер ESP32", "Налаштування ESP32", "Wi-Fi, MQTT і TACH"),
-    ("service", "Сервіс", "Сервіс", "Діагностика й калібрування"),
-    ("logs", "Журнал", "Журнал подій", "Повідомлення й консоль"),
+    ("overview", "Головна", "Головна", "Стан контролера та швидкі дії"),
+    ("fans", "Охолодження", "Охолодження", "Швидкість, криві та режими"),
+    ("sensors", "Температури", "Температури", "Джерела й датчики"),
+    ("argb", "Підсвітка", "Підсвітка", "Кольори, ефекти й синхронізація"),
+    ("pc", "Живлення ПК", "Живлення ПК", "Керування кнопкою живлення"),
+    ("esp32", "Налаштування ESP32", "Налаштування ESP32", "Wi-Fi, MQTT та периферія"),
+    ("service", "Інструменти", "Інструменти", "Діагностика, оновлення та профілі"),
+    ("logs", "Консоль", "Консоль", "Журнал подій і команди"),
 )
+ADVANCED_PAGES = frozenset(("pc", "esp32", "service", "logs"))
 
 # Native Windows/Qt theme: platform controls keep their OS appearance.
 # Only dashboard panels and status indicators have scoped decoration.
@@ -289,37 +290,69 @@ class DashboardShell(QWidget):
     def _sidebar(self) -> QWidget:
         panel = QFrame()
         panel.setObjectName("sidebar")
-        panel.setFixedWidth(190)
+        panel.setFixedWidth(216)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(13, 20, 13, 16)
-        layout.setSpacing(3)
+        layout.setContentsMargins(14, 20, 14, 16)
+        layout.setSpacing(5)
         layout.addWidget(_label("FanARGB", "brand"))
-        layout.addWidget(_label("8 FAN  /  8 ARGB", "sectionLabel"))
-        layout.addSpacing(14)
-        sections = {
-            "overview": "РОБОЧИЙ ПРОСТІР",
-            "pc": "КОНТРОЛЕР",
-            "service": "ІНСТРУМЕНТИ",
+        layout.addWidget(_label("ESP32-S3 · керування", "minor"))
+        layout.addSpacing(18)
+        layout.addWidget(_label("ОСНОВНЕ", "sectionLabel"))
+
+        icons = {
+            "overview": QStyle.StandardPixmap.SP_DirHomeIcon,
+            "fans": QStyle.StandardPixmap.SP_ComputerIcon,
+            "sensors": QStyle.StandardPixmap.SP_DriveHDIcon,
+            "argb": QStyle.StandardPixmap.SP_DialogApplyButton,
+            "pc": QStyle.StandardPixmap.SP_DesktopIcon,
+            "esp32": QStyle.StandardPixmap.SP_FileDialogDetailedView,
+            "service": QStyle.StandardPixmap.SP_DialogHelpButton,
+            "logs": QStyle.StandardPixmap.SP_FileIcon,
         }
-        for index, (key, caption, title, _subtitle) in enumerate(PAGES, 1):
-            if key in sections:
-                layout.addSpacing(12 if key != "overview" else 3)
-                layout.addWidget(_label(sections[key], "sectionLabel"))
+        self.advanced_container = QWidget()
+        advanced = QVBoxLayout(self.advanced_container)
+        advanced.setContentsMargins(0, 0, 0, 0)
+        advanced.setSpacing(5)
+        for index, (key, caption, title, _hint) in enumerate(PAGES, 1):
             button = QPushButton(caption)
             button.setProperty("role", "nav")
+            button.setFlat(True)
+            button.setIcon(self.style().standardIcon(icons[key]))
             button.setCheckable(True)
-            button.setMinimumHeight(39)
-            button.setToolTip(f"{title}  ·  Ctrl+{index}")
+            button.setMinimumHeight(40)
             button.setAccessibleName(title)
+            button.setToolTip(f"{title} · Ctrl+{index}")
             button.clicked.connect(
                 lambda checked=False, selected=key: self.show_page(selected)
             )
-            layout.addWidget(button)
+            (advanced if key in ADVANCED_PAGES else layout).addWidget(button)
             self.nav[key] = button
+
+        layout.addSpacing(16)
+        self.advanced_toggle = QToolButton()
+        self.advanced_toggle.setCheckable(True)
+        self.advanced_toggle.setText("Додатково")
+        self.advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.advanced_toggle.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
+        )
+        self.advanced_toggle.toggled.connect(self._toggle_advanced)
+        layout.addWidget(self.advanced_toggle)
+        layout.addWidget(self.advanced_container)
+        self.advanced_toggle.setChecked(
+            str(self.controller.settings.value("showAdvancedNavigation", "false")).lower()
+            in ("true", "1")
+        )
+        self._toggle_advanced(self.advanced_toggle.isChecked())
         layout.addStretch(1)
-        layout.addWidget(_label("Ctrl+K · пошук  |  Alt+Home · огляд", "minor"))
-        layout.addWidget(_label("Керування тільки локально", "minor"))
+        layout.addWidget(_label("Ctrl+K — швидкий пошук", "minor", True))
+        self.sidebar_connection_hint = _label("ESP32 не підключено", "minor", True)
+        layout.addWidget(self.sidebar_connection_hint)
         return panel
+
+    def _toggle_advanced(self, visible: bool) -> None:
+        self.advanced_container.setVisible(visible)
+        self.controller.settings.setValue("showAdvancedNavigation", visible)
 
     def _topbar(self, refresh_ports: QPushButton) -> QWidget:
         panel = QFrame()
@@ -327,11 +360,11 @@ class DashboardShell(QWidget):
         layout = QHBoxLayout(panel)
         layout.setContentsMargins(22, 10, 22, 10)
         layout.setSpacing(8)
-        self.connection_text = _label("●  Не підключено", "caution")
+        self.connection_text = _label("ESP32 · не підключено", "caution")
         self.connection_text.setToolTip("ESP32-S3 через USB. При втраті температур діє fail-safe.")
         layout.addWidget(self.connection_text)
         layout.addStretch(1)
-        search = QPushButton("Пошук  Ctrl+K")
+        search = QPushButton("Знайти…")
         search.setToolTip("Знайти розділ, вентилятор або сторінку налаштувань")
         search.clicked.connect(self.open_command_palette)
         layout.addWidget(search)
@@ -452,6 +485,49 @@ class DashboardShell(QWidget):
             setattr(self, f"summary_{key}", value)
         strip_layout.addLayout(summary)
         layout.addWidget(telemetry)
+
+        self.setup_guide = QFrame()
+        self.setup_guide.setObjectName("nativeQuickStart")
+        guide = QVBoxLayout(self.setup_guide)
+        guide.setContentsMargins(17, 14, 17, 14)
+        guide.setSpacing(8)
+        guide.addWidget(_label("ЯК ПОЧАТИ", "sectionLabel"))
+        guide.addWidget(_label("Підключи ESP32 через USB", "labelTitle"))
+        guide.addWidget(_label(
+            "1. Вибери COM-порт угорі.  2. Натисни «Підключити».  "
+            "3. Перевір датчики й показники вентиляторів.",
+            "minor", True,
+        ))
+        guide_actions = QHBoxLayout()
+        refresh_button = QPushButton("Оновити COM-порти")
+        refresh_button.clicked.connect(self.controller.refresh_ports)
+        guide_actions.addWidget(refresh_button)
+        sensors_button = QPushButton("Перевірити датчики")
+        sensors_button.clicked.connect(lambda: self.show_page("sensors"))
+        guide_actions.addWidget(sensors_button)
+        guide_actions.addStretch(1)
+        guide.addLayout(guide_actions)
+        layout.addWidget(self.setup_guide)
+
+        quick = QFrame()
+        quick.setObjectName("nativeActions")
+        quick_layout = QVBoxLayout(quick)
+        quick_layout.setContentsMargins(17, 13, 17, 14)
+        quick_layout.addWidget(_label("ШВИДКІ ДІЇ", "sectionLabel"))
+        actions = QGridLayout()
+        actions.setSpacing(8)
+        for index, (caption, key) in enumerate((
+            ("Вентилятори", "fans"),
+            ("Підсвітка", "argb"),
+            ("Температури", "sensors"),
+            ("Діагностика", "service"),
+        )):
+            button = QPushButton(caption)
+            button.clicked.connect(lambda checked=False, page=key: self.show_page(page))
+            actions.addWidget(button, 0, index)
+            actions.setColumnStretch(index, 1)
+        quick_layout.addLayout(actions)
+        layout.addWidget(quick)
 
         heading = QHBoxLayout()
         heading.setSpacing(12)
@@ -818,7 +894,7 @@ class DashboardShell(QWidget):
             "minor", True,
         ))
         curve_layout.addStretch(1)
-        self.fan_workspace_tabs.addTab(curve_page, "Крива й керування")
+        self.fan_workspace_tabs.addTab(curve_page, "Керування та криві")
 
         list_page = QWidget()
         list_layout = QVBoxLayout(list_page)
@@ -829,7 +905,7 @@ class DashboardShell(QWidget):
         self.controller.fan_table.setMaximumHeight(16777215)
         list_layout.addWidget(table_box)
         list_layout.addStretch(1)
-        self.fan_workspace_tabs.addTab(list_page, "Усі канали")
+        self.fan_workspace_tabs.addTab(list_page, "Список вентиляторів")
 
         history_page = QWidget()
         history_layout = QVBoxLayout(history_page)
@@ -838,7 +914,7 @@ class DashboardShell(QWidget):
         history_box.setMinimumHeight(390)
         history_layout.addWidget(history_box)
         history_layout.addStretch(1)
-        self.fan_workspace_tabs.addTab(history_page, "Графіки")
+        self.fan_workspace_tabs.addTab(history_page, "Історія")
 
         layout.addWidget(self.fan_workspace_tabs, 1)
         layout.addStretch(1)
@@ -1372,6 +1448,8 @@ class DashboardShell(QWidget):
     def show_page(self, key: str) -> None:
         if key not in self.page_index:
             raise KeyError(f"Unknown page: {key}")
+        if key in ADVANCED_PAGES and not self.advanced_toggle.isChecked():
+            self.advanced_toggle.setChecked(True)
         self.stack.setCurrentIndex(self.page_index[key])
         self.setAccessibleDescription(f"Активний розділ: {key}")
         self.stack.widget(self.page_index[key]).verticalScrollBar().setValue(0)
@@ -1405,14 +1483,14 @@ class DashboardShell(QWidget):
         self.is_connected = bool(connected)
         self.temperature_argb.set_connected(connected)
         if connected:
-            self.connection_text.setText(f"●  ESP32 · {port_name}")
+            self.connection_text.setText(f"ESP32 · {port_name}")
             self.connection_text.setProperty("role", "positive")
             self.summary_esp.setText(port_name or "Підключено")
         else:
             self._fan_statuses.clear()
             self._last_fan_update.clear()
             self._expired_fan_channels.clear()
-            self.connection_text.setText("●  ESP32 не підключено")
+            self.connection_text.setText("ESP32 · не підключено")
             self.connection_text.setProperty("role", "caution")
             self.summary_esp.setText("Не підключено")
             self.update_pc_state("unknown")
@@ -1433,6 +1511,10 @@ class DashboardShell(QWidget):
                 labels["state"].setProperty("role", "minor")
                 labels["state"].style().unpolish(labels["state"])
                 labels["state"].style().polish(labels["state"])
+        self.setup_guide.setVisible(not connected)
+        self.sidebar_connection_hint.setText(
+            f"ESP32 · {port_name}" if connected else "ESP32 не підключено"
+        )
         self._update_cooling_health()
         self._refresh_attention_count()
         self._reflow_fan_cards()
