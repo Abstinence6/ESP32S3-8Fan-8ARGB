@@ -630,7 +630,7 @@ class DashboardShell(QWidget):
             self._fan_frames[ch] = frame
             self.fan_cards[ch] = {
                 "rpm": rpm, "metrics": metrics, "source": source, "state": state,
-                "bar": duty, "rotor": rotor,
+                "bar": duty, "rotor": rotor, "settings_button": action,
             }
         layout.addLayout(grid)
         self.attention_empty_card = QFrame()
@@ -1632,6 +1632,7 @@ class DashboardShell(QWidget):
                 for button in tile.findChildren(QPushButton):
                     button.setEnabled(True)
             for labels in self.fan_cards.values():
+                labels["settings_button"].setEnabled(True)
                 labels["rpm"].setText("— RPM")
                 labels["metrics"].setText("— %  ·  — °C")
                 frame = self._fan_frames[next(ch for ch, card in self.fan_cards.items() if card is labels)]
@@ -1706,6 +1707,7 @@ class DashboardShell(QWidget):
                 f"Вентилятор {channel}" if enabled
                 else f"Канал {channel} недоступний на поточній платі"
             )
+            self.fan_cards[channel]["settings_button"].setEnabled(enabled)
             if not enabled:
                 labels = self.fan_cards[channel]
                 labels["rpm"].setText("— RPM")
