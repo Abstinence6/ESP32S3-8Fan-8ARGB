@@ -2022,11 +2022,9 @@ def main() -> None:
         from agent import run_agent
         sys.exit(run_agent())
     app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    from PySide6.QtGui import QFontDatabase
-    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
-    font.setPointSize(10)
-    app.setFont(font)  # use the actual Windows UI font and correct glyph metrics
+    # Keep native Windows controls, fonts, system theme and accessibility.
+    app.setApplicationName("FanARGBControl")
+    app.setOrganizationName("FanARGB")
     window = FanArgbWindow()
     window.show()
     sys.exit(app.exec())
