@@ -480,7 +480,9 @@ class DashboardShell(QWidget):
         # No second banner and no action buttons competing with the fan cards.
         header = layout.itemAt(0).widget()
         if header is not None:
+            header.hide()
             layout.removeWidget(header)
+            header.setParent(None)
             header.deleteLater()
         layout.setContentsMargins(7, 11, 7, 26)
         telemetry = QFrame()

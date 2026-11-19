@@ -13,7 +13,7 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
-    from PySide6.QtWidgets import QApplication, QPushButton
+    from PySide6.QtWidgets import QApplication, QPushButton, QLabel
     import pyqtgraph  # noqa: F401
     import serial  # noqa: F401
 except ImportError:
@@ -129,6 +129,10 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertFalse(any(
             button.text() == "Усі канали"
             for button in shell.stack.widget(shell.page_index["overview"]).findChildren(QPushButton)
+        ))
+        self.assertFalse(any(
+            label.text() == "Головна"
+            for label in shell.stack.widget(shell.page_index["overview"]).findChildren(QLabel)
         ))
         for width in (1080, 1510):
             self.window.resize(width, 850)
