@@ -21,6 +21,7 @@ from maintenance_ui import MaintenancePanel
 from device_settings_ui import DeviceSettingsPanel
 from diagnostics_ui import DiagnosticPanel
 from sensor_manager_ui import SensorManagerPanel
+from fan_animation import FanRotor
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
     QLabel, QLayout, QPushButton, QProgressBar, QRadioButton, QScrollArea, QSplitter,
@@ -155,6 +156,7 @@ class DashboardShell(QWidget):
         self.nav: dict[str, QPushButton] = {}
         self.page_index: dict[str, int] = {}
         self.fan_cards: dict[int, dict[str, QWidget]] = {}
+        self.fan_preset_buttons: dict[int, dict[str, QToolButton]] = {}
         self.pc_buttons: dict[str, QPushButton] = {}
         self.is_connected = False
         self.current_pc_state = "unknown"
@@ -194,6 +196,10 @@ class DashboardShell(QWidget):
             preset_row, diagnostic_row,
         )
         self._create_logs(log_box)
+        self._rotor_last = time.monotonic()
+        self._rotor_timer = QTimer(self)
+        self._rotor_timer.setInterval(50)
+        self._rotor_timer.timeout.connect(self._advance_fan_rotors)
         self.show_page("overview")
         self.set_connected(False)
         self.controller.setStyleSheet(STYLE)
@@ -525,7 +531,7 @@ class DashboardShell(QWidget):
         for ch in range(1, 9):
             frame = QFrame()
             frame.setObjectName("fanCard")
-            frame.setMinimumHeight(132)
+            frame.setMinimumHeight(165)
             frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             frame.setToolTip(f"Вентилятор {ch} · відкрий налаштування для деталей")
             box = QVBoxLayout(frame)
@@ -537,8 +543,13 @@ class DashboardShell(QWidget):
             state = _label("Очікування", "minor")
             heading_row.addWidget(state)
             box.addLayout(heading_row)
+            readings = QHBoxLayout()
+            readings.setSpacing(7)
+            rotor = FanRotor()
+            readings.addWidget(rotor)
             rpm = _label("— RPM", "bigNumber", True)
-            box.addWidget(rpm)
+            readings.addWidget(rpm, 1)
+            box.addLayout(readings)
             metrics = _label("— %   ·   — °C", "minor", True)
             box.addWidget(metrics)
             duty = QProgressBar()
@@ -560,10 +571,35 @@ class DashboardShell(QWidget):
             action.setToolTip(f"Крива, TACH і PWM вентилятора {ch}")
             action.clicked.connect(lambda _=False, channel=ch: self.open_fan(channel))
             box.addWidget(action)
+            preset_row = QHBoxLayout()
+            preset_row.setSpacing(2)
+            preset_buttons = {}
+            for name, caption in (
+                ("Silent", "Silent"), ("Default", "Default"),
+                ("Maximum", "Max"), ("Custom", "Custom"),
+            ):
+                button = QToolButton()
+                button.setText(caption)
+                button.setAccessibleName(f"FAN {ch}: пресет {name}")
+                button.setToolTip(f"FAN {ch}: {name}. Підтвердження перед записом в NVS.")
+                button.setAutoRaise(True)
+                button.setMinimumHeight(26)
+                button.setSizePolicy(
+                    QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+                )
+                button.setEnabled(False)
+                button.clicked.connect(
+                    lambda checked=False, channel=ch, preset=name:
+                        self.controller.apply_fan_quick_preset(channel, preset)
+                )
+                preset_row.addWidget(button)
+                preset_buttons[name] = button
+            box.addLayout(preset_row)
+            self.fan_preset_buttons[ch] = preset_buttons
             self._fan_frames[ch] = frame
             self.fan_cards[ch] = {
                 "rpm": rpm, "metrics": metrics, "source": source, "state": state,
-                "bar": duty,
+                "bar": duty, "rotor": rotor,
             }
         layout.addLayout(grid)
         self.attention_empty_card = QFrame()
@@ -581,6 +617,7 @@ class DashboardShell(QWidget):
         layout.addStretch(1)
         self._add_page("overview", page)
         self._reflow_fan_cards()
+        self._rotor_timer.start()
 
     def _toggle_sources(self, checked: bool) -> None:
         for labels in self.fan_cards.values():
