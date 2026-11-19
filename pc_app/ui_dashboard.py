@@ -815,8 +815,8 @@ class DashboardShell(QWidget):
 
     def _create_fans(self, table_box, choose_row, curve_box, history_box) -> None:
         page, layout = self._content(
-            "Вентилятори",
-            "Крива ліворуч, керування і поточний стан вибраного каналу праворуч.",
+            "Охолодження",
+            "Обери вентилятор, застосуй готовий пресет або налаштуй його залежність від температури.",
         )
         toolbar = QFrame()
         toolbar.setObjectName("quietCard")
@@ -831,6 +831,12 @@ class DashboardShell(QWidget):
         self.controller.fan_box.setMaximumWidth(235)
         self.controller.type_box.setMaximumWidth(220)
         layout.addWidget(toolbar)
+        usage = _label(
+            "Пресети Silent / Default / Max / Custom є на картках головної. "
+            "Для власної кривої перетягни точки нижче та натисни «Зберегти в ESP32».",
+            "minor", True,
+        )
+        layout.addWidget(usage)
 
         self.fan_workspace_tabs = QTabWidget()
         self.fan_workspace_tabs.setObjectName("fanWorkspaceTabs")
@@ -849,7 +855,7 @@ class DashboardShell(QWidget):
         regulation_actions = original_layout.takeAt(1).layout()
         if curve_actions is None or regulation_actions is None:
             raise RuntimeError("Fan editor controls were not found")
-        curve_box.setTitle("Крива PWM · температура")
+        curve_box.setTitle("Температура → швидкість вентилятора (PWM)")
         curve_box.setMinimumHeight(370)
         self.controller.curve_plot.setMinimumHeight(300)
         curve_box.setSizePolicy(
@@ -879,8 +885,15 @@ class DashboardShell(QWidget):
         editor_layout = QVBoxLayout(editor)
         editor_layout.setContentsMargins(17, 14, 17, 14)
         editor_layout.setSpacing(8)
-        editor_layout.addWidget(_label("РЕДАГУВАННЯ КРИВОЇ", "sectionLabel"))
+        editor_layout.addWidget(_label("ЗМІНА КРИВОЇ", "sectionLabel"))
         _move_controls(curve_actions, editor_layout)
+        custom_save = QPushButton("Зберегти як Custom на ПК")
+        custom_save.setToolTip(
+            "Запам'ятати поточні криві для кнопки Custom. "
+            "Це не записує дані у flash ESP32."
+        )
+        custom_save.clicked.connect(self.controller.save_custom_profile)
+        editor_layout.addWidget(custom_save)
         editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
 
         tuning = QFrame()
@@ -888,8 +901,24 @@ class DashboardShell(QWidget):
         tuning_layout = QVBoxLayout(tuning)
         tuning_layout.setContentsMargins(17, 14, 17, 14)
         tuning_layout.setSpacing(8)
-        tuning_layout.addWidget(_label("РЕЖИМ РЕГУЛЮВАННЯ", "sectionLabel"))
+        tuning_layout.addWidget(_label("ДОДАТКОВЕ КЕРУВАННЯ", "sectionLabel"))
+        tuning_layout.addWidget(_label(
+            "Змінюй ці параметри лише якщо знаєш тип підключення "
+            "вентилятора та маєш датчик RPM.",
+            "minor", True,
+        ))
         _move_controls(regulation_actions, tuning_layout)
+        tuning_layout.addWidget(_label("Тип підключення вентилятора", "labelTitle"))
+        tuning_layout.addWidget(self.controller.type_box)
+        type_apply = next(
+            (button for button in toolbar.findChildren(QPushButton)
+             if button.text() == "Встановити тип"), None
+        )
+        if type_apply is not None:
+            tuning_layout.addWidget(type_apply)
+        for label in toolbar.findChildren(QLabel):
+            if label.text() == "Тип:":
+                label.hide()
         tuning.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
 
         self.fan_control_panel = QWidget()
@@ -898,7 +927,25 @@ class DashboardShell(QWidget):
         side.setSpacing(10)
         side.addWidget(self.fan_live_card)
         side.addWidget(editor)
+        self.advanced_fan_toggle = QToolButton()
+        self.advanced_fan_toggle.setText("Розширене керування  ▸")
+        self.advanced_fan_toggle.setCheckable(True)
+        self.advanced_fan_toggle.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextOnly
+        )
+        self.advanced_fan_toggle.setToolTip(
+            "PID, два датчики температури, RPM і тип підключення"
+        )
+        side.addWidget(self.advanced_fan_toggle)
         side.addWidget(tuning)
+        tuning.setVisible(False)
+        self.advanced_fan_toggle.toggled.connect(tuning.setVisible)
+        self.advanced_fan_toggle.toggled.connect(
+            lambda active: self.advanced_fan_toggle.setText(
+                "Розширене керування  ▾" if active
+                else "Розширене керування  ▸"
+            )
+        )
         side.addStretch(1)
         self.fan_control_panel.setMinimumWidth(270)
         self.fan_control_panel.setMaximumWidth(360)
