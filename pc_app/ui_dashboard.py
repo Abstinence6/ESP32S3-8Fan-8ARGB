@@ -218,6 +218,7 @@ class DashboardShell(QWidget):
         self._telemetry_timer.timeout.connect(self.refresh_telemetry_freshness)
         self._telemetry_timer.start(1000)
         self._reflow_fan_cards()
+        self._rotor_timer.start()
 
     def create_command_palette(self) -> QDialog:
         """Read-only quick navigation. Commands never write to hardware."""
@@ -617,7 +618,6 @@ class DashboardShell(QWidget):
         layout.addStretch(1)
         self._add_page("overview", page)
         self._reflow_fan_cards()
-        self._rotor_timer.start()
 
     def _toggle_sources(self, checked: bool) -> None:
         for labels in self.fan_cards.values():
@@ -654,6 +654,7 @@ class DashboardShell(QWidget):
                 continue
             age = max(0, int(now - self._last_fan_update[ch]))
             labels["rpm"].setText("— RPM")
+            labels["rotor"].set_rpm(0)
             labels["metrics"].setText("PWM — %  ·  — °C")
             labels["state"].setText(f"Статус застарів · {age} с")
             labels["state"].setProperty("role", "caution")
@@ -1519,6 +1520,7 @@ class DashboardShell(QWidget):
                 frame.style().unpolish(frame)
                 frame.style().polish(frame)
                 labels["bar"].setValue(0)
+                labels["rotor"].set_rpm(0)
                 labels["bar"].setProperty("state", "idle")
                 labels["bar"].setToolTip("PWM: немає даних")
                 labels["bar"].style().unpolish(labels["bar"])
@@ -1530,6 +1532,7 @@ class DashboardShell(QWidget):
         self.sidebar_connection_hint.setText(
             f"ESP32 · {port_name}" if connected else "ESP32 не підключено"
         )
+        self._update_preset_availability()
         self._update_cooling_health()
         self._refresh_attention_count()
         self._reflow_fan_cards()
@@ -1538,6 +1541,30 @@ class DashboardShell(QWidget):
         self.device_settings.set_connected(connected)
         self.connection_text.style().unpolish(self.connection_text)
         self.connection_text.style().polish(self.connection_text)
+
+    def _update_preset_availability(self) -> None:
+        for channel, buttons in self.fan_preset_buttons.items():
+            enabled = (
+                self.is_connected and self._channel_mask_known
+                and self.is_channel_available(channel)
+            )
+            for button in buttons.values():
+                button.setEnabled(enabled)
+
+    def _advance_fan_rotors(self) -> None:
+        now = time.monotonic()
+        delta = min(.1, max(0.0, now - self._rotor_last))
+        self._rotor_last = now
+        if not self.is_connected or not self.isVisible():
+            return
+        if self.stack.currentIndex() != self.page_index["overview"]:
+            return
+        for channel, data in self.fan_cards.items():
+            rotor = data["rotor"]
+            if self.is_channel_available(channel) and not self._fan_telemetry_stale(channel):
+                rotor.advance(delta)
+            elif rotor.rpm:
+                rotor.set_rpm(0)
 
     def is_channel_available(self, channel: int) -> bool:
         return 1 <= channel <= 8 and bool(self.available_channel_mask & (1 << (channel - 1)))
@@ -1567,6 +1594,7 @@ class DashboardShell(QWidget):
                 labels["state"].setText("Недоступний")
                 labels["state"].setProperty("role", "minor")
                 labels["bar"].setValue(0)
+                labels["rotor"].set_rpm(0)
                 labels["bar"].setProperty("state", "idle")
             for widget in (self._fan_frames[channel], self.fan_cards[channel]["state"]):
                 widget.style().unpolish(widget)
@@ -1583,6 +1611,7 @@ class DashboardShell(QWidget):
                 button.setEnabled(enabled)
             tile.style().unpolish(tile)
             tile.style().polish(tile)
+        self._update_preset_availability()
         self._update_cooling_health()
         self._refresh_attention_count()
         self._reflow_fan_cards()
@@ -1626,6 +1655,9 @@ class DashboardShell(QWidget):
         )
         labels["rpm"].setText(
             f"{status.rpm:,} RPM".replace(",", " ") if status.rpm_feedback else "— RPM"
+        )
+        labels["rotor"].set_rpm(
+            status.rpm if status.rpm_feedback and not status.fault else 0
         )
         temp = f"{status.deci_c / 10:.1f} °C" if status.fresh else "— °C"
         labels["metrics"].setText(f"PWM {status.pwm:3d}%  ·  {temp}")
