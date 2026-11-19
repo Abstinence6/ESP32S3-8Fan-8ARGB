@@ -18,7 +18,7 @@ import pyqtgraph as pg
 import serial
 from serial.tools import list_ports
 from PySide6.QtCore import QSettings, QTimer, Qt
-from PySide6.QtGui import QTextCursor, QFont, QAction
+from PySide6.QtGui import QTextCursor, QFont, QAction, QPalette
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton,
@@ -351,7 +351,14 @@ class FanArgbWindow(QMainWindow):
         curve_box = QGroupBox("PWM від температури — перетягни 5 точок мишкою")
         curve_layout = QVBoxLayout(curve_box)
         self.curve_plot = pg.PlotWidget()
-        self.curve_plot.setBackground("#151b24")
+        # The editor chart follows the same light/dark palette as native Windows.
+        chart_background = self.palette().color(QPalette.ColorRole.Base).name()
+        chart_foreground = self.palette().color(QPalette.ColorRole.Text).name()
+        self.curve_plot.setBackground(chart_background)
+        for axis_name in ("left", "bottom"):
+            axis = self.curve_plot.getAxis(axis_name)
+            axis.setPen(pg.mkPen(chart_foreground))
+            axis.setTextPen(pg.mkPen(chart_foreground))
         self.curve_plot.setLabel("left", "PWM", units="%")
         self.curve_plot.setLabel("bottom", "Температура", units="°C")
         self.curve_plot.showGrid(x=True, y=True, alpha=0.3)

@@ -138,7 +138,10 @@ class DashboardSmokeTests(unittest.TestCase):
         self.window.statusBar().showMessage(
             "DEMO · тестові дані інтерфейсу · реальний контролер не підключено"
         )
-        self.window.handle_line("FW VERSION=8 SERIAL=7 DC_READY=0 DS18B20=0 SENSORS=0")
+        self.window.handle_line(
+            "FW VERSION=8 SERIAL=7 N16R8=1 CHMASK=253 "
+            "DC_READY=1 DS18B20=0 SENSORS=0"
+        )
         self.window.handle_line(
             "WIFI_CONFIG ENABLED=1 CONNECTED=1 SSID_HEX=4D792057694669 "
             "PASSWORD_SET=1 IP=192.168.1.10"
