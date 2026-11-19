@@ -45,6 +45,13 @@ int main() {
     assert(!leds.configureStrip(1, 30, false));
     assert(leds.setSolid(0, 7, 20, 70));
     leds.update(100);
+    // Saving global ARGB budget must never store an invalid 0-pixel count
+    // for the inactive physical strip (would break NVS on next boot).
+    assert(leds.setPowerBudget(2200));
+    ArgbController restartedLeds;
+    assert(restartedLeds.begin());
+    assert(restartedLeds.pixelCount(0) == board::kArgbLedCounts[0]);
+    assert(restartedLeds.pixelCount(1) == 0);
 
     CoolingController cooling(fans, Serial);
     assert(cooling.begin());

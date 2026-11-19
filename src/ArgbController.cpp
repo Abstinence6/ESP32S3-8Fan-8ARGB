@@ -537,7 +537,10 @@ bool ArgbController::configureStripAndBudget(uint8_t ch, uint16_t count,
     config.magic = kArgbMagic;
     config.budgetMa = budgetMa;
     for (uint8_t i = 0; i < board::kChannelCount; ++i) {
-        config.counts[i] = (i == ch) ? count : strips_[i].numPixels();
+        // An inactive N16R8 ARGB2 has zero runtime pixels, but the
+        // persisted NVS geometry schema requires nonzero slot counts.
+        config.counts[i] = !board::channelEnabled(i) ? board::kArgbLedCounts[i] :
+            (i == ch) ? count : strips_[i].numPixels();
         config.reversed[i] = (i == ch) ? reversed : reversed_[i];
     }
     config.crc = checksum(config);
