@@ -1,0 +1,4 @@
+*.PrjPcb -text whitespace=cr-at-eol,-blank-at-eof
+*.PcbDoc binary
+*.SchDoc binary
+*.PcbLib binary

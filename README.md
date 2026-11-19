@@ -70,6 +70,12 @@ ALLOFF
 
 `OFF` / `ALLOFF` control **only the ARGB outputs**; they never stop fans.
 
+## Altium PCB
+
+Open the [NotOnlyFans Altium project](hardware/NotOnlyFans/NotOnlyFans.PrjPcb) in Altium Designer. The folder contains the two-layer PCB, both schematic sheets, and the project footprint libraries.
+
+Channel 2 uses GPIO35, GPIO36, and GPIO37 on the PCB. The N16R8-safe firmware profile disables this channel because those pins are reserved for octal PSRAM on that module.
+
 ## Example pin map
 
 | # | PWM fan | TACH fan | ARGB data | Default LED count |
