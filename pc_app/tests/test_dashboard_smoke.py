@@ -119,6 +119,27 @@ class DashboardSmokeTests(unittest.TestCase):
         shell.set_connected(False)
         self.assertEqual(rotor.rpm, 0)
 
+    def test_overview_status_and_four_metrics_are_one_row(self):
+        shell = self.window.dashboard
+        self.assertEqual(len(shell._summary_cards), 5)
+        self.assertIs(shell._summary_cards[0], shell.system_banner)
+        self.assertEqual(shell._summary_grid_columns, 5)
+        self.assertTrue(shell.show_sources.isHidden())
+        self.assertTrue(shell.attention_filter.isHidden())
+        self.assertFalse(any(
+            button.text() == "Усі канали"
+            for button in shell.stack.widget(shell.page_index["overview"]).findChildren(QPushButton)
+        ))
+        for width in (1080, 1510):
+            self.window.resize(width, 850)
+            self.window.show()
+            self.app.processEvents()
+            for index in range(5):
+                self.assertEqual(shell._summary_grid.itemAtPosition(0, index).widget(),
+                                 shell._summary_cards[index])
+            rows = {w.y() for w in shell._summary_cards}
+            self.assertEqual(len(rows), 1)
+
     def test_render_preview(self):
         """Optional offscreen screenshots for visual QA of the actual Qt layout."""
         if os.environ.get("SAVE_DASHBOARD_PREVIEW") != "1":
@@ -202,10 +223,10 @@ class DashboardSmokeTests(unittest.TestCase):
             self.assertLessEqual(max(summary_widths) - min(summary_widths), 3)
             if width == 1080:
                 self.assertEqual(shell._fan_grid_columns, 3)
-                self.assertEqual(shell._summary_grid_columns, 4)
+                self.assertEqual(shell._summary_grid_columns, 5)
             else:
                 self.assertEqual(shell._fan_grid_columns, 4)
-                self.assertEqual(shell._summary_grid_columns, 4)
+                self.assertEqual(shell._summary_grid_columns, 5)
             for key in ("overview", "fans", "sensors", "argb", "esp32", "service"):
                 shell.show_page(key)
                 self.app.processEvents()

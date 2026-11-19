@@ -49,17 +49,24 @@ ADVANCED_PAGES = frozenset(("pc", "esp32", "service", "logs"))
 STYLE = """
 QFrame#sidebar { background-color: palette(window); border-right: 1px solid palette(mid); }
 QFrame#topbar { background-color: palette(window); border-bottom: 1px solid palette(mid); }
-QFrame#metricsStrip, QFrame#fanCard, QFrame#quietCard, QFrame#systemBanner,
+QFrame#metricsStrip, QFrame#fanCard, QFrame#quietCard,
 QFrame#nativeQuickStart, QFrame#nativeActions {
     background-color: palette(base); border: 1px solid palette(mid); border-radius: 8px;
 }
 QFrame#metricSlot { border: none; background: transparent; }
+QFrame#systemBanner {
+    background: transparent; border: none; border-right: 1px solid palette(mid);
+    border-radius: 0px;
+}
 QFrame#fanCard:hover { border: 1px solid palette(highlight); }
-QFrame#fanCard[state="warning"], QFrame#systemBanner[state="warning"] { border-color: #b68745; }
-QFrame#fanCard[state="critical"], QFrame#systemBanner[state="critical"] { border-color: #bb5561; }
+QFrame#fanCard[state="warning"] { border-color: #b68745; }
+QFrame#fanCard[state="critical"] { border-color: #bb5561; }
+QFrame#systemBanner[state="warning"] { border-left: 3px solid #b68745; }
+QFrame#systemBanner[state="critical"] { border-left: 3px solid #bb5561; }
 QFrame#fanCard[state="disabled"], QFrame#zoneTile[disabled="true"] { background-color: palette(window); }
 QFrame#zoneTile { background-color: palette(base); border: 1px solid palette(mid); border-radius: 6px; }
-QFrame#zoneTile[selected="true"], QFrame#systemBanner[state="normal"] { border-color: palette(highlight); }
+QFrame#zoneTile[selected="true"] { border-color: palette(highlight); }
+QFrame#systemBanner[state="normal"] { border-left: 3px solid palette(highlight); }
 QFrame#zonePixels { background-color: palette(midlight); border: none; border-radius: 3px; }
 QFrame#zonePixels[selected="true"] { background-color: palette(highlight); }
 QFrame#settingsActionFooter { background-color: palette(base); border: 1px solid palette(mid); }
@@ -424,13 +431,15 @@ class DashboardShell(QWidget):
         slot = QFrame()
         slot.setObjectName("metricSlot")
         lay = QVBoxLayout(slot)
-        lay.setContentsMargins(11, 11, 11, 11)
+        lay.setContentsMargins(9, 9, 9, 9)
         lay.setSpacing(5)
         lay.addWidget(_label(title.upper(), "sectionLabel"))
         value = _label(initial, "metricValue", True)
         lay.addWidget(value)
         lay.addWidget(_label(subtitle, "minor", True))
         slot.setMinimumHeight(88)
+        slot.setMinimumWidth(0)
+        slot.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         slot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         return slot, value
 
@@ -466,60 +475,59 @@ class DashboardShell(QWidget):
             "Головна",
             "Стан ESP32 і керування вентиляторами.",
         )
-        banner = QFrame()
-        banner.setObjectName("systemBanner")
-        banner.setProperty("state", "idle")
-        banner.setMinimumHeight(92)
-        self.system_banner = banner
-        info = QHBoxLayout(banner)
-        info.setContentsMargins(19, 14, 19, 14)
-        info.setSpacing(14)
-        left = QVBoxLayout()
-        left.setSpacing(4)
-        left.addWidget(_label("ЗАГАЛЬНИЙ СТАН", "sectionLabel"))
-        self.health_title = _label("Контролер не підключено", "bannerTitle", True)
-        self.health_description = _label(
-            "Обери COM-порт у верхній панелі, щоб переглянути охолодження.",
-            "minor", True,
-        )
-        left.addWidget(self.health_title)
-        left.addWidget(self.health_description)
-        info.addLayout(left, 1)
-        right = QVBoxLayout()
-        right.setSpacing(4)
-        right.addWidget(_label("ESP32-S3", "sectionLabel"))
-        self.summary_esp = _label("Не підключено", "labelTitle", True)
-        self.summary_esp.setAlignment(Qt.AlignmentFlag.AlignRight)
-        right.addWidget(self.summary_esp)
-        info.addLayout(right, 0)
-        diagnostics_button = QPushButton("Діагностика")
-        diagnostics_button.setProperty("role", "ghost")
-        diagnostics_button.setToolTip("Відкрити діагностику контролера")
-        diagnostics_button.clicked.connect(lambda: self.show_page("service"))
-        right.addWidget(diagnostics_button)
-        layout.addWidget(banner)
-
+        # One single status strip: ESP32 + sensors + ARGB + MQTT + PC power.
+        # No second banner and no action buttons competing with the fan cards.
+        header = layout.itemAt(0).widget()
+        if header is not None:
+            layout.removeWidget(header)
+            header.deleteLater()
+        layout.setContentsMargins(7, 11, 7, 26)
         telemetry = QFrame()
         telemetry.setObjectName("metricsStrip")
         strip_layout = QVBoxLayout(telemetry)
-        strip_layout.setContentsMargins(9, 4, 9, 4)
-        strip_layout.setSpacing(0)
-        summary = QGridLayout()
-        summary.setHorizontalSpacing(8)
-        summary.setVerticalSpacing(1)
-        self._summary_grid = summary
+        strip_layout.setContentsMargins(7, 7, 7, 7)
+        self._summary_grid = QGridLayout()
+        self._summary_grid.setHorizontalSpacing(0)
+        self._summary_grid.setVerticalSpacing(0)
+        self._summary_grid_columns = 5
         self._summary_cards: list[QWidget] = []
-        self._summary_grid_columns = 0
+
+        banner = QFrame()
+        banner.setObjectName("systemBanner")
+        banner.setProperty("state", "idle")
+        self.system_banner = banner
+        status_layout = QVBoxLayout(banner)
+        status_layout.setContentsMargins(11, 9, 11, 9)
+        status_layout.setSpacing(5)
+        status_layout.addWidget(_label("ESP32-S3", "sectionLabel"))
+        self.health_title = _label("Контролер не підключено", "metricValue", True)
+        status_layout.addWidget(self.health_title)
+        self.summary_esp = _label("USB · —", "minor", True)
+        status_layout.addWidget(self.summary_esp)
+        # Preserve the detailed state for diagnostics/accessibility, not as a
+        # multi-line block that needlessly doubles the dashboard height.
+        self.health_description = _label(
+            "Підключи ESP32 через USB для перевірки охолодження.", "minor", True
+        )
+        self.health_description.hide()
+        banner.setMinimumWidth(0)
+        banner.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._summary_cards.append(banner)
+
         for key, title, hint in (
             ("temp", "Датчики", "NWinfo · температури ПК"),
-            ("rgb", "ARGB", "OpenRGB · 8 каналів"),
+            ("rgb", "ARGB", "OpenRGB"),
             ("mqtt", "MQTT", "Home Assistant"),
-            ("pc", "Живлення ПК", "Контроль PWR_SW"),
+            ("pc", "Живлення ПК", "PWR_SW"),
         ):
             card, value = self._summary_card(title, "—", hint)
             self._summary_cards.append(card)
             setattr(self, f"summary_{key}", value)
-        strip_layout.addLayout(summary)
+
+        for index, card in enumerate(self._summary_cards):
+            self._summary_grid.addWidget(card, 0, index)
+            self._summary_grid.setColumnStretch(index, 1)
+        strip_layout.addLayout(self._summary_grid)
         layout.addWidget(telemetry)
 
         heading = QHBoxLayout()
@@ -536,7 +544,7 @@ class DashboardShell(QWidget):
             in ("true", "1")
         )
         details.toggled.connect(self._toggle_sources)
-        heading.addWidget(details)
+        details.setParent(self)  # hidden preference, kept for existing callers
         self.attention_filter = QPushButton("Проблемні")
         self.attention_filter.setCheckable(True)
         self.attention_filter.setProperty("role", "filter")
@@ -546,10 +554,7 @@ class DashboardShell(QWidget):
         )
         self.attention_filter.setAccessibleName("Показати тільки проблемні вентилятори")
         self.attention_filter.toggled.connect(self._toggle_attention_filter)
-        heading.addWidget(self.attention_filter)
-        shortcut = QPushButton("Усі канали")
-        shortcut.clicked.connect(lambda: self.show_page("fans"))
-        heading.addWidget(shortcut)
+        self.attention_filter.setParent(self)  # retained filter logic, no extra toolbar
         layout.addLayout(heading)
 
         grid = QGridLayout()
@@ -755,15 +760,6 @@ class DashboardShell(QWidget):
                 f"Усі {self.available_channel_mask.bit_count()} доступних вентиляторів передають актуальний стан без аварій. "
                 "Повернись до «Усі канали», щоб побачити їхні параметри."
             )
-        metrics_columns = 4  # always one compact row
-        if metrics_columns != self._summary_grid_columns:
-            self._summary_grid_columns = metrics_columns
-            for card in self._summary_cards:
-                self._summary_grid.removeWidget(card)
-            for index, card in enumerate(self._summary_cards):
-                self._summary_grid.addWidget(card, index // metrics_columns, index % metrics_columns)
-            for col in range(4):
-                self._summary_grid.setColumnStretch(col, 1 if col < metrics_columns else 0)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -811,6 +807,8 @@ class DashboardShell(QWidget):
                 state = "normal"
         self.health_title.setText(title)
         self.health_description.setText(detail)
+        self.system_banner.setToolTip(detail)
+        self.health_title.setToolTip(detail)
         if self.system_banner.property("state") != state:
             self.system_banner.setProperty("state", state)
             self.system_banner.style().unpolish(self.system_banner)
@@ -1609,14 +1607,14 @@ class DashboardShell(QWidget):
         if connected:
             self.connection_text.setText(f"ESP32 · {port_name}")
             self.connection_text.setProperty("role", "positive")
-            self.summary_esp.setText(port_name or "Підключено")
+            self.summary_esp.setText(f"USB · {port_name}" if port_name else "USB · підключено")
         else:
             self._fan_statuses.clear()
             self._last_fan_update.clear()
             self._expired_fan_channels.clear()
             self.connection_text.setText("ESP32 · не підключено")
             self.connection_text.setProperty("role", "caution")
-            self.summary_esp.setText("Не підключено")
+            self.summary_esp.setText("USB · —")
             self.update_pc_state("unknown")
             self.summary_mqtt.setText("Не підключено")
             self._channel_mask_known = False
