@@ -161,6 +161,8 @@ class DashboardShell(QWidget):
         self.current_pc_busy = False
         self.pc_state_updated_at = 0.0
         self._fan_statuses: dict[int, object] = {}
+        self.available_channel_mask = 0xFF  # unknown firmware -> legacy 8-channel behavior
+        self._channel_mask_known = False
         self._last_fan_update: dict[int, float] = {}
         self._expired_fan_channels: set[int] = set()
         self._fan_grid_columns = 0
@@ -532,7 +534,8 @@ class DashboardShell(QWidget):
         heading = QHBoxLayout()
         heading.setSpacing(12)
         heading.addWidget(_label("ВЕНТИЛЯТОРИ", "sectionLabel"))
-        heading.addWidget(_label("01–08", "minor"))
+        self.channel_availability = _label("01–08", "minor", True)
+        heading.addWidget(self.channel_availability)
         heading.addStretch(1)
         details = QCheckBox("Джерела температур")
         details.setToolTip("Показувати джерело температури під RPM")
@@ -660,7 +663,7 @@ class DashboardShell(QWidget):
         self._expired_fan_channels.update(new_expired)
         for ch in new_expired:
             labels = self.fan_cards.get(ch)
-            if not labels:
+            if not labels or not self.is_channel_available(ch):
                 continue
             age = max(0, int(now - self._last_fan_update[ch]))
             labels["rpm"].setText("— RPM")
@@ -689,6 +692,7 @@ class DashboardShell(QWidget):
             bool(status.fault) or not bool(status.fresh)
             or self._fan_telemetry_stale(channel)
             for channel, status in self._fan_statuses.items()
+            if self.is_channel_available(channel)
         )
         self.attention_filter.setText(
             f"Проблемні · {count}" if count else "Проблемні · 0"
@@ -706,6 +710,7 @@ class DashboardShell(QWidget):
         visible = tuple(
             ch for ch in self._fan_frames
             if not self._attention_only
+            or not self.is_channel_available(ch)
             or not self.is_connected
             or ch not in self._fan_statuses
             or bool(self._fan_statuses[ch].fault)
@@ -727,7 +732,7 @@ class DashboardShell(QWidget):
         self.attention_empty_card.setVisible(self._attention_only and not visible)
         if self._attention_only and not visible:
             self.attention_empty_text.setText(
-                "Усі 8 вентиляторів передають актуальний стан без аварій. "
+                f"Усі {self.available_channel_mask.bit_count()} доступних вентиляторів передають актуальний стан без аварій. "
                 "Повернись до «Усі канали», щоб побачити їхні параметри."
             )
         metrics_columns = 4 if available >= 850 else 2
@@ -755,10 +760,15 @@ class DashboardShell(QWidget):
             detail = "З'єднання встановлено. Очікуємо перші дані від вентилятора."
             state = "idle"
         else:
-            faults = sum(bool(s.fault) for s in self._fan_statuses.values())
-            stale = sum(not bool(s.fresh) for s in self._fan_statuses.values())
-            expired = sum(self._fan_telemetry_stale(ch) for ch in self._fan_statuses)
-            count = len(self._fan_statuses)
+            active = {
+                ch: status for ch, status in self._fan_statuses.items()
+                if self.is_channel_available(ch)
+            }
+            faults = sum(bool(s.fault) for s in active.values())
+            stale = sum(not bool(s.fresh) for s in active.values())
+            expired = sum(self._fan_telemetry_stale(ch) for ch in active)
+            count = len(active)
+            expected = self.available_channel_mask.bit_count()
             if faults:
                 title = f"Потрібна увага · {faults} каналів"
                 detail = "Виявлено аварійні стани. Відкрий Сервіс → Діагностика для перевірки."
@@ -771,13 +781,13 @@ class DashboardShell(QWidget):
                 title = f"Захисне охолодження · {stale} каналів"
                 detail = "Немає свіжої температури на частині каналів — застосовується fail-safe."
                 state = "warning"
-            elif count < 8:
-                title = f"Перевіряємо канали · {count}/8"
+            elif count < expected:
+                title = f"Перевіряємо канали · {count}/{expected}"
                 detail = "Стан решти вентиляторів ще не отримано. Оцінка охолодження неповна."
                 state = "idle"
             else:
                 title = "Охолодження працює"
-                detail = "Усі 8 каналів передають актуальний стан · параметри доступні в «Вентиляторах»."
+                detail = f"Усі {expected} доступних каналів передають актуальний стан."
                 state = "normal"
         self.health_title.setText(title)
         self.health_description.setText(detail)
@@ -929,6 +939,11 @@ class DashboardShell(QWidget):
         if channel is None:
             return
         self.fan_live_title.setText(f"FAN {channel:02d}")
+        if not self.is_channel_available(channel):
+            self.fan_live_rpm.setText("— RPM")
+            self.fan_live_metrics.setText("Фізичний канал вимкнено")
+            self.fan_live_state.setText("Недоступний на цій платі")
+            return
         status = self._fan_statuses.get(channel)
         if not self.is_connected or status is None or self._fan_telemetry_stale(channel):
             self.fan_live_rpm.setText("— RPM")
@@ -1457,7 +1472,7 @@ class DashboardShell(QWidget):
             button.setChecked(name == key)
 
     def open_fan(self, channel: int) -> None:
-        if not 1 <= channel <= 8:
+        if not self.is_channel_available(channel):
             return
         self.controller.fan_box.setCurrentIndex(channel - 1)
         self.show_page("fans")
@@ -1495,6 +1510,18 @@ class DashboardShell(QWidget):
             self.summary_esp.setText("Не підключено")
             self.update_pc_state("unknown")
             self.summary_mqtt.setText("Не підключено")
+            self._channel_mask_known = False
+            self.available_channel_mask = 0xFF
+            self.channel_availability.setText("01–08")
+            for row in range(8):
+                for combo in (self.controller.fan_box, self.zone_box):
+                    item = combo.model().item(row)
+                    if item is not None:
+                        item.setEnabled(True)
+                tile = self.argb_zone_tiles[row + 1][0]
+                tile.setProperty("disabled", False)
+                for button in tile.findChildren(QPushButton):
+                    button.setEnabled(True)
             for labels in self.fan_cards.values():
                 labels["rpm"].setText("— RPM")
                 labels["metrics"].setText("— %  ·  — °C")
@@ -1524,6 +1551,55 @@ class DashboardShell(QWidget):
         self.connection_text.style().unpolish(self.connection_text)
         self.connection_text.style().polish(self.connection_text)
 
+    def is_channel_available(self, channel: int) -> bool:
+        return 1 <= channel <= 8 and bool(self.available_channel_mask & (1 << (channel - 1)))
+
+    def set_channel_mask(self, mask: int) -> None:
+        """Apply firmware-reported capabilities without changing the 8-channel protocol."""
+        if not isinstance(mask, int) or not 0 <= mask <= 0xFF:
+            return
+        self._channel_mask_known = True
+        self.available_channel_mask = mask
+        active = mask.bit_count()
+        self.channel_availability.setText(f"Доступно {active}/8 каналів")
+        self.channel_availability.setToolTip(
+            "Зайняті Flash/PSRAM GPIO не можуть бути розблоковані програмно."
+        )
+        for channel in range(1, 9):
+            enabled = self.is_channel_available(channel)
+            self._fan_frames[channel].setProperty("state", "idle" if enabled else "disabled")
+            self._fan_frames[channel].setToolTip(
+                f"Вентилятор {channel}" if enabled
+                else f"Канал {channel} недоступний на поточній платі"
+            )
+            if not enabled:
+                labels = self.fan_cards[channel]
+                labels["rpm"].setText("— RPM")
+                labels["metrics"].setText("Фізичний вихід вимкнено")
+                labels["state"].setText("Недоступний")
+                labels["state"].setProperty("role", "minor")
+                labels["bar"].setValue(0)
+                labels["bar"].setProperty("state", "idle")
+            for widget in (self._fan_frames[channel], self.fan_cards[channel]["state"]):
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
+            row = self.controller.fan_box.model().item(channel - 1)
+            if row is not None:
+                row.setEnabled(enabled)
+            zone = self.zone_box.model().item(channel - 1)
+            if zone is not None:
+                zone.setEnabled(enabled)
+            tile = self.argb_zone_tiles[channel][0]
+            tile.setProperty("disabled", not enabled)
+            for button in tile.findChildren(QPushButton):
+                button.setEnabled(enabled)
+            tile.style().unpolish(tile)
+            tile.style().polish(tile)
+        self._update_cooling_health()
+        self._refresh_attention_count()
+        self._reflow_fan_cards()
+        self._refresh_fan_detail()
+
     def set_sensor_count(self, count: int, available: bool = True, metric_count: int = 0) -> None:
         self.summary_temp.setText(
             f"{count} температур · {metric_count} інших" if count else
@@ -1550,6 +1626,8 @@ class DashboardShell(QWidget):
     def update_fan(self, channel: int, status) -> None:
         labels = self.fan_cards.get(channel)
         if labels is None:
+            return
+        if not self.is_channel_available(channel):
             return
         self._fan_statuses[channel] = status
         self._last_fan_update[channel] = time.monotonic()

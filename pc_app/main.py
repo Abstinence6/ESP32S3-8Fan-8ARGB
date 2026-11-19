@@ -923,6 +923,9 @@ class FanArgbWindow(QMainWindow):
                     + f" · DC PWM {'дозволено' if fields.get('DC_READY') == '1' else 'заблоковано'}"
                     + f" · DS18B20 {'так' if fields.get('DS18B20') == '1' else 'ні'}"
                 )
+                channel_mask = fields.get("CHMASK")
+                if channel_mask is not None:
+                    self.dashboard.set_channel_mask(int(channel_mask))
                 serial_version = int(fields.get("SERIAL", 5))
                 self.dashboard.device_settings.set_version(version, serial_version)
                 self.dashboard.temperature_argb.set_version(serial_version)

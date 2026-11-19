@@ -56,6 +56,19 @@ class DashboardSmokeTests(unittest.TestCase):
     def tearDown(self):
         self.window.close()
 
+    def test_n16r8_board_capability_disables_second_channel_in_view(self):
+        shell = self.window.dashboard
+        shell.set_connected(True, "COM7")
+        self.window.handle_line("FW VERSION=8 SERIAL=7 N16R8=1 CHMASK=253 DC_READY=1")
+        self.assertEqual(shell.available_channel_mask, 253)
+        self.assertFalse(shell.is_channel_available(2))
+        self.assertTrue(shell.is_channel_available(1))
+        self.assertIn("7/8", shell.channel_availability.text())
+        self.assertFalse(self.window.fan_box.model().item(1).isEnabled())
+        self.assertFalse(shell.zone_box.model().item(1).isEnabled())
+        shell.set_connected(False)
+        self.assertTrue(self.window.fan_box.model().item(1).isEnabled())
+
     def test_render_preview(self):
         """Optional offscreen screenshots for visual QA of the actual Qt layout."""
         if os.environ.get("SAVE_DASHBOARD_PREVIEW") != "1":
