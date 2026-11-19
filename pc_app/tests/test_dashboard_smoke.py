@@ -149,13 +149,24 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertEqual(set(shell.argb_auto_sections),
                          {"native", "temperature", "sensors", "audio"})
         self.assertFalse(shell.argb_auto_sections["audio"].isChecked())
+        self.window.show()
+        shell.show_page("argb")
+        shell.argb_workspace_tabs.setCurrentIndex(1)
+        self.app.processEvents()
         shell.argb_auto_sections["audio"].setChecked(True)
-        self.assertFalse(shell.audio_reactive.isHidden())
+        self.app.processEvents()
+        self.assertTrue(shell.audio_reactive.isVisible())
         shell.argb_auto_sections["audio"].setChecked(False)
-        self.assertTrue(shell.audio_reactive.isHidden())
+        self.app.processEvents()
+        self.assertFalse(shell.audio_reactive.isVisible())
+        shell.argb_workspace_tabs.setCurrentIndex(0)
+        self.app.processEvents()
         shell.argb_studio_toggle.setChecked(True)
-        self.assertFalse(shell.studio.isHidden())
+        self.app.processEvents()
+        self.assertTrue(shell.studio.isVisible())
         shell.argb_studio_toggle.setChecked(False)
+        self.app.processEvents()
+        self.assertFalse(shell.studio.isVisible())
 
     def test_render_preview(self):
         """Optional offscreen screenshots for visual QA of the actual Qt layout."""
