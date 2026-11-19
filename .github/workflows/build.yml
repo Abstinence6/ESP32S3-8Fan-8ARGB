@@ -86,6 +86,30 @@ jobs:
           name: ESP32S3-8Fan-8ARGB-native-USB-CDC
           path: dist/esp32s3_native_usb/
           if-no-files-found: error
+      - name: Compile safe ESP32-S3-N16R8 native USB recovery diagnostics
+        run: |
+          pio run -e esp32s3_n16r8_usb_diag
+          python -c "from pc_app.firmware_update import inspect_firmware; print('N16R8 diagnostic ESP32-S3 image:', inspect_firmware('.pio/build/esp32s3_n16r8_usb_diag/firmware.bin'))"
+      - name: Package N16R8 diagnostics and flash integrity checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/esp32s3_n16r8_usb_diag
+          cp .pio/build/esp32s3_n16r8_usb_diag/firmware.bin dist/esp32s3_n16r8_usb_diag/firmware.bin
+          cp .pio/build/esp32s3_n16r8_usb_diag/bootloader.bin dist/esp32s3_n16r8_usb_diag/bootloader.bin
+          cp .pio/build/esp32s3_n16r8_usb_diag/partitions.bin dist/esp32s3_n16r8_usb_diag/partitions.bin
+          BOOT_APP0="$(find "$HOME/.platformio/packages/framework-arduinoespressif32" -name boot_app0.bin -print -quit)"
+          test -n "$BOOT_APP0"
+          cp "$BOOT_APP0" dist/esp32s3_n16r8_usb_diag/boot_app0.bin
+          cp docs/N16R8_USB_DIAGNOSTIC.md dist/esp32s3_n16r8_usb_diag/INSTRUCTIONS.txt
+          python scripts/build_manifest.py --component firmware --environment esp32s3_n16r8_usb_diag \
+            --directory dist/esp32s3_n16r8_usb_diag --commit "$GITHUB_SHA" \
+            --file bootloader.bin --file partitions.bin --file boot_app0.bin --file firmware.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ESP32-S3-N16R8-USB-DIAGNOSTIC
+          path: dist/esp32s3_n16r8_usb_diag/
+          if-no-files-found: error
       - name: Compile opt-in DS18B20 firmware (GPIO18 test configuration)
         env:
           PLATFORMIO_BUILD_FLAGS: "-D HARDWARE_TEMP_ENABLED=1 -D HARDWARE_TEMP_GPIO=18"

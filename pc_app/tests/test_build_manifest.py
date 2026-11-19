@@ -39,6 +39,22 @@ class ManifestTests(unittest.TestCase):
                 generate_manifest(root, component="firmware", commit="b" * 40,
                                   filenames=list(FLASH_OFFSETS), environment="unsafe")
 
+    def test_n16r8_diagnostic_manifest_disables_peripheral_outputs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name in FLASH_OFFSETS:
+                (root / name).write_bytes(("n16r8 " + name).encode())
+            manifest = generate_manifest(
+                root, component="firmware", commit="a" * 40,
+                filenames=list(FLASH_OFFSETS),
+                environment="esp32s3_n16r8_usb_diag",
+            )
+            target = manifest["target"]
+            self.assertEqual(target["flash_size"], "16MB")
+            self.assertEqual(target["psram"], "8MB octal (OPI)")
+            self.assertTrue(target["diagnostic_only"])
+            self.assertTrue(target["fan_argb_gpio_outputs_disabled"])
+
     def test_manifest_rejects_unsafe_files_and_missing_firmware_images(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

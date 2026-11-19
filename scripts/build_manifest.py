@@ -57,7 +57,8 @@ def generate_manifest(
         "files": records,
     }
     if component == "firmware":
-        if environment not in ("esp32s3", "esp32s3_native_usb"):
+        if environment not in ("esp32s3", "esp32s3_native_usb",
+                               "esp32s3_n16r8_usb_diag"):
             raise ValueError("Unknown firmware environment")
         if set(records) != set(FLASH_OFFSETS):
             raise ValueError("Firmware package requires exactly 4 expected images")
@@ -67,6 +68,14 @@ def generate_manifest(
             "flash_offsets": FLASH_OFFSETS,
             "hardware_validation": "required before powering peripherals",
         }
+        if environment == "esp32s3_n16r8_usb_diag":
+            manifest["target"].update({
+                "module": "ESP32-S3-WROOM-1-N16R8",
+                "flash_size": "16MB",
+                "psram": "8MB octal (OPI)",
+                "diagnostic_only": True,
+                "fan_argb_gpio_outputs_disabled": True,
+            })
     elif set(records) != {"FanARGBControl.exe"}:
         raise ValueError("Windows package requires FanARGBControl.exe")
 

@@ -91,3 +91,13 @@ USB-to-UART chip works.
 - This was verified by firmware compilation and host tests, **not** by
   physical testing on your damaged board. If GPIO19/GPIO20 or USB PHY
   are damaged, no firmware can make that native USB port work.
+
+## N16R8 / 8 MB Octal PSRAM warning
+
+**ESP32-S3-WROOM-1-N16R8 is NOT compatible with the generic 8-fan GPIO map.**
+GPIO35/36/37 connect to the module's Octal PSRAM, but the default
+firmware maps FAN2 PWM, FAN2 TACH and ARGB2 to those same pins. Do not
+operate the ordinary Native USB build on this hardware until the PCB
+wiring is verified and remapped. Use the isolated, output-free
+[N16R8 USB diagnostic](N16R8_USB_DIAGNOSTIC.md) to verify boot and
+USB/Flash/PSRAM first.
