@@ -669,7 +669,7 @@ void CoolingController::update(uint32_t nowMs) {
     if (nowMs - lastControlMs_ < kControlIntervalMs) return;
     lastControlMs_ = nowMs;
     for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
-        if (activeCalibration_ == ch) continue;
+        if (!board::channelEnabled(ch) || activeCalibration_ == ch) continue;
         if (!freshPair(ch, nowMs)) {
             fans_.setPercent(ch, 100); // enforce in EVERY mode including manual/fixed RPM
             if (gotTemp_[ch] && !timeoutRecorded_[ch]) {
