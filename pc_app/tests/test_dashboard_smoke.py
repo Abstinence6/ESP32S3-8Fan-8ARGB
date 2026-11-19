@@ -13,7 +13,7 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QPushButton
     import pyqtgraph  # noqa: F401
     import serial  # noqa: F401
 except ImportError:
