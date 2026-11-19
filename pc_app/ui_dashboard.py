@@ -429,8 +429,8 @@ class DashboardShell(QWidget):
 
     def _create_overview(self) -> None:
         page, layout = self._content(
-            "Огляд системи",
-            "Вісім незалежних каналів охолодження · поточні показники з ESP32-S3.",
+            "Головна",
+            "Стан охолодження, підключення та швидкий доступ до налаштувань.",
         )
         banner = QFrame()
         banner.setObjectName("systemBanner")
@@ -709,13 +709,15 @@ class DashboardShell(QWidget):
         columns = 4 if available >= 1000 else 3 if available >= 765 else 2
         visible = tuple(
             ch for ch in self._fan_frames
-            if not self._attention_only
-            or not self.is_channel_available(ch)
-            or not self.is_connected
-            or ch not in self._fan_statuses
-            or bool(self._fan_statuses[ch].fault)
-            or not bool(self._fan_statuses[ch].fresh)
-            or self._fan_telemetry_stale(ch)
+            if not self._attention_only or (
+                self.is_channel_available(ch) and (
+                    not self.is_connected
+                    or ch not in self._fan_statuses
+                    or bool(self._fan_statuses[ch].fault)
+                    or not bool(self._fan_statuses[ch].fresh)
+                    or self._fan_telemetry_stale(ch)
+                )
+            )
         )
         if columns != self._fan_grid_columns or visible != self._fan_grid_visible:
             self._fan_grid_columns = columns
@@ -771,7 +773,7 @@ class DashboardShell(QWidget):
             expected = self.available_channel_mask.bit_count()
             if faults:
                 title = f"Потрібна увага · {faults} каналів"
-                detail = "Виявлено аварійні стани. Відкрий Сервіс → Діагностика для перевірки."
+                detail = "Виявлено аварійні стани. Відкрий Інструменти → Діагностика для перевірки."
                 state = "critical"
             elif expired:
                 title = f"Телеметрія застаріла · {expired} каналів"
