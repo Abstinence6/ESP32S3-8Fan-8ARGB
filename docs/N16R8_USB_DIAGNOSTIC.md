@@ -23,8 +23,11 @@ GPIO map. A hardware-specific wiring map must be confirmed before
 compiling an operational N16R8 image. This diagnostic avoids those pins.
 
 This diagnostic build sets `qio_opi`, 16 MB flash, OPI PSRAM,
-DIO flash mode at 40 MHz for conservative boot recovery, a 16 MB partition
-layout, and the ESP32-S3 hardware USB CDC/JTAG interface. No USB-UART
+QIO flash mode at 80 MHz (the prebuilt bootloader available in
+PlatformIO's Arduino core 2.x), a 16 MB partition layout, and the
+ESP32-S3 hardware USB CDC/JTAG interface. This diagnostic does NOT
+test a slower 40 MHz flash clock; implementing that would require a
+custom bootloader/build framework. No USB-UART
 chip is needed.
 
 ## Safety checks BEFORE connecting USB
@@ -59,7 +62,7 @@ First try the **application-only** image if your existing partition
 table still has a factory app at 0x10000:
 
 ```powershell
-py -m esptool --chip esp32s3 --port COM7 --baud 115200 write-flash --flash-mode dio --flash-freq 40m 0x10000 firmware.bin
+py -m esptool --chip esp32s3 --port COM7 --baud 115200 write-flash --flash-mode qio --flash-freq 80m 0x10000 firmware.bin
 ```
 
 If bootloader or partition layout are incompatible, preserve a backup
@@ -69,7 +72,7 @@ overwritten; this does not automatically erase NVS, but partition
 locations can change and data can become inaccessible):
 
 ```powershell
-py -m esptool --chip esp32s3 --port COM7 --baud 115200 write-flash --flash-mode dio --flash-freq 40m --flash-size 16MB 0x0 bootloader.bin 0x8000 partitions.bin 0xe000 boot_app0.bin 0x10000 firmware.bin
+py -m esptool --chip esp32s3 --port COM7 --baud 115200 write-flash --flash-mode qio --flash-freq 80m --flash-size 16MB 0x0 bootloader.bin 0x8000 partitions.bin 0xe000 boot_app0.bin 0x10000 firmware.bin
 ```
 
 **Do not run `erase-flash`** and do not enable PWM or power the PC case
