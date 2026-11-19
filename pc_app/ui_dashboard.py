@@ -440,7 +440,6 @@ class DashboardShell(QWidget):
         slot.setMinimumHeight(88)
         slot.setMinimumWidth(0)
         slot.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        slot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         return slot, value
 
     @staticmethod
@@ -546,7 +545,8 @@ class DashboardShell(QWidget):
             in ("true", "1")
         )
         details.toggled.connect(self._toggle_sources)
-        details.setParent(self)  # hidden preference, kept for existing callers
+        details.setParent(self)  # retained setting without a dashboard control
+        details.hide()
         self.attention_filter = QPushButton("Проблемні")
         self.attention_filter.setCheckable(True)
         self.attention_filter.setProperty("role", "filter")
@@ -556,7 +556,8 @@ class DashboardShell(QWidget):
         )
         self.attention_filter.setAccessibleName("Показати тільки проблемні вентилятори")
         self.attention_filter.toggled.connect(self._toggle_attention_filter)
-        self.attention_filter.setParent(self)  # retained filter logic, no extra toolbar
+        self.attention_filter.setParent(self)  # retained logic without extra toolbar
+        self.attention_filter.hide()
         layout.addLayout(heading)
 
         grid = QGridLayout()
