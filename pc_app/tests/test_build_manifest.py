@@ -55,6 +55,25 @@ class ManifestTests(unittest.TestCase):
             self.assertTrue(target["diagnostic_only"])
             self.assertTrue(target["fan_argb_gpio_outputs_disabled"])
 
+    def test_operating_n16r8_manifest_identifies_merged_image_and_disabled_channel(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            names=list(FLASH_OFFSETS)+["ESP32S3-N16R8-NativeUSB-FULL.bin"]
+            for name in names:
+                (root/name).write_bytes(("img "+name).encode())
+            manifest=generate_manifest(
+                root,component="firmware",commit="a"*40,filenames=names,
+                environment="esp32s3_n16r8_native_usb")
+            target=manifest["target"]
+            self.assertFalse(target["diagnostic_only"])
+            self.assertEqual(target["disabled_channels"],[2])
+            self.assertTrue(target["nvs_reset_when_merged_flashing"])
+            self.assertEqual(target["merged_flash_offset"],"0x0")
+            (root/names[-1]).unlink()
+            with self.assertRaises(FileNotFoundError):
+                generate_manifest(root,component="firmware",commit="a"*40,
+                                  filenames=names,environment="esp32s3_n16r8_native_usb")
+
     def test_manifest_rejects_unsafe_files_and_missing_firmware_images(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

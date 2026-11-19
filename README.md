@@ -338,3 +338,15 @@ Details: [offline profiles](docs/OFFLINE_PROFILES.md),
 **Hardware fail-ON is not software.** ESP32 reset/power loss still requires
 an externally qualified fail-ON 12 V power stage. Never enable below-100%
 2/3-pin DC PWM before physical testing, even if all CI tests pass.
+
+## Single-file operational ESP32-S3-N16R8 Native USB firmware
+
+The separate `esp32s3_n16r8_native_usb` build retains the **normal**
+8-channel application protocol and all its safety guards, but **disables
+hardware outputs for logical channel 2** (FAN2 PWM/TACH and ARGB2) because
+they map to Octal PSRAM GPIO35/36/37. The other seven channels remain
+available. GitHub Actions generates
+`ESP32S3-N16R8-NativeUSB-FULL.bin` for one-file flashing at 0x0, including
+bootloader, partitions, OTA boot_app0 and application. **Important: merged
+flashing will erase NVS settings inside the padded flash gap.**
+See [N16R8 operating image instructions](docs/N16R8_NATIVE_USB_WORKING.md).

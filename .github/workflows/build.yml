@@ -110,6 +110,34 @@ jobs:
           name: ESP32-S3-N16R8-USB-DIAGNOSTIC
           path: dist/esp32s3_n16r8_usb_diag/
           if-no-files-found: error
+      - name: Compile operational ESP32-S3 N16R8 with native USB and 7 safe channels
+        run: |
+          pio run -e esp32s3_n16r8_native_usb
+          python -c "from pc_app.firmware_update import inspect_firmware; print('N16R8 operational application:', inspect_firmware('.pio/build/esp32s3_n16r8_native_usb/firmware.bin'))"
+      - name: Package one full-flash BIN for N16R8 (NVS reset warning)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/esp32s3_n16r8_native_usb
+          cp .pio/build/esp32s3_n16r8_native_usb/firmware.bin dist/esp32s3_n16r8_native_usb/firmware.bin
+          cp .pio/build/esp32s3_n16r8_native_usb/bootloader.bin dist/esp32s3_n16r8_native_usb/bootloader.bin
+          cp .pio/build/esp32s3_n16r8_native_usb/partitions.bin dist/esp32s3_n16r8_native_usb/partitions.bin
+          BOOT_APP0="$(find "$HOME/.platformio/packages/framework-arduinoespressif32" -name boot_app0.bin -print -quit)"
+          test -n "$BOOT_APP0"
+          cp "$BOOT_APP0" dist/esp32s3_n16r8_native_usb/boot_app0.bin
+          python scripts/merge_flash_images.py --directory dist/esp32s3_n16r8_native_usb \
+            --output dist/esp32s3_n16r8_native_usb/ESP32S3-N16R8-NativeUSB-FULL.bin
+          cp docs/N16R8_NATIVE_USB_WORKING.md dist/esp32s3_n16r8_native_usb/INSTRUCTIONS.txt
+          python scripts/build_manifest.py --component firmware \
+            --environment esp32s3_n16r8_native_usb \
+            --directory dist/esp32s3_n16r8_native_usb --commit "$GITHUB_SHA" \
+            --file bootloader.bin --file partitions.bin --file boot_app0.bin \
+            --file firmware.bin --file ESP32S3-N16R8-NativeUSB-FULL.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ESP32S3-N16R8-NativeUSB-FULL
+          path: dist/esp32s3_n16r8_native_usb/
+          if-no-files-found: error
       - name: Compile opt-in DS18B20 firmware (GPIO18 test configuration)
         env:
           PLATFORMIO_BUILD_FLAGS: "-D HARDWARE_TEMP_ENABLED=1 -D HARDWARE_TEMP_GPIO=18"

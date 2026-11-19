@@ -467,7 +467,9 @@ void SerialConsole::handleLine(char* line) {
         serial_.print(temperaturePalette_ ? 1 : 0);
         serial_.print(F(" PIDTUNE_NVS="));
         serial_.print(cooling_.pidTuningSupported() ? 1 : 0);
-        serial_.println(F(" RTCURVE=1 FX=1 RFX=1 OFFLINE=1 AIRFLOW=1 AUDIO=1 HA_EXT=1"));
+        serial_.print(F(" RTCURVE=1 FX=1 RFX=1 OFFLINE=1 AIRFLOW=1 AUDIO=1 HA_EXT=1"));
+        serial_.print(F(" N16R8=")); serial_.print(board::kN16R8Safe ? 1 : 0);
+        serial_.print(F(" CHMASK=")); serial_.println(board::enabledChannelMask());
         return;
     }
     if (strcmp(command, "HTSCAN") == 0) {

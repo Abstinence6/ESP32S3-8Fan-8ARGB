@@ -58,23 +58,38 @@ def generate_manifest(
     }
     if component == "firmware":
         if environment not in ("esp32s3", "esp32s3_native_usb",
-                               "esp32s3_n16r8_usb_diag"):
+                               "esp32s3_n16r8_usb_diag",
+                               "esp32s3_n16r8_native_usb"):
             raise ValueError("Unknown firmware environment")
-        if set(records) != set(FLASH_OFFSETS):
-            raise ValueError("Firmware package requires exactly 4 expected images")
+        required = set(FLASH_OFFSETS)
+        if environment == "esp32s3_n16r8_native_usb":
+            required.add("ESP32S3-N16R8-NativeUSB-FULL.bin")
+        if set(records) != required:
+            raise ValueError("Firmware package requires exactly 4 expected images"
+                             " (5 including merged BIN for operating N16R8)")
         manifest["target"] = {
             "board": "esp32-s3-devkitc-1",
             "platformio_env": environment,
             "flash_offsets": FLASH_OFFSETS,
             "hardware_validation": "required before powering peripherals",
         }
-        if environment == "esp32s3_n16r8_usb_diag":
+        if environment in ("esp32s3_n16r8_usb_diag",
+                           "esp32s3_n16r8_native_usb"):
             manifest["target"].update({
                 "module": "ESP32-S3-WROOM-1-N16R8",
                 "flash_size": "16MB",
                 "psram": "8MB octal (OPI)",
-                "diagnostic_only": True,
-                "fan_argb_gpio_outputs_disabled": True,
+                "diagnostic_only": environment == "esp32s3_n16r8_usb_diag",
+                "fan_argb_gpio_outputs_disabled": environment == "esp32s3_n16r8_usb_diag",
+            })
+        if environment == "esp32s3_n16r8_native_usb":
+            manifest["target"].update({
+                "disabled_channels": [2],
+                "channel_mask": 253,
+                "merged_image": "ESP32S3-N16R8-NativeUSB-FULL.bin",
+                "merged_flash_offset": "0x0",
+                "nvs_reset_when_merged_flashing": True,
+                "hardware_validation": "required before powering any fans or LEDs",
             })
     elif set(records) != {"FanARGBControl.exe"}:
         raise ValueError("Windows package requires FanARGBControl.exe")
