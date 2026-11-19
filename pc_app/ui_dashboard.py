@@ -604,13 +604,16 @@ class DashboardShell(QWidget):
             preset_buttons = {}
             for name, caption in (
                 ("Silent", "Silent"), ("Default", "Default"),
-                ("Maximum", "Max"), ("Custom", "Custom"),
+                ("Maximum", "Maximum"), ("Custom", "Custom"),
             ):
                 button = QToolButton()
                 button.setText(caption)
                 button.setAccessibleName(f"FAN {ch}: пресет {name}")
                 button.setToolTip(f"FAN {ch}: {name}. Підтвердження перед записом в NVS.")
-                button.setAutoRaise(True)
+                button.setAutoRaise(False)
+                button_font = button.font()
+                button_font.setPointSize(8)
+                button.setFont(button_font)
                 button.setMinimumHeight(26)
                 button.setSizePolicy(
                     QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
@@ -908,6 +911,7 @@ class DashboardShell(QWidget):
             "minor", True,
         ))
         _move_controls(regulation_actions, tuning_layout)
+        tuning_layout.addWidget(self.controller.secondary_checkbox)
         tuning_layout.addWidget(_label("Тип підключення вентилятора", "labelTitle"))
         tuning_layout.addWidget(self.controller.type_box)
         type_apply = next(
@@ -916,6 +920,9 @@ class DashboardShell(QWidget):
         )
         if type_apply is not None:
             tuning_layout.addWidget(type_apply)
+        pid_actions = original_layout.takeAt(1)
+        if pid_actions is not None and pid_actions.layout() is not None:
+            _move_controls(pid_actions.layout(), tuning_layout)
         for label in toolbar.findChildren(QLabel):
             if label.text() == "Тип:":
                 label.hide()
