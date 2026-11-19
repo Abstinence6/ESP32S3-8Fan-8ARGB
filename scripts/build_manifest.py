@@ -59,11 +59,17 @@ def generate_manifest(
     if component == "firmware":
         if environment not in ("esp32s3", "esp32s3_native_usb",
                                "esp32s3_n16r8_usb_diag",
-                               "esp32s3_n16r8_native_usb"):
+                               "esp32s3_n16r8_native_usb",
+                               "esp32s3_n16r8_native_usb_dc_validated"):
             raise ValueError("Unknown firmware environment")
+        merged_images = {
+            "esp32s3_n16r8_native_usb": "ESP32S3-N16R8-NativeUSB-FULL.bin",
+            "esp32s3_n16r8_native_usb_dc_validated":
+                "ESP32S3-N16R8-NativeUSB-DC-VALIDATED-FULL.bin",
+        }
         required = set(FLASH_OFFSETS)
-        if environment == "esp32s3_n16r8_native_usb":
-            required.add("ESP32S3-N16R8-NativeUSB-FULL.bin")
+        if environment in merged_images:
+            required.add(merged_images[environment])
         if set(records) != required:
             raise ValueError("Firmware package requires exactly 4 expected images"
                              " (5 including merged BIN for operating N16R8)")
@@ -74,7 +80,8 @@ def generate_manifest(
             "hardware_validation": "required before powering peripherals",
         }
         if environment in ("esp32s3_n16r8_usb_diag",
-                           "esp32s3_n16r8_native_usb"):
+                           "esp32s3_n16r8_native_usb",
+                           "esp32s3_n16r8_native_usb_dc_validated"):
             manifest["target"].update({
                 "module": "ESP32-S3-WROOM-1-N16R8",
                 "flash_size": "16MB",
@@ -82,14 +89,20 @@ def generate_manifest(
                 "diagnostic_only": environment == "esp32s3_n16r8_usb_diag",
                 "fan_argb_gpio_outputs_disabled": environment == "esp32s3_n16r8_usb_diag",
             })
-        if environment == "esp32s3_n16r8_native_usb":
+        if environment in merged_images:
             manifest["target"].update({
                 "disabled_channels": [2],
                 "channel_mask": 253,
-                "merged_image": "ESP32S3-N16R8-NativeUSB-FULL.bin",
+                "merged_image": merged_images[environment],
                 "merged_flash_offset": "0x0",
                 "nvs_reset_when_merged_flashing": True,
                 "hardware_validation": "required before powering any fans or LEDs",
+            })
+        if environment == "esp32s3_n16r8_native_usb_dc_validated":
+            manifest["target"].update({
+                "dc_pwm_unlocked": True,
+                "hardware_validation": "not performed; compile-time DC unlock only; "
+                                       "required before powering any fans or LEDs",
             })
     elif set(records) != {"FanARGBControl.exe"}:
         raise ValueError("Windows package requires FanARGBControl.exe")

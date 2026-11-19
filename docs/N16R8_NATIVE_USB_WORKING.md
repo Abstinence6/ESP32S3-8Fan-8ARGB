@@ -24,6 +24,55 @@ until physically rerouted and the firmware reviewed for the new wiring.
 The other channels are NOT claimed bench-qualified; default
 `FAN_DC_PWM_VALIDATED=0` prohibits partial DC motor duty.
 
+## DC-unlocked candidate (not hardware-validated)
+
+The user previously reported checking the power stage, but this was not
+independently electrically validated. The user now reports the controller is
+damaged; the cause is unknown. The `esp32s3_n16r8_native_usb_dc_validated`
+environment is a compile-time candidate name, not evidence of validation. It
+inherits the N16R8 native-USB environment and adds **only**
+`FAN_DC_PWM_VALIDATED=1`. Existing environments and `BoardConfig.h` still
+default to DC validation off. This flag enables partial DC motor duty on every
+available 2/3-pin fan channel, not just FAN1; it does not qualify hardware.
+
+```sh
+pio run -e esp32s3_n16r8_native_usb_dc_validated
+build=.pio/build/esp32s3_n16r8_native_usb_dc_validated
+cp ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin "$build/boot_app0.bin"
+python3 scripts/merge_flash_images.py --directory "$build" --output "$build/ESP32S3-N16R8-NativeUSB-DC-VALIDATED-FULL.bin"
+```
+
+The application is `$build/firmware.bin` at **0x10000**; the combined
+`ESP32S3-N16R8-NativeUSB-DC-VALIDATED-FULL.bin` is at **0x0**, using the same
+component offsets below. Merged flashing **still overwrites NVS**. Prefer an
+application-only update with the matching existing bootloader/partition layout
+when preserving settings. Building/merging does not flash or access hardware.
+`VERSION?` should include `DC_READY=1`, `N16R8=1` and `CHMASK=253` after a later
+verified installation. Missing/stale temperature, overheat, startup/restart and latched
+fault protections still override manual requests, including 0% stop requests.
+
+### Other disabled pins / features (not unlocked)
+
+- **FAN2 PWM GPIO35, TACH GPIO36, ARGB2 GPIO37:** actual internal Octal PSRAM
+  conflict, not a test gate. Channel 2 remains unavailable even with DC validated.
+  The N16R8 pin-map guard also rejects GPIO33..37 for active channel assignments.
+- **PC power button/sense:** `PC_POWER_ENABLED=0`, `PC_POWER_GPIO=-1`,
+  `PC_SENSE_GPIO=-1`. Opt-in hardware feature with no confirmed wiring or free
+  pins assigned, not a DC test gate. No output/sense GPIO is initialized.
+- **Local DS18B20:** `HARDWARE_TEMP_ENABLED=0`, `HARDWARE_TEMP_GPIO=-1`.
+  Opt-in hardware feature awaiting an explicitly verified spare pin and sensor;
+  USB temperature telemetry remains available without it.
+- **Pin-map restrictions:** GPIO19/20 stay dedicated to native USB; GPIO26..32
+  to flash; GPIO22..25 are not usable ESP32-S3 GPIOs. GPIO43/44 (UART0) and
+  GPIO0/3/45 (boot straps) remain conservatively reserved. GPIO46 is allowed
+  only in its existing ARGB7 slot because of strapping risk; it is not disabled
+  in that slot. Auxiliary pin checks also reject occupied fan/ARGB pins.
+- **Fan features:** only 2/3-pin control exists; 4-pin mode and automatic fan-type
+  detection are unsupported by this design, not test locks. RPM feedback is
+  unavailable for 2-pin fans; calibration/PID still require their existing
+  temperature, TACH and calibration qualifications. No additional channel is
+  software test-blocked beyond the DC qualification and N16R8 channel-2 guard.
+
 ## One full BIN at address 0x0
 
 File: `ESP32S3-N16R8-NativeUSB-FULL.bin`. It includes:

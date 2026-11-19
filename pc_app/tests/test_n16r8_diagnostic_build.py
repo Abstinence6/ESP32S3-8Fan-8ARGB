@@ -42,5 +42,26 @@ class N16R8DiagnosticBuildTests(unittest.TestCase):
         # Operational fan/ARGB firmware is NOT safe on Octal PSRAM modules.
 
 
+class N16R8ValidatedDcBuildTests(unittest.TestCase):
+    def test_dc_validation_is_isolated_to_explicit_native_usb_variant(self):
+        pio = configparser.ConfigParser(interpolation=None)
+        pio.read(ROOT / "platformio.ini")
+        name = "env:esp32s3_n16r8_native_usb_dc_validated"
+        env = pio[name]
+        self.assertEqual(env["extends"].strip(), "env:esp32s3_n16r8_native_usb")
+        self.assertEqual(env["build_flags"].splitlines()[1:], [
+            "${env:esp32s3_n16r8_native_usb.build_flags}",
+            "-D FAN_DC_PWM_VALIDATED=1",
+        ])
+        for section in pio.sections():
+            if section != name:
+                self.assertNotIn("FAN_DC_PWM_VALIDATED", pio[section].get("build_flags", ""))
+        board = (ROOT / "include/BoardConfig.h").read_text()
+        for setting in ("FAN_DC_PWM_VALIDATED", "PC_POWER_ENABLED", "HARDWARE_TEMP_ENABLED"):
+            self.assertIn(f"#define {setting} 0", board)
+        self.assertIn("FANARGB_N16R8_SAFE=1",
+                      pio["env:esp32s3_n16r8_native_usb"]["build_flags"])
+
+
 if __name__ == "__main__":
     unittest.main()

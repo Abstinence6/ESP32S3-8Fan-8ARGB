@@ -1,5 +1,6 @@
 #include <cassert>
 #include <iostream>
+#include <string>
 #include "Arduino.h"
 #include "FanController.h"
 #include "ArgbController.h"
@@ -66,5 +67,54 @@ int main() {
     assert(fans.getPercent(0) == 100);
     assert(fans.getPercent(1) == 0);
     assert(mock::duty[1] == 0);
-    std::cout << "PASS: N16R8 safe 7-channel GPIO isolation and thermal guard\n";
+    assert(fans.dcHardwareAvailable() == board::kDcSupplyPwmValidated);
+    assert(fans.canControl(0, 55) == board::kDcSupplyPwmValidated);
+    static_assert(PC_POWER_ENABLED == 0 && HARDWARE_TEMP_ENABLED == 0,
+                  "No unconfirmed auxiliary GPIO features");
+    if (board::kDcSupplyPwmValidated) {
+        // Unlock only the DC gate, never the sensor/thermal arbiter, including
+        // requests to stop a fan. Test the combined N16R8 + validated build.
+        assert(cooling.setManual(0, 0));
+        assert(fans.getPercent(0) == 100);
+        cooling.setTemperature(0, 430, mock::currentMs);
+        assert(cooling.setManual(0, 55));
+        assert(fans.getPercent(0) == 55);
+        assert(std::string(cooling.failSafeReason(0, mock::currentMs)) == "none");
+
+        mock::currentMs += CoolingController::kSensorTimeoutMs + 1U;
+        assert(cooling.setManual(0, 0));
+        assert(fans.getPercent(0) == 100);
+        assert(std::string(cooling.failSafeReason(0, mock::currentMs)) == "sensor");
+        cooling.setTemperature(0, 950, mock::currentMs);
+        assert(cooling.setManual(0, 0));
+        assert(fans.getPercent(0) == 100);
+        assert(std::string(cooling.failSafeReason(0, mock::currentMs)) == "overheat");
+
+        cooling.setTemperature(0, 430, mock::currentMs);
+        assert(cooling.setManual(0, 55));
+        assert(fans.getPercent(0) == 55);
+        fans.update(mock::currentMs);
+        mock::pulse(board::kFanTachPins[0], 40);
+        mock::currentMs += 1000U;
+        fans.update(mock::currentMs);
+        cooling.update(mock::currentMs);
+        assert(fans.tachObserved(0));
+        // Confirmed TACH subsequently stalls: retries must still latch a fault
+        // even while temperatures remain fresh and safe.
+        for (int sec = 0; sec < 35; ++sec) {
+            mock::currentMs += 1000U;
+            cooling.setTemperature(0, 430, mock::currentMs);
+            fans.update(mock::currentMs);
+            cooling.update(mock::currentMs);
+        }
+        assert(cooling.faulted(0));
+        assert(cooling.setManual(0, 0));
+        assert(fans.getPercent(0) == 100);
+        assert(std::string(cooling.failSafeReason(0, mock::currentMs)) == "fault");
+        assert(fans.getPercent(1) == 0 && mock::duty[1] == 0);
+        assert(mock::pin[1] == 0 && mock::handlers[36] == nullptr);
+        assert(leds.pixelCount(1) == 0);
+    }
+    std::cout << "PASS: N16R8 safe 7-channel GPIO isolation and thermal guard, DC_READY="
+              << board::kDcSupplyPwmValidated << "\n";
 }
