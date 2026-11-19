@@ -140,6 +140,23 @@ class DashboardSmokeTests(unittest.TestCase):
             rows = {w.y() for w in shell._summary_cards}
             self.assertEqual(len(rows), 1)
 
+    def test_argb_reduced_to_three_visible_tabs_no_mode_dropdown(self):
+        shell = self.window.dashboard
+        names = [shell.argb_workspace_tabs.tabText(i) for i in range(3)]
+        self.assertEqual(names, ["Кольори", "Автоефекти", "OpenRGB"])
+        self.assertFalse(shell.argb_workspace_tabs.tabBar().isHidden())
+        self.assertFalse(hasattr(shell, "argb_mode_selector"))
+        self.assertEqual(set(shell.argb_auto_sections),
+                         {"native", "temperature", "sensors", "audio"})
+        self.assertFalse(shell.argb_auto_sections["audio"].isChecked())
+        shell.argb_auto_sections["audio"].setChecked(True)
+        self.assertFalse(shell.audio_reactive.isHidden())
+        shell.argb_auto_sections["audio"].setChecked(False)
+        self.assertTrue(shell.audio_reactive.isHidden())
+        shell.argb_studio_toggle.setChecked(True)
+        self.assertFalse(shell.studio.isHidden())
+        shell.argb_studio_toggle.setChecked(False)
+
     def test_render_preview(self):
         """Optional offscreen screenshots for visual QA of the actual Qt layout."""
         if os.environ.get("SAVE_DASHBOARD_PREVIEW") != "1":
@@ -208,7 +225,7 @@ class DashboardSmokeTests(unittest.TestCase):
         shell = self.window.dashboard
         self.assertEqual(shell.fan_workspace_tabs.count(), 3)
         self.assertEqual(shell.sensor_workspace_tabs.count(), 3)
-        self.assertEqual(shell.argb_workspace_tabs.count(), 7)
+        self.assertEqual(shell.argb_workspace_tabs.count(), 3)
         self.assertEqual(shell.service_workspace_tabs.count(), 5)
         self.window.show()
         for width in (1080, 1510):
@@ -441,7 +458,7 @@ class DashboardSmokeTests(unittest.TestCase):
     def test_v3_argb_zone_map_is_read_only_until_apply(self):
         shell = self.window.dashboard
         self.assertEqual(len(shell.argb_zone_tiles), 8)
-        self.assertEqual(shell.argb_workspace_tabs.count(), 7)
+        self.assertEqual(shell.argb_workspace_tabs.count(), 3)
         self.assertTrue(shell.argb_zone_tiles[1][0].property("selected"))
         shell.zone_box.setCurrentIndex(4)
         self.assertFalse(shell.argb_zone_tiles[1][0].property("selected"))
@@ -449,7 +466,7 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertEqual(self.window.fan_box.currentIndex(), 4)
         shell.sync_zone(7)
         self.assertTrue(shell.argb_zone_tiles[8][0].property("selected"))
-        shell.argb_workspace_tabs.setCurrentIndex(1)
+        shell.argb_workspace_tabs.setCurrentIndex(2)
         self.assertTrue(shell.native_checkbox.isVisible() or
                         not shell.isVisible())  # stored OpenRGB control still exists
 

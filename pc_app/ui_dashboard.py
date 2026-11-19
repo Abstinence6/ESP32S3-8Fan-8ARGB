@@ -443,32 +443,34 @@ class DashboardShell(QWidget):
         slot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         return slot, value
 
-    def _workspace_picker(self, tabs: QTabWidget, options) -> tuple[QFrame, QComboBox]:
-        """One descriptive native combo replaces rows of nested tab buttons."""
-        if tabs.count() != len(options):
-            raise ValueError("Workspace mode list does not match existing pages")
-        tabs.tabBar().hide()
-        panel = QFrame()
-        panel.setObjectName("quietCard")
-        row = QHBoxLayout(panel)
-        row.setContentsMargins(14, 9, 14, 9)
-        row.setSpacing(10)
-        row.addWidget(_label("ЩО НАЛАШТУВАТИ", "sectionLabel"))
-        chooser = QComboBox()
-        chooser.setAccessibleName("Оберіть розділ налаштування")
-        chooser.setMinimumWidth(235)
-        chooser.setMaximumWidth(360)
-        for name, description in options:
-            chooser.addItem(name, description)
-        chooser.currentIndexChanged.connect(tabs.setCurrentIndex)
-        tabs.currentChanged.connect(chooser.setCurrentIndex)
-        row.addWidget(chooser)
-        explanation = _label(options[0][1], "minor", True)
-        chooser.currentIndexChanged.connect(
-            lambda index: explanation.setText(options[index][1]) if 0 <= index < len(options) else None
+    @staticmethod
+    def _expandable_panel(layout: QVBoxLayout, title: str, content: QWidget,
+                          *, expanded: bool = False) -> QToolButton:
+        """Place a pre-existing feature panel in an inline disclosure section."""
+        frame = QFrame()
+        frame.setObjectName("quietCard")
+        section = QVBoxLayout(frame)
+        section.setContentsMargins(13, 10, 13, 10)
+        section.setSpacing(8)
+        toggle = QToolButton(frame)
+        toggle.setText(title)
+        toggle.setCheckable(True)
+        toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        toggle.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
+        toggle.setAccessibleName(title)
+        toggle.setToolTip("Розгорнути або згорнути параметри без зміни стану ESP32")
+        section.addWidget(toggle)
+        section.addWidget(content)
+        toggle.toggled.connect(content.setVisible)
+        toggle.toggled.connect(
+            lambda checked: toggle.setArrowType(
+                Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
+            )
         )
-        row.addWidget(explanation, 1)
-        return panel, chooser
+        toggle.setChecked(expanded)
+        content.setVisible(expanded)
+        layout.addWidget(frame)
+        return toggle
 
     def _create_overview(self) -> None:
         page, layout = self._content(
@@ -995,14 +997,6 @@ class DashboardShell(QWidget):
         history_layout.addStretch(1)
         self.fan_workspace_tabs.addTab(history_page, "Історія")
 
-        picker, self.fan_mode_selector = self._workspace_picker(
-            self.fan_workspace_tabs, (
-                ("Крива та швидкість", "Налаштуй PWM за температурою для вибраного вентилятора."),
-                ("Усі вентилятори", "Порівняй усі канали й вибери той, який треба змінити."),
-                ("Історія та графіки", "Переглянь зміни швидкості й температури з часом."),
-            )
-        )
-        layout.addWidget(picker)
         layout.addWidget(self.fan_workspace_tabs, 1)
         layout.addStretch(1)
         self.controller.fan_box.currentIndexChanged.connect(
@@ -1245,18 +1239,49 @@ class DashboardShell(QWidget):
         audio_layout.addStretch(1)
         self.argb_workspace_tabs.addTab(audio_page, "Звукова підсвітка")
 
-        picker, self.argb_mode_selector = self._workspace_picker(
-            self.argb_workspace_tabs, (
-                ("Колір та готові сцени", "Вибери зону, колір або готову сцену."),
-                ("OpenRGB / синхронізація", "Підключення зовнішнього ПЗ та передавання кольорів."),
-                ("Редактор власного ефекту", "Створи власні анімації для світлодіодів."),
-                ("Колір за температурою", "Автоматичне світіння залежно від температури."),
-                ("Автономні ефекти ESP32", "Працюють на контролері без постійного зв'язку з ПК."),
-                ("Реакція на датчики", "Підсвітка змінюється за показниками обладнання."),
-                ("Реакція на звук", "Ефекти від звуку, лише після явного дозволу."),
-            )
+        # Seven legacy pages are preserved, but presented in three clear tasks.
+        # Expanded sections use the existing widgets and signal connections.
+        for index in reversed(range(self.argb_workspace_tabs.count())):
+            self.argb_workspace_tabs.removeTab(index)
+
+        # Basics: zones, quick color/scene commands, optional advanced editor.
+        trailing = scenes_layout.takeAt(scenes_layout.count() - 1)
+        if trailing is not None and trailing.widget() is not None:
+            scenes_layout.addWidget(trailing.widget())
+        self.argb_studio_toggle = self._expandable_panel(
+            scenes_layout, "Створити власний ефект", studio_page
         )
-        layout.addWidget(picker)
+        scenes_layout.addStretch(1)
+        self.argb_workspace_tabs.addTab(scenes_page, "Кольори")
+
+        # Automatic effects: four related modes, not four separate tabs.
+        auto_page = QWidget()
+        auto_layout = QVBoxLayout(auto_page)
+        auto_layout.setContentsMargins(0, 12, 0, 0)
+        auto_layout.setSpacing(10)
+        auto_layout.addWidget(_label(
+            "Ефекти можуть працювати автономно на ESP32 або реагувати на ПК.",
+            "minor", True,
+        ))
+        self.argb_auto_sections = {
+            "native": self._expandable_panel(
+                auto_layout, "Автономні ефекти ESP32", native_fx_page, expanded=True
+            ),
+            "temperature": self._expandable_panel(
+                auto_layout, "За температурою", temperature_page
+            ),
+            "sensors": self._expandable_panel(
+                auto_layout, "За показниками датчиків", reactive_page
+            ),
+            "audio": self._expandable_panel(
+                auto_layout, "За звуком", audio_page
+            ),
+        }
+        auto_layout.addStretch(1)
+        self.argb_workspace_tabs.addTab(auto_page, "Автоефекти")
+
+        # External integrations remain in one dedicated, familiar tab.
+        self.argb_workspace_tabs.addTab(openrgb_page, "OpenRGB")
         layout.addWidget(self.argb_workspace_tabs, 1)
         layout.addStretch(1)
         self._refresh_argb_zone_tiles()
@@ -1384,14 +1409,6 @@ class DashboardShell(QWidget):
         source_layout.addWidget(self.sensor_manager)
         source_layout.addStretch(1)
         self.sensor_workspace_tabs.addTab(source_page, "Джерела")
-        picker, self.sensor_mode_selector = self._workspace_picker(
-            self.sensor_workspace_tabs, (
-                ("Температури комп'ютера", "Температура CPU, GPU та інших компонентів Windows."),
-                ("Датчики DS18B20", "Фізичні датчики температури, підключені до ESP32."),
-                ("Прив'язка датчиків", "Яку температуру використовує кожен вентилятор."),
-            )
-        )
-        layout.addWidget(picker)
         layout.addWidget(self.sensor_workspace_tabs, 1)
         layout.addStretch(1)
         self._add_page("sensors", page)
@@ -1536,16 +1553,6 @@ class DashboardShell(QWidget):
         desktop.addStretch(1)
         self.service_workspace_tabs.addTab(desktop_page, "Windows")
 
-        picker, self.service_mode_selector = self._workspace_picker(
-            self.service_workspace_tabs, (
-                ("Перевірка та діагностика", "Стан контролера, захисти та причини аварій."),
-                ("Калібрування вентилятора", "Вимірювання характеристик PWM та RPM."),
-                ("Профілі та резервні файли", "Збережені сценарії охолодження і підсвітки."),
-                ("Прошивка та резервна копія", "Оновлення ESP32 із захистом від неправильного образу."),
-                ("Параметри Windows", "Запуск програми, сповіщення та поведінка у треї."),
-            )
-        )
-        layout.addWidget(picker)
         layout.addWidget(self.service_workspace_tabs, 1)
         layout.addStretch(1)
         self._add_page("service", page)
