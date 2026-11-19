@@ -60,12 +60,18 @@ def generate_manifest(
         if environment not in ("esp32s3", "esp32s3_native_usb",
                                "esp32s3_n16r8_usb_diag",
                                "esp32s3_n16r8_native_usb",
-                               "esp32s3_n16r8_native_usb_dc_validated"):
+                               "esp32s3_n16r8_native_usb_dc_validated",
+                               "esp32s3_n16r8_native_usb_fan2_rerouted",
+                               "esp32s3_n16r8_native_usb_fan2_rerouted_dc_validated"):
             raise ValueError("Unknown firmware environment")
         merged_images = {
             "esp32s3_n16r8_native_usb": "ESP32S3-N16R8-NativeUSB-FULL.bin",
             "esp32s3_n16r8_native_usb_dc_validated":
                 "ESP32S3-N16R8-NativeUSB-DC-VALIDATED-FULL.bin",
+            "esp32s3_n16r8_native_usb_fan2_rerouted":
+                "ESP32S3-N16R8-FAN2-REROUTED-SAFE-FULL.bin",
+            "esp32s3_n16r8_native_usb_fan2_rerouted_dc_validated":
+                "ESP32S3-N16R8-FAN2-REROUTED-DC-FULL.bin",
         }
         required = set(FLASH_OFFSETS)
         if environment in merged_images:
@@ -81,7 +87,9 @@ def generate_manifest(
         }
         if environment in ("esp32s3_n16r8_usb_diag",
                            "esp32s3_n16r8_native_usb",
-                           "esp32s3_n16r8_native_usb_dc_validated"):
+                           "esp32s3_n16r8_native_usb_dc_validated",
+                           "esp32s3_n16r8_native_usb_fan2_rerouted",
+                           "esp32s3_n16r8_native_usb_fan2_rerouted_dc_validated"):
             manifest["target"].update({
                 "module": "ESP32-S3-WROOM-1-N16R8",
                 "flash_size": "16MB",
@@ -98,7 +106,18 @@ def generate_manifest(
                 "nvs_reset_when_merged_flashing": True,
                 "hardware_validation": "required before powering any fans or LEDs",
             })
-        if environment == "esp32s3_n16r8_native_usb_dc_validated":
+        if environment in ("esp32s3_n16r8_native_usb_fan2_rerouted",
+                           "esp32s3_n16r8_native_usb_fan2_rerouted_dc_validated"):
+            manifest["target"].update({
+                "disabled_channels": [],
+                "channel_mask": 255,
+                "fan2_gpio_reroute": {"pwm": 8, "tach": 11, "argb": 17},
+                "physical_reroute_required": True,
+                "hardware_validation": "physical wiring must be confirmed; "
+                                       "software build does not verify hardware",
+            })
+        if environment in ("esp32s3_n16r8_native_usb_dc_validated",
+                           "esp32s3_n16r8_native_usb_fan2_rerouted_dc_validated"):
             manifest["target"].update({
                 "dc_pwm_unlocked": True,
                 "hardware_validation": "not performed; compile-time DC unlock only; "

@@ -115,6 +115,30 @@ class ManifestTests(unittest.TestCase):
                 for name in sorted(names)
             ))
 
+    def test_fan2_reroute_manifests_require_new_wiring(self):
+        for env, image, dc in (
+            ("esp32s3_n16r8_native_usb_fan2_rerouted",
+             "ESP32S3-N16R8-FAN2-REROUTED-SAFE-FULL.bin", False),
+            ("esp32s3_n16r8_native_usb_fan2_rerouted_dc_validated",
+             "ESP32S3-N16R8-FAN2-REROUTED-DC-FULL.bin", True),
+        ):
+            with self.subTest(env=env), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                names = list(FLASH_OFFSETS) + [image]
+                for name in names:
+                    (root / name).write_bytes(("test " + name).encode())
+                target = generate_manifest(
+                    root, component="firmware", commit="a" * 40,
+                    filenames=names, environment=env)["target"]
+                self.assertEqual(target["disabled_channels"], [])
+                self.assertEqual(target["channel_mask"], 255)
+                self.assertEqual(target["fan2_gpio_reroute"], 
+                                 {"pwm": 8, "tach": 11, "argb": 17})
+                self.assertTrue(target["physical_reroute_required"])
+                self.assertEqual(target.get("dc_pwm_unlocked", False), dc)
+                self.assertEqual(target["merged_flash_offset"], "0x0")
+                self.assertTrue(target["nvs_reset_when_merged_flashing"])
+
     def test_n16r8_packages_reject_missing_extra_or_cross_environment_images(self):
         operating = "ESP32S3-N16R8-NativeUSB-FULL.bin"
         dc_unlocked = "ESP32S3-N16R8-NativeUSB-DC-VALIDATED-FULL.bin"
