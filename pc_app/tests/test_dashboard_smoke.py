@@ -69,6 +69,34 @@ class DashboardSmokeTests(unittest.TestCase):
         shell.set_connected(False)
         self.assertTrue(self.window.fan_box.model().item(1).isEnabled())
 
+    def test_fan_and_argb_channels_use_eight_buttons_with_shared_state(self):
+        shell = self.window.dashboard
+        self.assertEqual(len(shell.fan_channel_buttons), 8)
+        self.assertEqual(len(shell.argb_channel_buttons), 8)
+        self.assertTrue(self.window.fan_box.isHidden())
+        self.assertTrue(shell.zone_box.isHidden())
+        self.assertTrue(shell.fan_channel_buttons[1].isChecked())
+        self.assertTrue(shell.argb_channel_buttons[1].isChecked())
+
+        shell.fan_channel_buttons[4].click()
+        self.assertEqual(self.window.current_fan, 4)
+        self.assertEqual(shell.zone_box.currentData(), 4)
+        self.assertTrue(shell.fan_channel_buttons[4].isChecked())
+        self.assertTrue(shell.argb_channel_buttons[4].isChecked())
+
+        shell.argb_channel_buttons[7].click()
+        self.assertEqual(self.window.current_fan, 7)
+        self.assertEqual(self.window.fan_box.currentData(), 7)
+        self.assertTrue(shell.fan_channel_buttons[7].isChecked())
+        self.assertTrue(shell.argb_channel_buttons[7].isChecked())
+
+        shell.set_channel_mask(253)
+        self.assertFalse(shell.fan_channel_buttons[2].isEnabled())
+        self.assertFalse(shell.argb_channel_buttons[2].isEnabled())
+        shell.set_connected(False)
+        self.assertTrue(shell.fan_channel_buttons[2].isEnabled())
+        self.assertTrue(shell.argb_channel_buttons[2].isEnabled())
+
     def test_one_fan_quick_presets_only_write_selected_channel(self):
         from unittest.mock import patch
         from PySide6.QtWidgets import QMessageBox

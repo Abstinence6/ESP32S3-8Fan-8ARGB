@@ -87,6 +87,12 @@ QPushButton[role="nav"]:checked { border-left: 3px solid palette(highlight); bac
 QPushButton[role="ghost"] { color: palette(highlight); background: transparent; border: none; text-align: left; padding: 3px 1px; }
 QPushButton[role="ghost"]:hover { text-decoration: underline; }
 QPushButton[role="filter"]:checked { border: 1px solid palette(highlight); }
+QPushButton[role="channelSelect"] { min-height: 33px; font-weight: 500; }
+QPushButton[role="channelSelect"]:checked {
+    background-color: palette(highlight); color: palette(highlighted-text);
+    border: 1px solid palette(highlight); font-weight: 700;
+}
+QPushButton[role="channelSelect"]:disabled { color: palette(mid); }
 QPushButton[role="danger"] { border: 1px solid #bb5561; }
 QProgressBar#fanDuty { border: 0; background-color: palette(midlight); min-height: 7px; max-height: 7px; }
 QProgressBar#fanDuty::chunk { background-color: palette(highlight); }
@@ -833,8 +839,37 @@ class DashboardShell(QWidget):
         for label in toolbar.findChildren(QLabel):
             if label.text().startswith("Редагувати криву"):
                 label.setText("Канал")
-        self.controller.fan_box.setMinimumWidth(150)
-        self.controller.fan_box.setMaximumWidth(235)
+        # Keep the original combo as the single protocol/state model. Replace
+        # its visible editor with eight one-click, mutually exclusive buttons.
+        bar.removeWidget(self.controller.fan_box)
+        self.controller.fan_box.setParent(toolbar)
+        self.controller.fan_box.hide()
+        for label in toolbar.findChildren(QLabel):
+            if label.text() == "Канал":
+                bar.removeWidget(label)
+                label.hide()
+        bar.addWidget(_label("FAN", "sectionLabel"))
+        self.fan_channel_group = QButtonGroup(self)
+        self.fan_channel_group.setExclusive(True)
+        self.fan_channel_buttons: dict[int, QPushButton] = {}
+        for ch in range(1, 9):
+            button = QPushButton(f"{ch:02d}")
+            button.setProperty("role", "channelSelect")
+            button.setCheckable(True)
+            button.setAccessibleName(f"Вибрати вентилятор {ch}")
+            button.setToolTip(f"Канал FAN {ch} · змінює лише вибір у редакторі")
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self.fan_channel_group.addButton(button, ch)
+            button.clicked.connect(
+                lambda _checked=False, channel=ch:
+                    self.controller.fan_box.setCurrentIndex(channel - 1)
+            )
+            self.fan_channel_buttons[ch] = button
+            bar.addWidget(button, 1)
+        self.controller.fan_box.currentIndexChanged.connect(
+            lambda _index: self._refresh_fan_channel_buttons()
+        )
+        self._refresh_fan_channel_buttons()
         self.controller.type_box.setMaximumWidth(220)
         layout.addWidget(toolbar)
         usage = _label(
@@ -1008,6 +1043,11 @@ class DashboardShell(QWidget):
         self._refresh_fan_detail()
         self._add_page("fans", page)
 
+    def _refresh_fan_channel_buttons(self) -> None:
+        selected = self.controller.fan_box.currentData()
+        for channel, button in self.fan_channel_buttons.items():
+            button.setChecked(selected == channel)
+
     def _refresh_fan_detail(self) -> None:
         channel = self.controller.fan_box.currentData()
         if channel is None:
@@ -1062,47 +1102,46 @@ class DashboardShell(QWidget):
         scenes_layout.setContentsMargins(0, 12, 0, 0)
         scenes_layout.setSpacing(13)
 
+        # One 8-button channel selector shared by all ARGB modes. The existing
+        # hidden QComboBox remains the authoritative selection source for
+        # serial, OpenRGB and scene commands, avoiding protocol regressions.
         zone_map = QFrame()
         zone_map.setObjectName("quietCard")
-        map_layout = QVBoxLayout(zone_map)
-        map_layout.setContentsMargins(17, 15, 17, 15)
-        map_layout.setSpacing(12)
-        map_layout.addWidget(_label("8 НЕЗАЛЕЖНИХ ЗОН", "sectionLabel"))
-        map_grid = QGridLayout()
-        map_grid.setContentsMargins(0, 0, 0, 0)
-        map_grid.setHorizontalSpacing(9)
-        map_grid.setVerticalSpacing(9)
+        map_layout = QHBoxLayout(zone_map)
+        map_layout.setContentsMargins(12, 11, 12, 11)
+        map_layout.setSpacing(7)
         self.argb_zone_tiles: dict[int, tuple[QFrame, QFrame]] = {}
+        self.argb_channel_buttons: dict[int, QPushButton] = {}
+        self.argb_channel_group = QButtonGroup(self)
+        self.argb_channel_group.setExclusive(True)
         for ch in range(1, 9):
             tile = QFrame()
             tile.setObjectName("zoneTile")
             tile.setProperty("selected", False)
-            line = QHBoxLayout(tile)
-            line.setContentsMargins(10, 9, 10, 9)
-            line.setSpacing(9)
-            pick = QPushButton(f"ARGB {ch:02d}")
-            pick.setProperty("role", "ghost")
-            pick.setFixedWidth(84)
-            pick.setToolTip(f"Вибрати канал ARGB {ch} без зміни світлодіодів")
+            cell = QVBoxLayout(tile)
+            cell.setContentsMargins(4, 4, 4, 4)
+            cell.setSpacing(5)
+            pick = QPushButton(f"{ch:02d}")
+            pick.setProperty("role", "channelSelect")
+            pick.setCheckable(True)
+            pick.setAccessibleName(f"Вибрати ARGB-канал {ch}")
+            pick.setToolTip(f"ARGB {ch} · вибір каналу без відправлення команд")
+            pick.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self.argb_channel_group.addButton(pick, ch)
             pick.clicked.connect(
-                lambda _checked=False, zone=ch: self.zone_box.setCurrentIndex(zone - 1)
+                lambda _checked=False, channel=ch:
+                    self.zone_box.setCurrentIndex(channel - 1)
             )
-            line.addWidget(pick)
+            cell.addWidget(pick)
             strip = QFrame()
             strip.setObjectName("zonePixels")
             strip.setProperty("selected", False)
-            strip.setFixedHeight(9)
-            strip.setMinimumWidth(35)
-            line.addWidget(strip, 1)
+            strip.setFixedHeight(5)
+            cell.addWidget(strip)
+            self.argb_channel_buttons[ch] = pick
             self.argb_zone_tiles[ch] = (tile, strip)
-            map_grid.addWidget(tile, (ch - 1) // 2, (ch - 1) % 2)
-        map_grid.setColumnStretch(0, 1)
-        map_grid.setColumnStretch(1, 1)
-        map_layout.addLayout(map_grid)
-        map_layout.addWidget(_label(
-            "Схема вибору каналів · кольори не зчитуються з фізичних LED.",
-            "minor", True,
-        ))
+            map_layout.addWidget(tile, 1)
+        layout.addWidget(zone_map)
 
         select = QFrame()
         select.setObjectName("quietCard")
@@ -1110,13 +1149,11 @@ class DashboardShell(QWidget):
         control.setContentsMargins(17, 15, 17, 15)
         control.setSpacing(9)
         control.addWidget(_label("СЦЕНА", "sectionLabel"))
-        control.addWidget(_label("Канал", "labelTitle"))
-        self.zone_box = QComboBox()
-        self.zone_box.setMinimumWidth(110)
+        self.zone_box = QComboBox(select)
         for ch in range(1, 9):
             self.zone_box.addItem(f"ARGB {ch}", ch)
         self.zone_box.currentIndexChanged.connect(self._zone_changed)
-        control.addWidget(self.zone_box)
+        self.zone_box.hide()  # internal state model, replaced by eight buttons
         control.addWidget(_label("Ефект", "labelTitle"))
         self.scene_box = QComboBox()
         self.scene_box.addItems(list(scenes))
@@ -1136,10 +1173,8 @@ class DashboardShell(QWidget):
         work = QGridLayout()
         work.setContentsMargins(0, 0, 0, 0)
         work.setHorizontalSpacing(13)
-        work.addWidget(zone_map, 0, 0)
-        work.addWidget(select, 0, 1)
-        work.setColumnStretch(0, 7)
-        work.setColumnStretch(1, 4)
+        work.addWidget(select, 0, 0)
+        work.setColumnStretch(0, 1)
         scenes_layout.addLayout(work)
 
         # All original manual controls remain wired to the controller;
@@ -1293,6 +1328,7 @@ class DashboardShell(QWidget):
     def _refresh_argb_zone_tiles(self) -> None:
         for ch, (tile, strip) in self.argb_zone_tiles.items():
             active = self.zone_box.currentData() == ch
+            self.argb_channel_buttons[ch].setChecked(active)
             for widget in (tile, strip):
                 if widget.property("selected") != active:
                     widget.setProperty("selected", active)
@@ -1635,6 +1671,8 @@ class DashboardShell(QWidget):
                     item = combo.model().item(row)
                     if item is not None:
                         item.setEnabled(True)
+                self.fan_channel_buttons[row + 1].setEnabled(True)
+                self.argb_channel_buttons[row + 1].setEnabled(True)
                 tile = self.argb_zone_tiles[row + 1][0]
                 tile.setProperty("disabled", False)
                 for button in tile.findChildren(QPushButton):
@@ -1716,6 +1754,8 @@ class DashboardShell(QWidget):
                 else f"Канал {channel} недоступний на поточній платі"
             )
             self.fan_cards[channel]["settings_button"].setEnabled(enabled)
+            self.fan_channel_buttons[channel].setEnabled(enabled)
+            self.argb_channel_buttons[channel].setEnabled(enabled)
             if not enabled:
                 labels = self.fan_cards[channel]
                 labels["rpm"].setText("— RPM")
