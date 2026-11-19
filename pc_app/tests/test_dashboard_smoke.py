@@ -69,6 +69,56 @@ class DashboardSmokeTests(unittest.TestCase):
         shell.set_connected(False)
         self.assertTrue(self.window.fan_box.model().item(1).isEnabled())
 
+    def test_one_fan_quick_presets_only_write_selected_channel(self):
+        from unittest.mock import patch
+        from PySide6.QtWidgets import QMessageBox
+        from protocol import make_curve_command, DEFAULT_CURVE
+        shell = self.window.dashboard
+        shell.set_connected(True, "COM5")
+        shell.set_channel_mask(253)
+        self.assertFalse(shell.fan_preset_buttons[2]["Maximum"].isEnabled())
+        self.assertTrue(shell.fan_preset_buttons[3]["Silent"].isEnabled())
+        self.window.port = object()
+        with patch.object(self.window, "send", return_value=True) as send:
+            with patch.object(
+                QMessageBox, "question",
+                return_value=QMessageBox.StandardButton.No
+            ):
+                shell.fan_preset_buttons[3]["Default"].click()
+            send.assert_not_called()
+            with patch.object(
+                QMessageBox, "question",
+                return_value=QMessageBox.StandardButton.Yes
+            ):
+                shell.fan_preset_buttons[3]["Default"].click()
+            send.assert_any_call(make_curve_command(3, list(DEFAULT_CURVE)))
+            send.assert_any_call("AUTO 3")
+            self.assertEqual(send.call_count, 2)
+        self.window.port = None
+        shell.set_connected(False)
+        self.assertFalse(shell.fan_preset_buttons[3]["Silent"].isEnabled())
+
+    def test_fan_rotor_responds_to_rpm_and_stops_on_expiration(self):
+        shell = self.window.dashboard
+        shell.set_connected(True, "COM5")
+        shell.set_channel_mask(253)
+        self.window.handle_line(
+            "CH 1 FAN=55% RPM=1250 TEMP=440 MODE=auto SENSOR=ok TYPE=3 FAULT=0"
+        )
+        rotor = shell.fan_cards[1]["rotor"]
+        self.assertEqual(rotor.rpm, 1250)
+        rotor.advance(.05)
+        self.assertGreater(rotor.angle, 0)
+        shell._last_fan_update[1] -= 30
+        shell.refresh_telemetry_freshness()
+        self.assertEqual(rotor.rpm, 0)
+        self.window.handle_line(
+            "CH 1 FAN=55% RPM=2000 TEMP=440 MODE=auto SENSOR=ok TYPE=3 FAULT=0 RPM_OK=0"
+        )
+        self.assertEqual(rotor.rpm, 0)
+        shell.set_connected(False)
+        self.assertEqual(rotor.rpm, 0)
+
     def test_render_preview(self):
         """Optional offscreen screenshots for visual QA of the actual Qt layout."""
         if os.environ.get("SAVE_DASHBOARD_PREVIEW") != "1":
