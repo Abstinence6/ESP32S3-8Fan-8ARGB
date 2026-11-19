@@ -27,14 +27,14 @@ def merge_images(directory: str | Path, output: str | Path) -> dict:
             raise ValueError("Empty flash image: "+name)
         if name in ("bootloader.bin","firmware.bin") and raw[0] != 0xE9:
             raise ValueError("Invalid ESP32 image magic: "+name)
-        if name == "partitions.bin" and raw[:2] != b"\\xAA\\x50":
+        if name == "partitions.bin" and raw[:2] != b"\xAA\x50":
             raise ValueError("Invalid ESP32 partition table magic")
         limit = FLASH_PARTS[index+1][1] if index+1<len(FLASH_PARTS) else MAX_FLASH_SIZE
         if offset+len(raw)>limit:
             raise ValueError("Flash image overlaps the next partition or exceeds 16 MB: "+name)
         parts.append((name,offset,raw))
     end=parts[-1][1]+len(parts[-1][2])
-    image=bytearray(b"\\xFF"*end)
+    image=bytearray(b"\xFF"*end)
     for name,start,raw in parts:
         image[start:start+len(raw)]=raw
         if image[start:start+len(raw)]!=raw:
