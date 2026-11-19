@@ -1308,11 +1308,12 @@ void SerialConsole::handleLine(char* line) {
             if (cooling_.calibrationActive()) { serial_.println(F("ERR calibration busy")); return; }
             // Preflight every channel before changing any: ALLFAN is atomic.
             for (uint8_t i = 0; i < board::kChannelCount; ++i) {
-                if (!cooling_.canSetManual(i, percent)) {
+                if (board::channelEnabled(i) && !cooling_.canSetManual(i, percent)) {
                     serial_.println(F("ERR fan control blocked")); return;
                 }
             }
-            for (uint8_t i = 0; i < board::kChannelCount; ++i) cooling_.setManual(i, percent);
+            for (uint8_t i = 0; i < board::kChannelCount; ++i)
+                if (board::channelEnabled(i)) cooling_.setManual(i, percent);
         } else if (!cooling_.setManual(ch - 1, percent)) {
             serial_.println(F("ERR fan control blocked")); return;
         }
@@ -1449,6 +1450,7 @@ void SerialConsole::printHealth(uint8_t ch) {
     serial_.print(F(" FAILSAFE=")); serial_.print(cooling_.failSafeReason(ch, now));
     serial_.print(F(" FAULT=")); serial_.print(cooling_.faulted(ch) ? 1 : 0);
     serial_.print(F(" DC_READY=")); serial_.print(fans_.dcHardwareAvailable() ? 1 : 0);
+    serial_.print(F(" AVAILABLE=")); serial_.print(board::channelEnabled(ch) ? 1 : 0);
     serial_.print(F(" MODE=")); serial_.println(modeLabel);
 }
 
@@ -1470,6 +1472,7 @@ void SerialConsole::printStatus() {
         serial_.print(F(" FAULT=")); serial_.print(cooling_.faulted(i) ? 1 : 0);
         serial_.print(F(" TYPE=")); serial_.print(static_cast<unsigned>(cooling_.fanType(i)));
         serial_.print(F(" RPM_OK=")); serial_.print(fans_.hasRpmFeedback(i) ? 1 : 0);
+        serial_.print(F(" AVAILABLE=")); serial_.print(board::channelEnabled(i) ? 1 : 0);
         serial_.println("");
     }
 }

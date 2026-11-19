@@ -74,17 +74,23 @@ bool ArgbController::begin() {
         ? (config.budgetMa < idleBaselineMa ? idleBaselineMa : config.budgetMa)
         : 2000;
     for (uint8_t i = 0; i < board::kChannelCount; ++i) {
-        strips_[i].updateType(NEO_GRB + NEO_KHZ800);
-        strips_[i].updateLength(valid ? config.counts[i] : board::kArgbLedCounts[i]);
-        strips_[i].setPin(pinmap::argbPin(i));
-        strips_[i].begin();
-        strips_[i].setBrightness(255);
+        // Never call NeoPixel::setPin/begin/show for Octal PSRAM GPIO37.
+        // A default-constructed strip retains zero pixels on disabled channel 2.
+        if (board::channelEnabled(i)) {
+            strips_[i].updateType(NEO_GRB + NEO_KHZ800);
+            strips_[i].updateLength(valid ? config.counts[i] : board::kArgbLedCounts[i]);
+            strips_[i].setPin(pinmap::argbPin(i));
+            strips_[i].begin();
+            strips_[i].setBrightness(255);
+        }
         brightness_[i] = board::kInitialArgbBrightness;
         savedBrightness_[i] = board::kInitialArgbBrightness;
         modes_[i] = Mode::Off;
         reversed_[i] = valid && config.reversed[i] != 0;
-        strips_[i].clear();
-        strips_[i].show();
+        if (board::channelEnabled(i)) {
+            strips_[i].clear();
+            strips_[i].show();
+        }
     }
     // Preserve legacy ARG4 geometry NVS layout. Brightness is a separate
     // atomic record, avoiding any destructive migration of strip settings.
@@ -171,9 +177,11 @@ bool ArgbController::begin() {
     previousFrameMs_ = millis();
     return true;
 }
-void ArgbController::markDirty(uint8_t ch) { dirty_[ch] = true; }
+void ArgbController::markDirty(uint8_t ch) {
+    if (board::channelEnabled(ch)) dirty_[ch] = true;
+}
 void ArgbController::setSafetyWarning(uint8_t ch, uint8_t code) {
-    if (ch >= board::kChannelCount || code > 3 || safetyWarnings_[ch] == code) return;
+    if (!board::channelEnabled(ch) || code > 3 || safetyWarnings_[ch] == code) return;
     safetyWarnings_[ch] = code;
     markDirty(ch);
 }
@@ -251,7 +259,7 @@ void ArgbController::render() {
     }
     for (uint8_t n = 0; n < board::kChannelCount; ++n) {
         const uint8_t ch = (renderCursor_ + n) % board::kChannelCount;
-        if (!dirty_[ch]) continue;
+        if (!board::channelEnabled(ch) || !dirty_[ch]) continue;
         dirty_[ch] = false;
         renderCursor_ = (ch + 1) % board::kChannelCount;
         const uint16_t count = strips_[ch].numPixels();
@@ -281,13 +289,13 @@ void ArgbController::drawSolid(uint8_t ch) {
 }
 bool ArgbController::solidColor(uint8_t ch, uint8_t& r,
                                 uint8_t& g, uint8_t& b) const {
-    if (ch >= board::kChannelCount) return false;
+    if (!board::channelEnabled(ch)) return false;
     r = colors_[ch].r; g = colors_[ch].g; b = colors_[ch].b;
     return true;
 }
 
 bool ArgbController::setSolid(uint8_t ch, uint8_t r, uint8_t g, uint8_t b) {
-    if (ch >= board::kChannelCount) return false;
+    if (!board::channelEnabled(ch)) return false;
     if (modes_[ch] == Mode::External || modes_[ch] == Mode::Effect ||
         modes_[ch] == Mode::Reactive || modes_[ch] == Mode::Audio)
         brightness_[ch] = savedBrightness_[ch];
@@ -297,7 +305,7 @@ bool ArgbController::setSolid(uint8_t ch, uint8_t r, uint8_t g, uint8_t b) {
     return true;
 }
 bool ArgbController::setOff(uint8_t ch) {
-    if (ch >= board::kChannelCount) return false;
+    if (!board::channelEnabled(ch)) return false;
     if (modes_[ch] == Mode::External || modes_[ch] == Mode::Effect ||
         modes_[ch] == Mode::Reactive || modes_[ch] == Mode::Audio)
         brightness_[ch] = savedBrightness_[ch];
@@ -308,7 +316,7 @@ bool ArgbController::setOff(uint8_t ch) {
     return true;
 }
 bool ArgbController::setRainbow(uint8_t ch) {
-    if (ch >= board::kChannelCount) return false;
+    if (!board::channelEnabled(ch)) return false;
     if (modes_[ch] == Mode::External || modes_[ch] == Mode::Effect ||
         modes_[ch] == Mode::Reactive || modes_[ch] == Mode::Audio)
         brightness_[ch] = savedBrightness_[ch];
@@ -316,7 +324,7 @@ bool ArgbController::setRainbow(uint8_t ch) {
     return true;
 }
 bool ArgbController::setEffect(uint8_t ch, const argbeffects::Scene& config) {
-    if (ch >= board::kChannelCount || !argbeffects::valid(config)) return false;
+    if (!board::channelEnabled(ch) || !argbeffects::valid(config)) return false;
     effects_[ch] = config;
     modes_[ch] = Mode::Effect;
     brightness_[ch] = config.brightness;
@@ -328,7 +336,8 @@ bool ArgbController::startEffect(uint8_t ch) {
     return ch < board::kChannelCount && setEffect(ch, effects_[ch]);
 }
 bool ArgbController::setEffectBoot(uint8_t ch, bool enabled) {
-    if (ch >= board::kChannelCount) return false;
+    if (!board::channelEnabled(ch)) return false;
+    if (!board::channelEnabled(ch)) return false;
     bootEffects_[ch] = enabled;
     return true;
 }
@@ -361,7 +370,7 @@ bool ArgbController::saveEffects() {
     return true;
 }
 bool ArgbController::setAudio(uint8_t ch, const argbaudio::Config& cfg) {
-    if (ch>=board::kChannelCount || !argbaudio::valid(cfg)) return false;
+    if (!board::channelEnabled(ch) || !argbaudio::valid(cfg)) return false;
     audio_[ch]=cfg;
     modes_[ch]=Mode::Audio;
     brightness_[ch]=cfg.brightness;
@@ -372,6 +381,7 @@ bool ArgbController::startAudio(uint8_t ch) {
     return ch<board::kChannelCount && setAudio(ch,audio_[ch]);
 }
 bool ArgbController::setAudioBoot(uint8_t ch, bool enabled) {
+    if (!board::channelEnabled(ch)) return false;
     if (ch>=board::kChannelCount) return false;
     bootAudio_[ch]=enabled;
     return true;
@@ -442,7 +452,7 @@ void ArgbController::drawReactive(uint8_t ch, uint32_t nowMs) {
     markDirty(ch);
 }
 bool ArgbController::setReactive(uint8_t ch, const argbreaction::Config& cfg) {
-    if (ch >= board::kChannelCount || !argbreaction::valid(cfg)) return false;
+    if (!board::channelEnabled(ch) || !argbreaction::valid(cfg)) return false;
     reactive_[ch] = cfg;
     modes_[ch] = Mode::Reactive;
     brightness_[ch] = cfg.scene.brightness;
@@ -453,7 +463,8 @@ bool ArgbController::startReactive(uint8_t ch) {
     return ch < board::kChannelCount && setReactive(ch, reactive_[ch]);
 }
 bool ArgbController::setReactiveBoot(uint8_t ch, bool enabled) {
-    if (ch >= board::kChannelCount) return false;
+    if (!board::channelEnabled(ch)) return false;
+    if (!board::channelEnabled(ch)) return false;
     bootReactive_[ch] = enabled;
     return true;
 }
@@ -492,7 +503,7 @@ bool ArgbController::saveReactive() {
     return true;
 }
 bool ArgbController::setPixels(uint8_t ch, const uint8_t* rgb, uint16_t count) {
-    if (ch >= board::kChannelCount || !rgb || !count ||
+    if (!board::channelEnabled(ch) || !rgb || !count ||
         count > board::kMaxArgbPixelsPerFrame || count > strips_[ch].numPixels()) return false;
     if (modes_[ch] != Mode::External) brightness_[ch] = 255;
     modes_[ch] = Mode::External;
@@ -504,12 +515,12 @@ bool ArgbController::setPixels(uint8_t ch, const uint8_t* rgb, uint16_t count) {
     return true;
 }
 bool ArgbController::configureStrip(uint8_t ch, uint16_t count, bool reversed) {
-    if (ch >= board::kChannelCount) return false;
+    if (!board::channelEnabled(ch)) return false;
     return configureStripAndBudget(ch, count, reversed, powerLimitMa_);
 }
 bool ArgbController::configureStripAndBudget(uint8_t ch, uint16_t count,
                                              bool reversed, uint16_t budgetMa) {
-    if (ch >= board::kChannelCount || count == 0 ||
+    if (!board::channelEnabled(ch) || count == 0 ||
         count > board::kMaxArgbPixelsPerFrame ||
         budgetMa < 100 || budgetMa > 20000) return false;
     uint32_t idleBaselineMa = count;
@@ -552,7 +563,8 @@ bool ArgbController::setPowerBudget(uint16_t ma) {
 bool ArgbController::isReversed(uint8_t ch) const { return ch < board::kChannelCount && reversed_[ch]; }
 uint16_t ArgbController::pixelCount(uint8_t ch) const { return ch < board::kChannelCount ? strips_[ch].numPixels() : 0; }
 bool ArgbController::setBrightness(uint8_t ch, uint8_t value) {
-    if (ch >= board::kChannelCount) return false;
+    if (!board::channelEnabled(ch)) return false;
+    if (!board::channelEnabled(ch)) return false;
     if (savedBrightness_[ch] != value) {
         BrightnessConfig updated = {};
         updated.magic = kBrightnessMagic;

@@ -166,6 +166,10 @@ bool CoolingController::begin() {
     if (!storage_.begin("cooling-v1", false)) return false;
     for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
         if (!readFan(ch, saved_[ch])) makeDefault(saved_[ch]);
+        if (!board::channelEnabled(ch)) {
+            fanMode_[ch] = Mode::Auto;
+            continue; // No FAN2 PWM/TACH access on Octal-PSRAM N16R8.
+        }
         fans_.setPulsesPerRevolution(ch, saved_[ch].ppr);
         // Physical jumper selection cannot be changed by software. Persisted
         // type represents the user's confirmed PCB wiring only.
@@ -332,7 +336,7 @@ bool CoolingController::setFixedRpm(uint8_t ch, uint16_t rpm) {
     return true;
 }
 bool CoolingController::setAuto(uint8_t ch) {
-    if (ch >= board::kChannelCount || activeCalibration_ == ch) return false;
+    if (!board::channelEnabled(ch) || activeCalibration_ == ch) return false;
     fanMode_[ch] = Mode::Auto;
     integral_[ch] = 0;
     if (!freshPair(ch, millis())) fans_.setPercent(ch, 100);
@@ -349,7 +353,8 @@ bool CoolingController::setManualMask(uint8_t mask, uint8_t pwm) {
     return true;
 }
 bool CoolingController::setAutoMask(uint8_t mask) {
-    if (!mask || activeCalibration_ >= 0) return false;
+    if (!mask || activeCalibration_ >= 0 ||
+        (mask & ~board::enabledChannelMask())) return false;
     for (uint8_t ch = 0; ch < board::kChannelCount; ++ch)
         if (mask & (1U << ch)) setAuto(ch);
     return true;

@@ -17,12 +17,18 @@ bool FanController::begin() {
     for (uint8_t i = 0; i < board::kChannelCount; ++i) {
         configured_[i] = static_cast<Type>(board::kDefaultFanType);
         tachObserved_[i] = false;
+        if (!board::channelEnabled(i)) {
+            configured_[i] = Type::Unknown;
+            percent_[i] = 0;
+            continue; // Never attach GPIO35 or set up a fan PWM on N16R8.
+        }
         if (ledcSetup(i, board::kFanPwmFrequencyHz, board::kFanPwmResolutionBits) <= 0.0)
             return false;
         ledcAttachPin(pinmap::pwmPin(i), i);
         if (!setPercent(i, board::kInitialFanPercent)) return false;
     }
     for (uint8_t i = 0; i < board::kChannelCount; ++i) {
+        if (!board::channelEnabled(i)) continue; // Never touch GPIO36.
         pinMode(pinmap::tachPin(i), INPUT_PULLUP);
         attachInterruptArg(digitalPinToInterrupt(pinmap::tachPin(i)), tachInterrupt,
                            reinterpret_cast<void*>(static_cast<uintptr_t>(i)), FALLING);
@@ -36,7 +42,7 @@ bool FanController::dcHardwareAvailable() const {
 }
 
 bool FanController::canControl(uint8_t channel, uint8_t percent) const {
-    if (channel >= board::kChannelCount || percent > 100) return false;
+    if (!board::channelEnabled(channel) || percent > 100) return false;
     const Type type = configured_[channel];
     if (type != Type::TwoPin && type != Type::ThreePin)
         return false;
@@ -46,7 +52,7 @@ bool FanController::canControl(uint8_t channel, uint8_t percent) const {
 }
 
 bool FanController::setType(uint8_t channel, Type requested) {
-    if (channel >= board::kChannelCount ||
+    if (!board::channelEnabled(channel) ||
         (requested != Type::TwoPin && requested != Type::ThreePin)) return false;
     // A selection only specifies whether the fan has a TACH wire. No auto-detection.
     const Type old = configured_[channel];
@@ -70,7 +76,7 @@ FanController::Type FanController::detectedType(uint8_t) const {
 }
 
 bool FanController::hasRpmFeedback(uint8_t channel) const {
-    return channel < board::kChannelCount &&
+    return board::channelEnabled(channel) &&
         configured_[channel] == Type::ThreePin;
 }
 
@@ -91,7 +97,7 @@ uint32_t FanController::tachPulseCount(uint8_t channel) const {
 }
 
 bool FanController::setPercent(uint8_t channel, uint8_t percent) {
-    if (channel >= board::kChannelCount || percent > 100) return false;
+    if (!board::channelEnabled(channel) || percent > 100) return false;
     const bool permitted = canControl(channel, percent);
     // Fail safe: never apply a partial duty in DC mode without rated hardware.
     const uint8_t applied = permitted ? percent : 100;

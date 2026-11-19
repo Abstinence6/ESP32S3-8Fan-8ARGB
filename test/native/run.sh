@@ -141,3 +141,11 @@ g++ -std=c++17 -Wall -Wextra -Werror -Itest/native/mock -Iinclude \
   src/PcPowerController.cpp src/HardwareTemperature.cpp src/SerialConsole.cpp \
   test/native/test_device_config.cpp -o "$out"
 "$out"
+
+# N16R8 Octal PSRAM: compile and run actual controllers with channel 2
+# forbidden. Tests check no FAN2 PWM/TACH hardware or ARGB strip is touched.
+g++ -std=c++17 -Wall -Wextra -Werror -DFANARGB_N16R8_SAFE=1 \
+  -Itest/native/mock -Iinclude \
+  test/native/mock/Arduino.cpp src/FanController.cpp src/ArgbController.cpp \
+  src/CoolingController.cpp test/native/test_n16r8_safe.cpp -o "$out"
+"$out"

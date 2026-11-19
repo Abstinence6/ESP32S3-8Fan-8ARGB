@@ -35,6 +35,14 @@ inline uint8_t at(const Pins& pins, uint8_t index) {
 }
 
 inline bool allowed(uint8_t pin, uint8_t slot) {
+#if FANARGB_N16R8_SAFE
+    // Permit only the three INACTIVE, legacy channel-2 placeholders.
+    // No enabled pin may ever be assigned to Octal PSRAM GPIO33..37,
+    // even through a previously saved NVS pin-map transaction.
+    if (pin >= 33 && pin <= 37)
+        return (slot % board::kChannelCount) == 1U &&
+               pin == board::pinAt(slot);
+#endif
     if (pin > 48 || pin == 0 || pin == 3 || pin == 19 || pin == 20 ||
         (pin >= 22 && pin <= 32) || pin == 43 || pin == 44 ||
         pin == 45) return false;

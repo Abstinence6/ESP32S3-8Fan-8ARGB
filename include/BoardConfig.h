@@ -10,6 +10,21 @@
 namespace board {
 
 static constexpr uint8_t kChannelCount = 8;
+
+// On WROOM-1-N16R8, GPIO35/36/37 are permanently wired to Octal PSRAM.
+// The existing PCB map routes all three to the logical channel 2. Its
+// PWM, TACH and ARGB must be disabled until the PCB is physically rerouted.
+#ifndef FANARGB_N16R8_SAFE
+#define FANARGB_N16R8_SAFE 0
+#endif
+static constexpr bool kN16R8Safe = (FANARGB_N16R8_SAFE != 0);
+constexpr bool channelEnabled(uint8_t ch) {
+    return ch < kChannelCount && (!kN16R8Safe || ch != 1U);
+}
+constexpr uint8_t enabledChannelMask() {
+    return kN16R8Safe ? 0xFDU : 0xFFU;
+}
+
 // Two native ESP32-S3 GPIO per fan: one PWM and one tachometer input.
 // For 2/3-pin, a qualified high-side switch controls +12 V.
 // No 4-pin PWM input, physical DC/PWM jumper, automatic detection, or GPIO expander.
