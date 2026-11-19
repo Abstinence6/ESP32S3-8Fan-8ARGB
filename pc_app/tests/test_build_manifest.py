@@ -25,6 +25,20 @@ class ManifestTests(unittest.TestCase):
             self.assertEqual(json.loads((root / "manifest.json").read_text()), manifest)
             self.assertEqual(len((root / "SHA256SUMS").read_text().splitlines()), 4)
 
+    def test_native_usb_manifest_identifies_the_correct_build(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name in FLASH_OFFSETS:
+                (root / name).write_bytes(("native usb " + name).encode())
+            manifest = generate_manifest(
+                root, component="firmware", commit="b" * 40,
+                filenames=list(FLASH_OFFSETS), environment="esp32s3_native_usb",
+            )
+            self.assertEqual(manifest["target"]["platformio_env"], "esp32s3_native_usb")
+            with self.assertRaisesRegex(ValueError, "Unknown firmware environment"):
+                generate_manifest(root, component="firmware", commit="b" * 40,
+                                  filenames=list(FLASH_OFFSETS), environment="unsafe")
+
     def test_manifest_rejects_unsafe_files_and_missing_firmware_images(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

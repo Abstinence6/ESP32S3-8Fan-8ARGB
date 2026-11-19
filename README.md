@@ -35,7 +35,19 @@ Firmware for **8 independent 2/3-pin PC fans (3-pin default)** and **8 independe
 6. Upload: `pio run -e esp32s3 -t upload`.
 7. Open serial monitor: `pio device monitor -b 921600`.
 
-The default `Serial` uses the USB-to-UART interface. If using the ESP32-S3 native USB port, see the commented USB CDC flags in `platformio.ini`.
+The default `Serial` uses the USB-to-UART bridge. If this bridge is broken,
+build `pio run -e esp32s3_native_usb` and connect the ESP32-S3's **native USB**
+connector instead (GPIO19 D- / GPIO20 D+). The native version uses Arduino
+hardware USB CDC + JTAG (`ARDUINO_USB_CDC_ON_BOOT=1`,
+`ARDUINO_USB_MODE=1`), preserves the existing commands, 921600-baud Windows
+client, GPIO mapping, and all fan protection. It can be flashed directly
+through the chip's ROM download mode without the USB-UART bridge. GitHub
+Actions produces a separate `ESP32S3-8Fan-8ARGB-native-USB-CDC` artifact.
+
+**Do not connect a visibly burnt/shorted board to the PC** until you have
+checked 5 V, 3.3 V and USB power rails for shorts. Disconnect 12 V fan power
+and external ARGB supplies before a standalone recovery test.
+Full steps: [Native USB recovery](docs/NATIVE_USB_RECOVERY.md).
 
 ## Serial commands
 

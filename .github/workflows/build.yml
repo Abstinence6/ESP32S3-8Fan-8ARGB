@@ -61,6 +61,31 @@ jobs:
           name: ESP32S3-8Fan-8ARGB-firmware
           path: dist/esp32s3/
           if-no-files-found: error
+      - name: Build ESP32-S3 native USB CDC firmware (no USB-UART bridge)
+        run: |
+          pio run -e esp32s3_native_usb
+          python -c "from pc_app.firmware_update import inspect_firmware; print('Native USB ESP32-S3 image:', inspect_firmware('.pio/build/esp32s3_native_usb/firmware.bin'))"
+      - name: Package USB CDC image and recovery instructions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/esp32s3_native_usb
+          cp .pio/build/esp32s3_native_usb/firmware.bin dist/esp32s3_native_usb/firmware.bin
+          cp .pio/build/esp32s3_native_usb/bootloader.bin dist/esp32s3_native_usb/bootloader.bin
+          cp .pio/build/esp32s3_native_usb/partitions.bin dist/esp32s3_native_usb/partitions.bin
+          BOOT_APP0="$(find "$HOME/.platformio/packages/framework-arduinoespressif32" -name boot_app0.bin -print -quit)"
+          test -n "$BOOT_APP0"
+          cp "$BOOT_APP0" dist/esp32s3_native_usb/boot_app0.bin
+          cp docs/NATIVE_USB_RECOVERY.md dist/esp32s3_native_usb/FLASH.txt
+          python scripts/build_manifest.py --component firmware \
+            --environment esp32s3_native_usb --directory dist/esp32s3_native_usb \
+            --commit "$GITHUB_SHA" --file bootloader.bin --file partitions.bin \
+            --file boot_app0.bin --file firmware.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ESP32S3-8Fan-8ARGB-native-USB-CDC
+          path: dist/esp32s3_native_usb/
+          if-no-files-found: error
       - name: Compile opt-in DS18B20 firmware (GPIO18 test configuration)
         env:
           PLATFORMIO_BUILD_FLAGS: "-D HARDWARE_TEMP_ENABLED=1 -D HARDWARE_TEMP_GPIO=18"

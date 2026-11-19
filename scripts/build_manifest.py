@@ -31,6 +31,7 @@ def _digest(path: Path) -> str:
 
 def generate_manifest(
     directory: str | Path, *, component: str, commit: str, filenames: list[str],
+    environment: str = "esp32s3",
 ) -> dict:
     """Create manifest.json and SHA256SUMS from named files in directory."""
     if component not in ("firmware", "windows"):
@@ -56,11 +57,13 @@ def generate_manifest(
         "files": records,
     }
     if component == "firmware":
+        if environment not in ("esp32s3", "esp32s3_native_usb"):
+            raise ValueError("Unknown firmware environment")
         if set(records) != set(FLASH_OFFSETS):
             raise ValueError("Firmware package requires exactly 4 expected images")
         manifest["target"] = {
             "board": "esp32-s3-devkitc-1",
-            "platformio_env": "esp32s3",
+            "platformio_env": environment,
             "flash_offsets": FLASH_OFFSETS,
             "hardware_validation": "required before powering peripherals",
         }
@@ -85,10 +88,11 @@ def main() -> None:
     parser.add_argument("--directory", required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--file", action="append", required=True, dest="files")
+    parser.add_argument("--environment", default="esp32s3")
     args = parser.parse_args()
     result = generate_manifest(
         args.directory, component=args.component, commit=args.commit,
-        filenames=args.files,
+        filenames=args.files, environment=args.environment,
     )
     print(f"Validated {len(result['files'])} {args.component} release artifacts.")
 
