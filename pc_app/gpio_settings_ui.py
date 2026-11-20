@@ -22,6 +22,7 @@ class GpioSettingsDialog(QDialog):
         self.controller = controller
         self.connected = False
         self.supported = False
+        self._n16r8 = False
         self._loaded = False
         self._loading = False
         self._dirty = False
@@ -105,12 +106,14 @@ class GpioSettingsDialog(QDialog):
             self._verify = False
             self._loaded = False
             self.supported = False
+            self._n16r8 = False
             self._dirty = False
             self.status.setText("ESP32 відключено — GPIO залишились у NVS.")
         self._update_buttons()
 
-    def set_supported(self, value: bool) -> None:
+    def set_supported(self, value: bool, *, n16r8: bool = False) -> None:
         self.supported = bool(value)
+        self._n16r8 = bool(n16r8)
         if self.supported and self.connected:
             self.refresh()
         else:
@@ -213,7 +216,8 @@ class GpioSettingsDialog(QDialog):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         ) != QMessageBox.StandardButton.Yes:
             return
-        self._expected = default_map()
+        # GPIO FACTORY restores firmware defaults, which differ on N16R8.
+        self._expected = default_map(n16r8=self._n16r8)
         self._operations = deque([("GPIO FACTORY", "OK GPIO_FACTORY REBOOT_REQUIRED")])
         self._send_next()
 

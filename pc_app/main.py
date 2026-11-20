@@ -937,7 +937,10 @@ class FanArgbWindow(QMainWindow):
                 self.dashboard.device_settings.set_version(version, serial_version)
                 self.dashboard.temperature_argb.set_version(serial_version)
                 self.dashboard.temperature_argb.set_palette_supported(fields.get("TPAL_NVS") == "1")
-                self.dashboard.device_settings.gpio_dialog.set_supported(fields.get("GPIO_NVS") == "1")
+                self.dashboard.device_settings.gpio_dialog.set_supported(
+                    fields.get("GPIO_NVS") == "1",
+                    n16r8=(fields.get("N16R8") == "1" and fields.get("CHMASK") == "255"),
+                )
                 self.pid_tune_supported = fields.get("PIDTUNE_NVS") == "1"
                 if self.pid_tune_dialog is not None:
                     self.pid_tune_dialog.set_supported(self.pid_tune_supported)

@@ -7,6 +7,15 @@ DEFAULTS = {
     "TACH": (47, 36, 40, 2, 5, 15, 9, 13),
     "ARGB": (48, 37, 41, 1, 4, 7, 46, 12),
 }
+# Standard native-USB N16R8 image uses these pins for FAN2/ARGB2 instead of
+# GPIO35/36/37, which are permanently occupied by Octal PSRAM.
+N16R8_DEFAULTS = {
+    kind: tuple(8 if kind == "PWM" and i == 1 else
+                11 if kind == "TACH" and i == 1 else
+                17 if kind == "ARGB" and i == 1 else pin
+                for i, pin in enumerate(values))
+    for kind, values in DEFAULTS.items()
+}
 
 
 def allowed_for_slot(pin: int, kind: str, channel: int) -> bool:
@@ -36,5 +45,6 @@ def validate_map(pins: dict[str, tuple[int, ...] | list[int]]) -> None:
             used.add(pin)
 
 
-def default_map() -> dict[str, list[int]]:
-    return {key: list(values) for key, values in DEFAULTS.items()}
+def default_map(*, n16r8: bool = False) -> dict[str, list[int]]:
+    defaults = N16R8_DEFAULTS if n16r8 else DEFAULTS
+    return {key: list(values) for key, values in defaults.items()}

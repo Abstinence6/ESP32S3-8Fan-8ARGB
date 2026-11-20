@@ -1,5 +1,7 @@
 import unittest
-from pc_app.pinmap_config import DEFAULTS, allowed_for_slot, default_map, validate_map
+from pc_app.pinmap_config import (
+    DEFAULTS, N16R8_DEFAULTS, allowed_for_slot, default_map, validate_map,
+)
 
 
 class GpioMappingTests(unittest.TestCase):
@@ -8,6 +10,19 @@ class GpioMappingTests(unittest.TestCase):
         self.assertTrue(allowed_for_slot(35, "PWM", 2))
         self.assertTrue(allowed_for_slot(46, "ARGB", 7))
         self.assertFalse(allowed_for_slot(46, "PWM", 2))
+
+    def test_native_usb_n16r8_factory_mapping_has_all_eight_channels(self):
+        legacy = default_map()
+        self.assertEqual((legacy["PWM"][1], legacy["TACH"][1], legacy["ARGB"][1]),
+                         (35, 36, 37))
+        rerouted = default_map(n16r8=True)
+        self.assertEqual((rerouted["PWM"][1], rerouted["TACH"][1], rerouted["ARGB"][1]),
+                         (8, 11, 17))
+        validate_map(rerouted)
+        self.assertEqual(tuple(rerouted["PWM"]), N16R8_DEFAULTS["PWM"])
+        for kind, values in legacy.items():
+            self.assertEqual(values[0], rerouted[kind][0])
+            self.assertEqual(values[2:], rerouted[kind][2:])
 
     def test_unavailable_or_reserved_pins_rejected(self):
         for pin in (0, 3, 19, 20, 22, 25, 27, 31, 35, 43, 44, 45, 46, 49):

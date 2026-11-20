@@ -367,6 +367,25 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertIn("Перезавантаж", panel.status.text())
         self.assertEqual(panel._saved["PWM"][0], 18)
 
+    def test_n16r8_gpio_factory_uses_active_rerouted_pinmap(self):
+        from unittest.mock import patch
+        from PySide6.QtWidgets import QMessageBox
+        panel = self.window.dashboard.device_settings.gpio_dialog
+        self.window.send = lambda _command: True
+        self.window.dashboard.set_connected(True, "COM9")
+        panel.set_supported(True, n16r8=True)
+        panel.handle_line("GPIO PWM 21 8 39 42 6 16 10 14")
+        panel.handle_line("GPIO TACH 47 11 40 2 5 15 9 13")
+        panel.handle_line("GPIO ARGB 48 17 41 1 4 7 46 12")
+        panel.handle_line("GPIO_END REBOOT=0")
+        self.assertTrue(panel._loaded)
+        with patch.object(QMessageBox, "question",
+                          return_value=QMessageBox.StandardButton.Yes):
+            panel.factory()
+        self.assertEqual(panel._expected["PWM"][1], 8)
+        self.assertEqual(panel._expected["TACH"][1], 11)
+        self.assertEqual(panel._expected["ARGB"][1], 17)
+
     def test_github_update_panel_does_not_auto_flash(self):
         from github_updates import APP_VERSION
         shell = self.window.dashboard
