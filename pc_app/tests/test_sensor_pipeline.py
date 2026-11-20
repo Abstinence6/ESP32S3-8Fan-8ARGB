@@ -3,7 +3,7 @@ import json
 from types import SimpleNamespace
 import unittest
 
-from pc_app.monitor import GROUP_AVG, GROUP_WEIGHTED, TemperatureSensor
+from pc_app.monitor import GROUP_AVG, GROUP_MAX, GROUP_WEIGHTED, MAX_ALL, MAX_CPU_GPU, TemperatureSensor
 from pc_app.sensor_pipeline import (
     FanSensorRoute, routes_from_settings, plan_sensor_telemetry,
     choose_automatic_profile, automatic_profile_commands,
@@ -36,6 +36,31 @@ class SensorPipelineTests(unittest.TestCase):
         self.assertIn('TEMP 1 650', gui.commands)
         self.assertIn('TEMP2 1 700', gui.commands)
         self.assertIn('TEMP 2 675', gui.commands)
+
+    def test_resolution_evidence_matches_unfiltered_temperature_commands(self):
+        from pc_app.sensor_pipeline import resolve_route_temperature
+
+        readings = [TemperatureSensor('cpu', 'CPU Package', 40),
+                    TemperatureSensor('gpu', 'GPU Hot Spot', 60),
+                    TemperatureSensor('ssd', 'Storage', 80)]
+        for assignment, expected, contributors in (
+            (MAX_ALL, 80, ('Storage',)), (MAX_CPU_GPU, 60, ('GPU Hot Spot',)),
+            (GROUP_MAX, 60, ('GPU Hot Spot',)), (GROUP_AVG, 50, ('CPU Package', 'GPU Hot Spot')),
+            (GROUP_WEIGHTED, 55, ('CPU Package', 'GPU Hot Spot')), ('cpu', 40, ('CPU Package',)),
+        ):
+            with self.subTest(assignment=assignment):
+                route = FanSensorRoute(primary=assignment, group_ids=('cpu', 'gpu'), weights={'gpu': 3})
+                evidence = resolve_route_temperature(route.primary, readings, route.group_ids, route.weights)
+                self.assertEqual(evidence.celsius, expected)
+                self.assertEqual(sorted(sensor.name for sensor in evidence.contributors), sorted(contributors))
+                plan = plan_sensor_telemetry([route] * 8, readings, include_power=False)
+                self.assertEqual(plan.commands[0], f'TEMP 1 {expected * 10}')
+        route = FanSensorRoute(primary=GROUP_WEIGHTED, group_ids=('cpu', 'gpu'), weights={'gpu': 3})
+        evidence = resolve_route_temperature(route.primary, readings[:1], route.group_ids, route.weights)
+        self.assertIsNone(evidence.celsius)
+        self.assertEqual(evidence.contributors, ())
+        self.assertEqual(evidence.missing_ids, ('gpu',))
+        self.assertFalse(plan_sensor_telemetry([route] * 8, readings[:1], include_power=False).commands)
 
     def test_missing_sensor_clears_smoothing_and_only_valid_power_is_sent(self):
         routes = [FanSensorRoute(primary='cpu'), *[FanSensorRoute(primary='missing')] * 7]

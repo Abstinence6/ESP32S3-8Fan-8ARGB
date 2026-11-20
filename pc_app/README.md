@@ -82,6 +82,11 @@ The desktop GUI uses eight focused pages instead of one large engineering panel:
   combined configuration presets and diagnostics.
 - **Логи**: Serial output and advanced raw command entry.
 
+On **Головна → Назви каналів…**, set separate display names for FAN and ARGB
+channels, even while disconnected. Names are stored on this PC only. Clear a
+field to restore the numbered label. The physical channel numbers, firmware
+settings, and OpenRGB mapping are unchanged.
+
 The firmware protocol, channel numbering, NVS storage, fan power interlock
 and stale-temperature fail-safe remain unchanged. A separate **offscreen GUI
 smoke test** checks that pages construct, sensor updates reach fan cards and

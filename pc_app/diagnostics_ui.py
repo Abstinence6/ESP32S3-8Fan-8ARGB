@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import (
     QFileDialog, QGroupBox, QHBoxLayout, QLabel, QPushButton, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QHeaderView,
@@ -17,6 +17,8 @@ except ImportError:
 
 
 class DiagnosticPanel(QGroupBox):
+    health_observed = Signal(object)
+
     def __init__(self, controller):
         super().__init__("Автодіагностика · тільки читання")
         self.controller = controller
@@ -74,6 +76,7 @@ class DiagnosticPanel(QGroupBox):
                 return True
             return False
         self.records[health.channel] = health
+        self.health_observed.emit(health)
         row = health.channel - 1
         for col, value in enumerate((
             f"{health.pwm}%", str(health.rpm), health.tach,

@@ -12,12 +12,12 @@ import time
 from typing import Mapping, Sequence
 
 try:
-    from .monitor import MAX_ALL, resolve_temperature
+    from .monitor import MAX_ALL, TemperatureResolution, resolve_temperature_evidence
     from .protocol import make_temperature_command, make_curve_command
     from .cooling_assist import extract_power_watts, power_payload
     from .profiles import PRESETS
 except ImportError:  # standalone PyInstaller / running pc_app/main.py directly
-    from monitor import MAX_ALL, resolve_temperature
+    from monitor import MAX_ALL, TemperatureResolution, resolve_temperature_evidence
     from protocol import make_temperature_command, make_curve_command
     from cooling_assist import extract_power_watts, power_payload
     from profiles import PRESETS
@@ -62,12 +62,16 @@ def routes_from_settings(settings) -> tuple[FanSensorRoute, ...]:
     return tuple(routes)
 
 
-def _safe_resolve(assignment, sensors, group_ids, weights) -> float | None:
+def resolve_route_temperature(assignment, sensors, group_ids, weights) -> TemperatureResolution:
+    """Expose the same safety-checked resolution to routing and read-only UI."""
     try:
-        value = resolve_temperature(assignment, sensors, group_ids, weights)
+        result = resolve_temperature_evidence(assignment, sensors, group_ids, weights)
     except (ValueError, TypeError, OverflowError):
-        return None
-    return value if value is not None and math.isfinite(value) and 0 <= value <= 125 else None
+        return TemperatureResolution()
+    value = result.celsius
+    if value is not None and not (math.isfinite(value) and 0 <= value <= 125):
+        return TemperatureResolution()
+    return result
 
 
 def plan_sensor_telemetry(
@@ -82,13 +86,13 @@ def plan_sensor_telemetry(
         now = time.monotonic()
     commands: list[str] = []
     for ch, route in enumerate(routes, start=1):
-        primary = _safe_resolve(route.primary, sensors, route.group_ids, route.weights)
+        primary = resolve_route_temperature(route.primary, sensors, route.group_ids, route.weights).celsius
         if smoothing and filter_engine is not None:
             primary = filter_engine.update(ch, primary, now)
         if primary is not None:
             commands.append(make_temperature_command(ch, primary))
         if route.dual:
-            secondary = _safe_resolve(route.secondary, sensors, route.group_ids, route.weights)
+            secondary = resolve_route_temperature(route.secondary, sensors, route.group_ids, route.weights).celsius
             if secondary is not None:
                 commands.append(make_temperature_command(ch, secondary).replace("TEMP ", "TEMP2 ", 1))
     cpu_w, gpu_w = extract_power_watts(metrics)

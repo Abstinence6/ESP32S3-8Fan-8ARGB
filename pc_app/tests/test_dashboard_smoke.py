@@ -44,14 +44,27 @@ class DashboardSmokeTests(unittest.TestCase):
             cls.app.setFont(font)
 
     def setUp(self):
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
+        from PySide6.QtCore import QSettings
+
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from main import FanArgbWindow
-        self.window = FanArgbWindow()
-        self.window.temperature_timer.stop()
-        self.window.serial_timer.stop()
-        self.window.sacn_timer.stop()
-        self.window.aux_status_timer.stop()
-        self.window.temperature_result_timer.stop()
+        config = TemporaryDirectory()
+        self.addCleanup(config.cleanup)
+        settings = QSettings(str(Path(config.name) / "settings.ini"), QSettings.Format.IniFormat)
+        with patch("main.QSettings", return_value=settings):
+            self.window = FanArgbWindow()
+        self._stop_window_timers(self.window)
+
+    @staticmethod
+    def _stop_window_timers(window):
+        window.temperature_timer.stop()
+        window.serial_timer.stop()
+        window.sacn_timer.stop()
+        window.aux_status_timer.stop()
+        window.temperature_result_timer.stop()
+
 
     def tearDown(self):
         self.window.close()
@@ -127,6 +140,76 @@ class DashboardSmokeTests(unittest.TestCase):
         shell.set_connected(False)
         self.assertFalse(shell.fan_preset_buttons["Silent"].isEnabled())
 
+    def test_local_channel_names_persist_without_changing_numbered_targets(self):
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
+        from PySide6.QtCore import QSettings
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLineEdit
+        from main import FanArgbWindow
+
+        with TemporaryDirectory() as directory:
+            path = str(Path(directory) / "channel-names.ini")
+
+            def open_window():
+                with patch("main.QSettings", return_value=QSettings(path, QSettings.Format.IniFormat)):
+                    window = FanArgbWindow()
+                self._stop_window_timers(window)
+                return window
+
+            def edit(window, changes, *, save=True):
+                def finish(dialog):
+                    for field, value in changes.items():
+                        dialog.findChild(QLineEdit, field).setText(value)
+                    box = dialog.findChild(QDialogButtonBox)
+                    button = box.StandardButton.Save if save else box.StandardButton.Cancel
+                    box.button(button).click()
+                    return dialog.result()
+
+                # Interact with the real dialog without running the USB timers.
+                with patch.object(QDialog, "exec", new=finish):
+                    window.dashboard.channel_names_button.click()
+
+            window = open_window()
+            shell = window.dashboard
+            self.assertTrue(shell.channel_names_button.isEnabled())  # offline
+            shell.open_fan(3)
+            with patch.object(window, "send") as send:
+                edit(window, {"channelNameFAN3": "  Радіатор  ", "channelNameARGB3": "Кільце"})
+                edit(window, {"channelNameFAN3": "discard me"}, save=False)
+                send.assert_not_called()
+            self.assertEqual(shell.fan_cards[3]["title"].accessibleName(), "FAN 03 · Радіатор")
+            self.assertEqual(shell.fan_cards[4]["title"].accessibleName(), "FAN 04")
+            self.assertIn("FAN 03 · Радіатор", shell.fan_history_panel.title())
+            self.assertIn("FAN 03 · Радіатор", shell.fan_channel_buttons[3].accessibleName())
+            self.assertIn("ARGB 03 · Кільце", shell.argb_channel_buttons[3].accessibleName())
+            self.assertEqual(shell.fan_live_title.accessibleName(), "FAN 03 · Радіатор")
+            self.assertIn("ARGB 03 · Кільце", shell.argb_quick_target.accessibleName())
+            window.close()
+
+            reopened = open_window()
+            shell = reopened.dashboard
+            shell.open_fan(3)
+            self.assertEqual(shell.fan_live_title.accessibleName(), "FAN 03 · Радіатор")
+            self.assertIn("ARGB 03 · Кільце", shell.argb_quick_target.accessibleName())
+            shell.set_connected(True, "COM7")
+            with patch.object(reopened, "port", object()):
+                with patch.object(reopened, "send", return_value=True) as send:
+                    edit(reopened, {"channelNameFAN3": "   "})
+                    send.assert_not_called()
+                    self.assertEqual(reopened.fan_box.currentData(), 3)
+                    self.assertEqual(shell.zone_box.currentData(), 3)
+                    self.assertEqual(shell.fan_live_title.accessibleName(), "FAN 03")
+                    self.assertIn("ARGB 03 · Кільце", shell.argb_quick_target.accessibleName())
+                    reopened.apply_argb_scene("Off", False)
+                    send.assert_called_once_with("OFF 3")
+
+            reopened.close()
+            last = open_window()
+            last.dashboard.open_fan(3)
+            self.assertEqual(last.dashboard.fan_live_title.accessibleName(), "FAN 03")
+            self.assertIn("ARGB 03 · Кільце", last.dashboard.argb_quick_target.accessibleName())
+            last.close()
+
     def test_compact_overview_keeps_all_eight_animated_cards_in_view(self):
         from PySide6.QtCore import QPoint
         shell = self.window.dashboard
@@ -138,12 +221,15 @@ class DashboardSmokeTests(unittest.TestCase):
             self.window.handle_line(
                 f"CH {channel} FAN=55% RPM=1250 TEMP=440 MODE=auto SENSOR=ok TYPE=3 FAULT=0"
             )
+        shell._last_fan_update[4] -= 30
+        shell.refresh_telemetry_freshness()
         self.app.processEvents()
         scroll = shell.stack.widget(shell.page_index["overview"])
         for channel, frame in shell._fan_frames.items():
             top_left = frame.mapTo(scroll.viewport(), QPoint(0, 0))
             self.assertTrue(scroll.viewport().rect().contains(top_left + frame.rect().bottomRight()))
             self.assertTrue(shell.fan_cards[channel]["rotor"].isVisible())
+            self.assertTrue(shell.fan_cards[channel]["title"].text().startswith(f"FAN {channel:02d}"))
         self.assertEqual(scroll.verticalScrollBar().maximum(), 0)
         self.assertFalse(shell.fan_cards[2]["settings_button"].isEnabled())
         shell.fan_cards[8]["settings_button"].click()
@@ -276,9 +362,9 @@ class DashboardSmokeTests(unittest.TestCase):
             for label, panel in panels:
                 with self.subTest(effect=label):
                     self.assertGreaterEqual(shell.scene_box.findText(label), 0)
-                    shell.scene_box.setCurrentText(label)
                     for ch in (5, 3, 8):
                         shell.argb_channel_buttons[ch].click()
+                        shell.scene_box.setCurrentText(label)
                         self.app.processEvents()
                         self.assertEqual([item for _, item in panels if item.isVisible()], [panel])
                         self.assertIn(f"ARGB {ch:02d}", shell.argb_effect_target_hint.text())
@@ -301,7 +387,170 @@ class DashboardSmokeTests(unittest.TestCase):
             send.assert_not_called()
             capture.assert_not_called()
             apply_scene.assert_not_called()
-            persist.assert_not_called()
+            self.assertTrue(persist.call_args_list)
+            self.assertTrue(all(call.args[0].startswith("argb/editor/")
+                                for call in persist.call_args_list))
+
+    def test_argb_chooser_restores_per_zone_across_restart(self):
+        from unittest.mock import patch
+        from PySide6.QtCore import QSettings
+        from main import FanArgbWindow
+
+        settings = self.window.settings
+        shell = self.window.dashboard
+        shell.set_connected(True, "COM5")
+        with (
+            patch.object(self.window, "port", object()),
+            patch.object(self.window, "send") as send,
+            patch.object(self.window, "queue_rgb") as queue,
+            patch.object(self.window, "set_audio_capture_enabled") as capture,
+        ):
+            shell.scene_box.setCurrentText("За температурою")
+            shell.argb_channel_buttons[3].click()
+            self.assertEqual(shell.scene_box.currentText(), "Off")
+            shell.scene_box.setCurrentText("Static warm")
+            with patch.object(settings, "setValue") as persist:
+                shell.argb_channel_buttons[1].click()
+                self.assertEqual(shell.scene_box.currentText(), "За температурою")
+                shell.argb_channel_buttons[3].click()
+                self.assertEqual(shell.scene_box.currentText(), "Static warm")
+                persist.assert_not_called()
+            send.assert_not_called()
+            queue.assert_not_called()
+            capture.assert_not_called()
+        settings.setValue("argb/editor/8", "unknown-editor")
+        settings.sync()
+        restored_settings = QSettings(settings.fileName(), QSettings.Format.IniFormat)
+        with patch("main.QSettings", return_value=restored_settings):
+            restarted = FanArgbWindow()
+        restarted.temperature_timer.stop()
+        restarted.temperature_result_timer.stop()
+        try:
+            self.assertEqual(restarted.dashboard.scene_box.currentText(), "За температурою")
+            restarted.dashboard.argb_channel_buttons[3].click()
+            self.assertEqual(restarted.dashboard.scene_box.currentText(), "Static warm")
+            restarted.dashboard.argb_channel_buttons[8].click()
+            self.assertEqual(restarted.dashboard.scene_box.currentText(), "Off")
+        finally:
+            restarted.close()
+
+    def test_argb_draft_blades_never_touch_overview_or_transport(self):
+        from unittest.mock import patch
+        from PySide6.QtGui import QColor
+        shell = self.window.dashboard
+        shell.set_connected(True, "COM5")
+        shell.show_page("argb")
+        self.window.show()
+        self.app.processEvents()
+        selected = shell.fan_cards[1]["rotor"]
+        shell.note_argb_command("LED 1 0 100 50")
+        sent_preview = selected._strip_colors
+        with (
+            patch.object(self.window, "port", object()),
+            patch.object(self.window, "send") as send,
+            patch.object(self.window, "queue_rgb") as queue,
+            patch.object(self.window, "set_audio_capture_enabled") as capture,
+        ):
+            shell.scene_box.setCurrentText("Static warm")
+            self.assertEqual(shell.argb_draft_rotor._strip_colors, (QColor(64, 28, 8),))
+            shell.scene_box.setCurrentText("Автономні ефекти ESP32")
+            panel = shell.native_effects
+            panel.colors = ((0, 150, 0), (0, 0, 200))
+            panel.brightness.setValue(255)
+            shell._advance_fan_rotors()
+            self.assertEqual(shell.argb_draft_rotor._strip_colors[0], QColor(0, 150, 0))
+            panel.direction.setChecked(True)
+            shell._advance_fan_rotors()
+            self.assertEqual(shell.argb_draft_rotor._strip_colors[0], QColor(0, 0, 200))
+            shell.argb_channel_buttons[3].click()
+            self.assertNotIn(QColor(0, 0, 200), shell.argb_draft_rotor._strip_colors)
+            shell.argb_channel_buttons[1].click()
+            self.assertEqual(shell.argb_draft_rotor._strip_colors[0], QColor(0, 0, 200))
+            self.assertEqual(selected._strip_colors, sent_preview)
+            self.assertIn("LED · команду надіслано", shell.argb_owner.text())
+            shell.set_channel_mask(0b110)
+            self.assertFalse(shell.argb_draft_rotor._strip_colors)
+            send.assert_not_called()
+            queue.assert_not_called()
+            capture.assert_not_called()
+
+    def test_argb_temperature_gradient_uses_draft_source_and_expires_marker(self):
+        from unittest.mock import patch
+        from monitor import TemperatureSensor
+        shell = self.window.dashboard
+        panel = shell.temperature_argb
+        shell.set_connected(True, "COM5")
+        shell.scene_box.setCurrentText("За температурою")
+        with (
+            patch("temperature_argb_ui.time.monotonic", return_value=100.0) as clock,
+            patch.object(self.window, "send") as send,
+            patch.object(self.window, "queue_rgb") as queue,
+        ):
+            self.window.temperatures = [TemperatureSensor("cpu", "CPU", 60.0),
+                                        TemperatureSensor("gpu", "GPU", 84.0)]
+            self.window.last_temperature_sample_at = 100.0
+            panel.refresh_sensors()
+            panel.sources[1].setCurrentIndex(panel.sources[1].findData("cpu"))
+            marker = panel.gradient.marker
+            assert marker is not None
+            self.assertAlmostEqual(marker, (60 - 30) / (85 - 30))
+            self.assertIn("ПК · CPU · 60.0 °C", panel.gradient_status.text())
+            panel.palette_supported = True
+            panel.palettes[1] = ((20, 0, 0, 255), (40, 0, 255, 0),
+                                 (50, 255, 255, 0), (100, 255, 0, 0))
+            panel.refresh_gradient()
+            self.assertEqual(panel.gradient.marker, 0.5)
+            shell.argb_channel_buttons[3].click()
+            self.assertIsNone(panel.gradient.marker)
+            shell.argb_channel_buttons[1].click()
+            self.assertEqual(panel.gradient.marker, 0.5)
+            clock.return_value += 8
+            shell.refresh_telemetry_freshness()
+            self.assertIsNone(panel.gradient.marker)
+            self.assertIn("застаріли", panel.gradient_status.text())
+            self.window.last_temperature_sample_at = clock.return_value
+            self.window.temperatures.pop(0)
+            panel.refresh_sensors()
+            self.assertIsNone(panel.gradient.marker)
+            self.assertIn("немає температури", panel.gradient_status.text())
+            send.assert_not_called()
+            queue.assert_not_called()
+
+    def test_argb_owner_distinguishes_zone_readback_from_local_evidence(self):
+        from unittest.mock import Mock, patch
+        shell = self.window.dashboard
+        shell.set_connected(True, "COM5")
+        shell.native_effects.set_supported(True)
+        shell.audio_reactive.set_supported(True)
+        reply = self._argb_readback_cases()[0][4]
+        with patch("ui_dashboard.time.monotonic", return_value=100.0) as clock:
+            self.window.handle_line(reply.format(3))
+            self.assertIn("невідомий", shell.argb_owner.text())
+            shell.argb_channel_buttons[3].click()
+            self.assertIn("FX · відповідь ESP32", shell.argb_owner.text())
+            self.window.handle_line(self._argb_readback_cases()[1][4].format(3).replace("ACTIVE=1", "ACTIVE=0"))
+            self.assertIn("FX · відповідь ESP32", shell.argb_owner.text())
+            shell.scene_box.setCurrentText("За звуком")
+            self.assertIn("FX · відповідь ESP32", shell.argb_owner.text())
+            with patch.object(self.window, "audio_capture", Mock(running=True)):
+                shell.refresh_telemetry_freshness()
+                self.assertIn("Захоплення звуку", shell.argb_owner.toolTip())
+                self.assertIn("FX · відповідь ESP32", shell.argb_owner.text())
+            with patch.object(self.window, "port", object()), patch.object(self.window, "tx", Mock()):
+                self.assertTrue(self.window.queue_rgb(3, b"frame", source="OpenRGB SDK"))
+            self.assertIn("OpenRGB SDK · кадр у черзі", shell.argb_owner.text())
+            self.assertIn("невідомий", shell.argb_owner.text())
+            clock.return_value += 30
+            shell.refresh_telemetry_freshness()
+            self.assertNotIn("OpenRGB", shell.argb_owner.text())
+            self.window.handle_line(reply.format(3))
+            self.window.handle_line(reply.format(3).replace("ACTIVE=1", "ACTIVE=0"))
+            self.assertIn("невідомий", shell.argb_owner.text())
+            shell.note_argb_command("LED 3 10 20 30")
+            self.assertIn("LED · команду надіслано", shell.argb_owner.text())
+            shell.set_connected(False)
+            self.assertNotIn("LED", shell.argb_owner.text())
+            self.assertIn("невідомий", shell.argb_owner.text())
 
     def test_argb_advanced_serial_actions_follow_shared_channel(self):
         from unittest.mock import call, patch
@@ -565,6 +814,12 @@ class DashboardSmokeTests(unittest.TestCase):
                     panel.mapTo(scroll.viewport(), panel.rect().bottomRight()).x(),
                     scroll.viewport().width(),
                 )
+                self.assertTrue(scroll.viewport().rect().contains(
+                    panel.mapTo(scroll.viewport(), QPoint(0, 0))
+                ))
+                self.assertTrue(scroll.viewport().rect().contains(
+                    shell.argb_draft_rotor.mapTo(scroll.viewport(), shell.argb_draft_rotor.rect().bottomRight())
+                ))
                 self.assertFalse(any(
                     area.verticalScrollBar().isVisible()
                     for area in panel.findChildren(QScrollArea)
@@ -949,6 +1204,159 @@ class DashboardSmokeTests(unittest.TestCase):
                              [("source4", GROUP_MAX), ("source1", GROUP_AVG)])
             send.assert_not_called()
         self.assertEqual(box4.currentData(), GROUP_MAX)
+
+    def test_curve_operating_point_separates_reported_duty_and_draft_model(self):
+        from unittest.mock import patch
+        from protocol import DEFAULT_CURVE
+
+        shell = self.window.dashboard
+        shell.set_connected(True, "COM7")
+        self.window.fan_box.setCurrentIndex(2)
+        self.window.curves[3] = list(DEFAULT_CURVE)
+        self.window._update_targets()
+        self.window.fan_dual_enabled[3] = False
+        self.window.fan_pid_enabled[3] = False
+        status = "CH 3 FAN=62% RPM=1200 TEMP=400 MODE=auto SENSOR=ok"
+        with patch.object(self.window, "send") as send:
+            self.window.handle_line(status)
+            self.assertEqual(list(self.window.curve_live_point.getData()[1]), [62])
+            self.assertEqual(list(self.window.curve_model_point.getData()[1]), [42])
+            self.window.target_items[2].setPos(50, 65)
+            self.assertIn("чернетка", shell.fan_curve_operating.text())
+            self.assertEqual(list(self.window.curve_model_point.getData()[1]), [45])
+            self.window.handle_line(status.replace("MODE=auto", "MODE=manual"))
+            self.assertTrue(self.window.curve_live_point.isVisible())
+            self.assertFalse(self.window.curve_model_point.isVisible())
+            self.window.handle_line(status.replace("SENSOR=ok", "SENSOR=stale"))
+            self.assertFalse(self.window.curve_live_point.isVisible())
+            self.window.handle_line(status)
+            self.window.secondary_checkbox.setChecked(True)
+            self.assertFalse(self.window.curve_live_point.isVisible())
+            self.window.secondary_checkbox.setChecked(False)
+            self.window.fan_dual_enabled[3] = True
+            self.window.handle_line(status)
+            self.assertFalse(self.window.curve_model_point.isVisible())
+            shell._last_fan_update[3] -= 20
+            shell.refresh_telemetry_freshness()
+            self.assertFalse(self.window.curve_live_point.isVisible())
+            self.assertIn("застар", shell.fan_curve_operating.text())
+            send.assert_not_called()
+
+    def test_numeric_curve_editor_is_local_validated_and_uses_existing_save(self):
+        from unittest.mock import patch
+        from PySide6.QtCore import QPoint
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox, QSpinBox
+        from protocol import DEFAULT_CURVE, make_curve_command
+
+        shell = self.window.dashboard
+        shell.set_connected(True, "COM7")
+        self.window.fan_box.setCurrentIndex(2)
+        self.window.curves[3] = list(DEFAULT_CURVE)
+        self.window.secondary_curves[3] = list(DEFAULT_CURVE)
+        self.window.secondary_checkbox.setChecked(True)
+        self.window.resize(1080, 760)
+        self.window.show()
+        shell.show_page("fans")
+        self.app.processEvents()
+        button = shell.fan_curve_numeric
+        scroll = shell.stack.currentWidget()
+        self.assertTrue(scroll.viewport().rect().contains(
+            button.mapTo(scroll.viewport(), QPoint(button.width() - 1, button.height() - 1))))
+        with patch.object(self.window, "send", return_value=True) as send:
+            button.click()
+            dialog = self.window.findChild(QDialog, "curveNumericEditor")
+            spins = dialog.findChildren(QSpinBox)
+            self.assertEqual(len(spins), 10)
+            buttons = dialog.findChild(QDialogButtonBox)
+            apply = buttons.button(QDialogButtonBox.StandardButton.Ok)
+            spins[0].setValue(35)
+            self.assertFalse(apply.isEnabled())
+            spins[0].setValue(24)
+            spins[1].setValue(36)
+            self.assertFalse(apply.isEnabled())
+            spins[1].setValue(24)
+            self.assertTrue(apply.isEnabled())
+            apply.click()
+            self.assertEqual(self.window.secondary_curves[3][0], (24, 24))
+            self.assertEqual(self.window.curves[3][0], DEFAULT_CURVE[0])
+            self.assertEqual(self.window.target_items[0].pos().x(), 24)
+            self.assertIn("не збережено", shell.fan_curve_status.text())
+            send.assert_not_called()
+            self.window.save_button.click()
+            expected = make_curve_command(3, self.window.secondary_curves[3]).replace("CURVE", "CURVE2", 1)
+            send.assert_any_call(expected)
+            send.assert_any_call("CURVE2? 3")
+            self.window.handle_line(expected)
+            self.assertIn("крива збігається", shell.fan_curve_status.text())
+
+    def test_cooling_source_uses_only_recent_primary_health_evidence(self):
+        from unittest.mock import patch
+
+        shell = self.window.dashboard
+        shell.set_connected(True, "COM7")
+        self.window.fan_box.setCurrentIndex(2)
+        source = shell.fan_curve_esp_source
+        health = ("HEALTH 3 PWM=65 RPM=1200 TACH=seen TACH_VALID=1 SENSOR=ok "
+                  "FAULT=0 DC_READY=1 MODE=auto")
+        with patch.object(self.window, "send") as send, patch("ui_dashboard.time.monotonic", return_value=100) as clock:
+            self.window.handle_line("CH 3 FAN=65% RPM=1200 TEMP=400 MODE=auto SENSOR=ok")
+            self.window.handle_line(health)
+            self.assertIn("невідоме", source.text())
+            self.window.handle_line(health.replace("HEALTH 3", "HEALTH 4") + " SOURCE=mqtt AGE_MS=1000")
+            self.assertIn("невідоме", source.text())
+            self.window.handle_line(health + " SOURCE=ds18b20 AGE_MS=1000")
+            self.assertIn("DS18B20", source.text())
+            self.assertIn("Датчик Windows", shell.fan_curve_source.text())
+            self.window.secondary_checkbox.setChecked(True)
+            self.assertNotIn("DS18B20", source.text())
+            self.window.secondary_checkbox.setChecked(False)
+            self.assertIn("DS18B20", source.text())
+            clock.return_value = 110
+            shell.refresh_telemetry_freshness()
+            self.assertIn("застар", source.text())
+            self.window.handle_line(health + " SOURCE=usb AGE_MS=0")
+            self.assertIn("USB", source.text())
+            self.window.handle_line(health.replace("SENSOR=ok", "SENSOR=stale") + " SOURCE=mqtt AGE_MS=500")
+            self.assertIn("застар", source.text())
+            shell.set_connected(False)
+            shell.set_connected(True, "COM7")
+            self.assertIn("невідоме", source.text())
+            send.assert_not_called()
+
+    def test_pc_aggregation_evidence_follows_selection_and_expires_without_sending(self):
+        from unittest.mock import patch
+        from monitor import GROUP_AVG, MAX_ALL, TemperatureSensor
+
+        shell = self.window.dashboard
+        channel = self.window.current_fan
+        box = self.window.source_boxes[channel - 1]
+        self.window.sensor_groups[channel] = ["cpu", "gpu"]
+        self.window.temperatures = [TemperatureSensor("cpu", "CPU Package", 40),
+                                    TemperatureSensor("gpu", "GPU Hot Spot", 60)]
+        with patch.object(self.window, "send") as send, patch("main.time.monotonic", return_value=100) as clock:
+            self.window.last_temperature_sample_at = 100
+            self.window._update_source_boxes()
+            evidence = shell.fan_curve_pc_evidence
+            box.setCurrentIndex(box.findData(MAX_ALL))
+            self.assertIn("60.0 °C", evidence.text())
+            self.assertIn("GPU Hot Spot", evidence.text())
+            box.setCurrentIndex(box.findData(GROUP_AVG))
+            self.assertIn("50.0 °C", evidence.text())
+            self.assertIn("2", evidence.text())
+            self.assertIn("CPU Package", evidence.toolTip())
+            self.assertIn("GPU Hot Spot", evidence.toolTip())
+            self.window.temperatures.pop()
+            self.window._update_source_boxes()
+            self.assertIn("неповна", evidence.text())
+            self.assertIn("gpu", evidence.toolTip())
+            box.setCurrentIndex(box.findData("cpu"))
+            self.assertIn("CPU Package", shell.fan_curve_source.text())
+            self.assertNotIn("°C", shell.fan_curve_source.text())
+            clock.return_value = 110
+            shell.refresh_telemetry_freshness()
+            self.assertIn("застар", evidence.text())
+            self.assertNotIn("°C", evidence.text())
+            send.assert_not_called()
 
     def test_curve_save_status_waits_for_matching_channel_and_curve(self):
         from unittest.mock import patch
@@ -1345,13 +1753,13 @@ class DashboardSmokeTests(unittest.TestCase):
         shell._last_fan_update[1] -= 20.0
         shell.refresh_telemetry_freshness()
         self.assertEqual(shell.fan_cards[1]["rpm"].text(), "— RPM")
-        self.assertIn("застарів", shell.fan_cards[1]["state"].text())
+        self.assertIn("застарів", shell.fan_cards[1]["state"].text().lower())
         self.assertIn("застаріла", shell.health_title.text())
         shell._toggle_attention_filter(True)
         self.assertIn(1, shell._fan_grid_visible)
         self.window.handle_line(normal)
         self.assertIn("1 250 RPM", shell.fan_cards[1]["rpm"].text())
-        self.assertNotIn("застарів", shell.fan_cards[1]["state"].text())
+        self.assertNotIn("застарів", shell.fan_cards[1]["state"].text().lower())
 
     def test_overview_safety_hierarchy_and_detail_visibility(self):
         shell = self.window.dashboard

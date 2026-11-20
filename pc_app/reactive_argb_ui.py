@@ -402,6 +402,7 @@ class ReactiveArgbPanel(QGroupBox):
         if not self.supported:
             return True
         ch=scene.channel
+        self.controller.dashboard.note_argb_readback(ch, "RFX", scene.active)
         visible=ch==self.current
         if visible:
             self._remember_draft()

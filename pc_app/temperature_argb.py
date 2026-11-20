@@ -27,6 +27,11 @@ except ImportError:
 OFF = "__OFF__"
 ASSIGNMENTS = (OFF, MAX_ALL, MAX_CPU_GPU, GROUP_MAX, GROUP_AVG, GROUP_WEIGHTED)
 MISSING_RGB = (255, 88, 0)  # amber; unavailable sensor is never represented as cold
+TEMPERATURE_SAMPLE_TTL = 7.0
+TEMPERATURE_GRADIENT = (
+    (0.0, (0, 100, 255)), (0.35, (0, 220, 65)),
+    (0.70, (255, 190, 0)), (1.0, (255, 0, 0)),
+)
 
 @dataclass(frozen=True)
 class ZoneTemperatureConfig:
@@ -85,14 +90,8 @@ def temperature_color(celsius: float | None, settings: ZoneTemperatureConfig,
     else:
         level = min(1.0, max(0.0, (celsius - settings.low_c) /
                               (settings.high_c - settings.low_c)))
-        anchors = (
-            (0.0, (0, 100, 255)),
-            (0.35, (0, 220, 65)),
-            (0.70, (255, 190, 0)),
-            (1.0, (255, 0, 0)),
-        )
-        target = anchors[-1][1]
-        for (x0, c0), (x1, c1) in zip(anchors, anchors[1:]):
+        target = TEMPERATURE_GRADIENT[-1][1]
+        for (x0, c0), (x1, c1) in zip(TEMPERATURE_GRADIENT, TEMPERATURE_GRADIENT[1:]):
             if level <= x1:
                 fraction = (level - x0) / (x1 - x0)
                 target = tuple(round(v0 + (v1 - v0) * fraction)

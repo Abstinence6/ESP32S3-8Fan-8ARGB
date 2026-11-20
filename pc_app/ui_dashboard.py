@@ -13,6 +13,8 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from settings_widgets import DesktopSettingsPanel
 from hardware_sensor_ui import FanTemperatureSourceDialog, HardwareSensorPanel
 from argb_studio_ui import ArgbStudioPanel
+from argb_effects import render_effect
+from config_presets import RGB_SCENES
 from native_effects_ui import NativeEffectsPanel
 from reactive_argb_ui import ReactiveArgbPanel
 from audio_reactive_ui import AudioReactivePanel
@@ -20,8 +22,10 @@ from temperature_argb_ui import TemperatureArgbPanel
 from maintenance_ui import MaintenancePanel
 from device_settings_ui import DeviceSettingsPanel
 from diagnostics_ui import DiagnosticPanel
+from diagnostics import FanHealth
 from sensor_manager_ui import SensorManagerPanel
 from fan_animation import FanRotor
+from channel_names_ui import ChannelNames, ChannelTitle, plain_tooltip
 from protocol import FanStatus
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
@@ -32,6 +36,10 @@ from PySide6.QtWidgets import (
 
 
 FAN_TELEMETRY_TTL = 15.0  # > two 5 s STATUS polls, tolerant of USB jitter
+ESP_TEMPERATURE_TTL = 10.0  # CoolingController::kSensorTimeoutMs
+ARGB_EVIDENCE_TTL = 15.0  # A one-shot ESP32 readback is not a live feed.
+ARGB_FRAME_TTL = 3.0  # Firmware releases its USB stream mode after 3 s.
+ARGB_RAINBOW = ((255, 0, 0), (255, 170, 0), (0, 255, 80), (0, 120, 255), (190, 0, 255))
 
 PAGES = (
     ("overview", "Головна", "Головна", "Стан контролера та швидкі дії"),
@@ -183,6 +191,7 @@ class DashboardShell(QWidget):
     ) -> None:
         super().__init__()
         self.controller = controller
+        self.channel_names = ChannelNames(controller.settings)
         self.setObjectName("dashboardRoot")
         self.nav: dict[str, QPushButton] = {}
         self.page_index: dict[str, int] = {}
@@ -196,10 +205,13 @@ class DashboardShell(QWidget):
         self._dc_ready: bool | None = None
         self._argb_colors: dict[int, tuple[tuple[int, int, int], ...]] = {}
         self._argb_brightness: dict[int, int] = {}
+        self._argb_readback: dict[int, tuple[str, float]] = {}
+        self._argb_request: dict[int, tuple[str, float, float]] = {}
         self.current_pc_state = "unknown"
         self.current_pc_busy = False
         self.pc_state_updated_at = 0.0
         self._fan_statuses: dict[int, FanStatus] = {}
+        self._cooling_sources: dict[int, tuple[FanHealth, float]] = {}
         self.available_channel_mask = 0xFF  # unknown firmware -> legacy 8-channel behavior
         self._channel_mask_known = False
         self._last_fan_update: dict[int, float] = {}
@@ -571,6 +583,9 @@ class DashboardShell(QWidget):
         self.channel_availability = _label("01–08", "minor")
         heading.addWidget(self.channel_availability)
         heading.addStretch(1)
+        self.channel_names_button = QPushButton("Назви каналів…")
+        self.channel_names_button.clicked.connect(self._edit_channel_names)
+        heading.addWidget(self.channel_names_button)
         details = QCheckBox("Джерела температур")
         details.setToolTip("Показувати джерело температури під RPM")
         self.show_sources = details
@@ -607,8 +622,9 @@ class DashboardShell(QWidget):
             box.setContentsMargins(10, 7, 10, 7)
             box.setSpacing(4)
             heading_row = QHBoxLayout()
-            heading_row.addWidget(_label(f"FAN {ch:02d}", "labelTitle"))
-            heading_row.addStretch(1)
+            title = ChannelTitle(number=f"FAN {ch:02d}")
+            title.set_title(self.channel_names.title("FAN", ch))
+            heading_row.addWidget(title, 1)
             state = _label("Очікування", "minor")
             heading_row.addWidget(state)
             box.addLayout(heading_row)
@@ -644,7 +660,7 @@ class DashboardShell(QWidget):
             self._fan_frames[ch] = frame
             self.fan_cards[ch] = {
                 "rpm": rpm, "metrics": metrics, "source": source, "state": state,
-                "bar": duty, "rotor": rotor, "settings_button": action,
+                "bar": duty, "rotor": rotor, "settings_button": action, "title": title,
             }
         layout.addLayout(grid)
         self.attention_empty_card = QFrame()
@@ -662,6 +678,16 @@ class DashboardShell(QWidget):
         layout.addStretch(1)
         self._add_page("overview", page)
         self._reflow_fan_cards()
+
+    def _edit_channel_names(self) -> None:
+        if not self.channel_names.edit(self):
+            return
+        for channel, card in self.fan_cards.items():
+            card["title"].set_title(self.channel_names.title("FAN", channel))
+            self._refresh_fan_channel_telemetry(channel)
+        self._refresh_fan_name(self.controller.fan_box.currentData())
+        self._refresh_argb_names()
+        self._refresh_argb_targets()
 
     def _toggle_sources(self, checked: bool) -> None:
         for labels in self.fan_cards.values():
@@ -681,9 +707,13 @@ class DashboardShell(QWidget):
 
     def refresh_telemetry_freshness(self) -> None:
         """Expire individual card values even while PONG/USB stays connected."""
+        self.controller.refresh_pc_temperature_evidence()
         if not self.is_connected:
             return
         now = time.monotonic()
+        self.refresh_cooling_source()
+        self._refresh_argb_owner()
+        self.temperature_argb.refresh_gradient()
         expired = {
             ch for ch in self._fan_statuses
             if self._fan_telemetry_stale(ch, now)
@@ -701,7 +731,7 @@ class DashboardShell(QWidget):
             labels["rpm"].setText("— RPM")
             labels["rotor"].set_rpm(0)
             labels["metrics"].setText("PWM — %  ·  — °C")
-            labels["state"].setText(f"Статус застарів · {age} с")
+            labels["state"].setText("Застарів")
             labels["state"].setProperty("role", "caution")
             labels["state"].style().unpolish(labels["state"])
             labels["state"].style().polish(labels["state"])
@@ -859,7 +889,6 @@ class DashboardShell(QWidget):
             button = QPushButton()
             button.setObjectName("coolingChannel")
             button.setCheckable(True)
-            button.setAccessibleName(f"Вибрати вентилятор {ch}")
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             self.fan_channel_group.addButton(button, ch)
             button.clicked.connect(
@@ -899,7 +928,7 @@ class DashboardShell(QWidget):
         live = QVBoxLayout(self.fan_live_card)
         live.setContentsMargins(12, 6, 12, 6)
         live.setSpacing(3)
-        self.fan_live_title = _label("FAN 01", "labelTitle")
+        self.fan_live_title = ChannelTitle()
         live.addWidget(self.fan_live_title)
         self.fan_live_rpm = _label("— RPM", "bigNumber")
         live.addWidget(self.fan_live_rpm)
@@ -918,8 +947,14 @@ class DashboardShell(QWidget):
         editor_layout.setSpacing(3)
         editor_layout.addWidget(_label("КРИВА ESP32 · NVS", "sectionLabel"))
         self.fan_curve_source = _label("Джерело: —", "minor", True)
+        self.fan_curve_source.setTextFormat(Qt.TextFormat.PlainText)
+        self.fan_curve_pc_evidence = _label("ПК (локально): немає вимірів", "minor", True)
+        self.fan_curve_pc_evidence.setTextFormat(Qt.TextFormat.PlainText)
+        self.fan_curve_esp_source = _label("Джерело ESP32: невідоме", "minor", True)
         self.fan_curve_status = _label("Локальна крива", "minor", True)
+        editor_layout.addWidget(self.fan_curve_esp_source)
         editor_layout.addWidget(self.fan_curve_source)
+        editor_layout.addWidget(self.fan_curve_pc_evidence)
         self.temperature_source_dialog = FanTemperatureSourceDialog(self.hardware_sensor, self)
         self.temperature_source_button = QPushButton("Джерело температури…")
         self.temperature_source_button.clicked.connect(self._open_temperature_source)
@@ -1009,10 +1044,12 @@ class DashboardShell(QWidget):
         chart = QVBoxLayout()
         chart.setSpacing(6)
         chart.addWidget(curve_box)
-        chart.addWidget(_label(
-            "Перетягніть точки, а потім запишіть криву в ESP32. "
-            "Обмеження силового DC PWM не змінюються.", "minor", True,
-        ))
+        self.fan_curve_operating = _label("Робоча точка: —", "minor", True)
+        chart.addWidget(self.fan_curve_operating)
+        self.fan_curve_numeric = QPushButton("Редагувати точки числами…")
+        self.fan_curve_numeric.setToolTip("Змінює локальну чернетку; запис у ESP32 — окремою кнопкою.")
+        self.fan_curve_numeric.clicked.connect(self.controller.edit_curve_numbers)
+        chart.addWidget(self.fan_curve_numeric, alignment=Qt.AlignmentFlag.AlignLeft)
         chart.addStretch(1)
         split.addLayout(chart, 0, 0)
         split.addWidget(self.fan_control_panel, 0, 1)
@@ -1023,7 +1060,6 @@ class DashboardShell(QWidget):
         curve_layout.addWidget(selected_controls)
         layout.addWidget(self.fan_curve_editor)
 
-        history_box.setTitle("Історія вибраного вентилятора")
         history_box.setMinimumHeight(390)
         history_box.setMaximumHeight(440)
         self.fan_history_panel = history_box
@@ -1067,7 +1103,9 @@ class DashboardShell(QWidget):
                 mode = "Авто" if status.mode.lower() == "auto" else "Вручну"
                 detail = f"{mode} · {status.deci_c / 10:.1f} °C"
         button.setText(f"{title}\n{rpm}\n{pwm}")
-        button.setToolTip(f"{title} · {rpm} · {pwm}\n{detail}")
+        name = self.channel_names.title("FAN", channel)
+        button.setAccessibleName(f"Вибрати {name}")
+        button.setToolTip(plain_tooltip(f"{name} · {rpm} · {pwm}\n{detail}"))
         button.setAccessibleDescription(f"{rpm}, {pwm}. {detail}")
         if button.property("telemetry") != state:
             button.setProperty("telemetry", state)
@@ -1091,14 +1129,98 @@ class DashboardShell(QWidget):
         if dialog.channel is not None and (not enabled or dialog.channel != channel):
             dialog.reject()
 
+    def _refresh_fan_name(self, channel: int) -> None:
+        name = self.channel_names.title("FAN", channel)
+        self.fan_live_title.set_title(name)
+        history_title = f"Історія вибраного вентилятора · {name}"
+        # Group box titles treat a single ampersand as a mnemonic.
+        self.fan_history_panel.setTitle(history_title.replace("&", "&&"))
+
+    def _refresh_curve_operating_point(self) -> None:
+        controller = self.controller
+        channel, secondary = controller._active_curve_key()
+        status = self._fan_statuses.get(channel)
+        live, model = controller.curve_live_point, controller.curve_model_point
+        live.hide()
+        model.hide()
+        note = ""
+        if not self.is_connected or self._demo or not self.is_channel_available(channel) or status is None:
+            text = "Робоча точка: немає даних ESP32"
+        elif self._fan_telemetry_stale(channel):
+            text = "Робоча точка: статус ESP32 застарів"
+        elif secondary:
+            text = "Робоча точка: STATUS не містить температури кривої 2"
+        elif not status.fresh:
+            text = "Робоча точка: температура ESP32 застаріла"
+        elif not (0 <= status.deci_c <= 1250 and 0 <= status.pwm <= 100):
+            text = "Робоча точка: некоректний статус ESP32"
+        else:
+            celsius = status.deci_c / 10
+            live.setData([celsius], [status.pwm])
+            live.show()
+            text = f"◆ ESP32: {celsius:.1f} °C · PWM {status.pwm}%"
+            note = "PWM зі STATUS — значення контролера, не фізичний вимір."
+            if (status.mode == "auto" and not status.fault
+                    and not controller.fan_dual_enabled[channel]
+                    and not controller.fan_pid_enabled[channel]):
+                points = controller._active_curve()
+                pwm = points[-1][1]
+                if celsius <= points[0][0]:
+                    pwm = points[0][1]
+                else:
+                    for (t0, p0), (t1, p1) in zip(points, points[1:]):
+                        if celsius <= t1:
+                            span = (t1 - t0) * 10
+                            pwm = p0 + ((status.deci_c - t0 * 10) * (p1 - p0) + span // 2) // span
+                            break
+                model.setData([celsius], [pwm])
+                model.show()
+                kind = "чернетка" if (channel, secondary) in controller._curve_dirty else "крива в редакторі"
+                text += f"  ▪ Модель: {pwm}% ({kind})"
+                note += " Модель використовує показану криву та температуру STATUS, без фільтрів і захистів ESP32."
+            else:
+                text += "  · Модель не застосовується"
+        self.fan_curve_operating.setText(text)
+        self.fan_curve_operating.setToolTip(note)
+
+    def observe_cooling_source(self, health: FanHealth) -> None:
+        if not self.is_connected or self._demo or not self.is_channel_available(health.channel):
+            return
+        self._cooling_sources[health.channel] = (health, time.monotonic())
+        if health.channel == self.controller.current_fan:
+            self.refresh_cooling_source()
+
+    def refresh_cooling_source(self) -> None:
+        channel, secondary = self.controller._active_curve_key()
+        text = "Джерело ESP32: невідоме"
+        note = "Джерело основної кривої з останньої відповіді HEALTH, не налаштування Windows."
+        report = self._cooling_sources.get(channel)
+        if secondary:
+            note = "HEALTH не повідомляє джерело кривої 2."
+        elif self.is_connected and not self._demo and self.is_channel_available(channel) and report:
+            health, received = report
+            elapsed = time.monotonic() - received
+            source = {"usb": "USB", "ds18b20": "DS18B20", "mqtt": "MQTT"}.get(health.source)
+            if elapsed > FAN_TELEMETRY_TTL or (health.age_ms is not None and (
+                    not health.fresh or elapsed + health.age_ms / 1000 > ESP_TEMPERATURE_TTL)):
+                text = "Джерело ESP32: дані застаріли"
+            elif source and health.age_ms is not None:
+                text = f"Джерело ESP32: {source}"
+            elif health.source == "none":
+                text = "Джерело ESP32: немає даних датчика"
+        self.fan_curve_esp_source.setText(text)
+        self.fan_curve_esp_source.setToolTip(note)
+
     def _refresh_fan_detail(self) -> None:
         self._update_preset_availability()
         self._update_temperature_source()
+        self._refresh_curve_operating_point()
+        self.refresh_cooling_source()
         channel = self.controller.fan_box.currentData()
         if channel is None:
             return
         self.fan_selected_controls.setEnabled(self.is_channel_available(channel))
-        self.fan_live_title.setText(f"FAN {channel:02d}")
+        self._refresh_fan_name(channel)
         if not self.is_channel_available(channel):
             self.fan_live_rpm.setText("— RPM")
             self.fan_live_metrics.setText("Фізичний канал вимкнено")
@@ -1164,8 +1286,6 @@ class DashboardShell(QWidget):
             pick = QPushButton(f"{ch:02d}")
             pick.setProperty("role", "channelSelect")
             pick.setCheckable(True)
-            pick.setAccessibleName(f"Вибрати ARGB-канал {ch}")
-            pick.setToolTip(f"ARGB {ch} · вибір каналу без відправлення команд")
             pick.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self.argb_channel_group.addButton(pick, ch)
             pick.clicked.connect(
@@ -1182,6 +1302,8 @@ class DashboardShell(QWidget):
             self.argb_zone_tiles[ch] = (tile, strip)
             map_layout.addWidget(tile, 1)
         layout.addWidget(zone_map)
+        self.argb_owner = _label("", "minor", True)
+        layout.addWidget(self.argb_owner)
 
         select = QFrame()
         select.setObjectName("quietCard")
@@ -1196,15 +1318,24 @@ class DashboardShell(QWidget):
         self.zone_box.hide()  # internal state model, replaced by eight buttons
         control.addWidget(_label("Ефект", "labelTitle"))
         self.scene_box = QComboBox()
-        self.scene_box.addItems([scene for scene in scenes if scene != "OpenRGB"])
+        for scene in scenes:
+            if scene != "OpenRGB":
+                self.scene_box.addItem(scene, f"preset:{scene}")
         self.scene_box.setMinimumWidth(170)
-        control.addWidget(self.scene_box)
+        editor = QHBoxLayout()
+        editor.addWidget(self.scene_box, 1)
+        self.argb_draft_rotor = FanRotor(draft=True)
+        self.argb_draft_caption = _label("", "minor")
+        editor.addWidget(self.argb_draft_rotor)
+        editor.addWidget(self.argb_draft_caption)
+        control.addLayout(editor)
         self.scope_one = QRadioButton("Лише вибрана зона")
         self.scope_all = QRadioButton("Усі доступні зони")
         self.scope_one.setChecked(True)
         control.addWidget(self.scope_one)
         control.addWidget(self.scope_all)
         self.argb_scene_target = _label("", "minor", True)
+        self.argb_scene_target.setTextFormat(Qt.TextFormat.PlainText)
         control.addWidget(self.argb_scene_target)
         self.argb_apply_button = QPushButton("Застосувати ефект")
         self.argb_apply_button.setProperty("role", "primary")
@@ -1222,7 +1353,7 @@ class DashboardShell(QWidget):
         quick_layout = QVBoxLayout(quick)
         quick_layout.setContentsMargins(17, 14, 17, 14)
         quick_layout.setSpacing(9)
-        self.argb_quick_target = _label("", "sectionLabel")
+        self.argb_quick_target = ChannelTitle("sectionLabel")
         quick_layout.addWidget(self.argb_quick_target)
         quick_actions = QHBoxLayout()
         quick_actions.setSpacing(9)
@@ -1237,6 +1368,7 @@ class DashboardShell(QWidget):
         self.audio_reactive = AudioReactivePanel(self.controller)
         self.argb_effect_panels: dict[str, QWidget] = {}
         self.argb_effect_target_hint = _label("", "minor", True)
+        self.argb_effect_target_hint.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.argb_effect_target_hint)
         self.scene_box.insertSeparator(self.scene_box.count())
         for key, title, panel in (
@@ -1248,8 +1380,7 @@ class DashboardShell(QWidget):
             self.scene_box.addItem(title, key)
             self.argb_effect_panels[key] = panel
             layout.addWidget(panel)
-        self.scene_box.currentIndexChanged.connect(self._show_argb_effect_panel)
-        self._show_argb_effect_panel()
+        self.scene_box.currentIndexChanged.connect(self._argb_effect_changed)
 
         layout.addWidget(_label(
             "Прев’ю ARGB на лопатях (Головна) моделює надіслані кольори, "
@@ -1299,6 +1430,7 @@ class DashboardShell(QWidget):
         self._expandable_panel(layout, "OpenRGB", openrgb)
         layout.addStretch(1)
         self.scope_all.toggled.connect(self._refresh_argb_targets)
+        self._refresh_argb_names()
         self._refresh_argb_zone_tiles()
         self._add_page("argb", page)
 
@@ -1315,30 +1447,44 @@ class DashboardShell(QWidget):
                     widget.style().polish(widget)
 
         available = self.is_channel_available(selected)
-        self.argb_effect_target_hint.setText(
-            f"Налаштування вибраного каналу · ARGB {selected:02d}" if available
-            else f"ARGB {selected:02d} · канал недоступний на цій платі"
-        )
         for panel in (self.native_effects, self.reactive_argb, self.audio_reactive):
             panel.set_channel(selected, available)
         self.temperature_argb.set_channel(selected, self.available_channel_mask)
+        key = self.controller.settings.value(f"argb/editor/{selected}", "")
+        index = self.scene_box.findData(key)
+        blocked = self.scene_box.blockSignals(True)
+        self.scene_box.setCurrentIndex(max(0, index))
+        self.scene_box.blockSignals(blocked)
+        self._show_argb_effect_panel()
         self._refresh_argb_targets()
+        self._refresh_argb_owner()
 
     def argb_targets(self, all_zones: bool) -> list[int]:
         selected = self.zone_box.currentData()
         return [ch for ch in range(1, 9)
                 if (all_zones or ch == selected) and self.is_channel_available(ch)]
 
+    def _refresh_argb_names(self) -> None:
+        for channel, button in self.argb_channel_buttons.items():
+            name = self.channel_names.title("ARGB", channel)
+            button.setAccessibleName(f"Вибрати {name}")
+            button.setToolTip(plain_tooltip(f"{name} · вибір каналу без відправлення команд"))
+
     def _refresh_argb_targets(self) -> None:
         targets = self.argb_targets(self.scope_all.isChecked())
-        zones = ", ".join(f"{ch:02d}" for ch in targets)
-        self.argb_scene_target.setText(f"Ціль сцени: ARGB {zones}" if zones else "Ціль сцени недоступна")
         selected = self.zone_box.currentData()
-        quick_target = f"ARGB {selected:02d}"
+        name = self.channel_names.title("ARGB", selected)
+        target = ("ARGB " + ", ".join(f"{ch:02d}" for ch in targets)
+                  if self.scope_all.isChecked() else name)
+        self.argb_scene_target.setText(f"Ціль сцени: {target}" if targets else "Ціль сцени недоступна")
         available = self.is_channel_available(selected)
-        self.argb_quick_target.setText(
-            f"ШВИДКІ КОМАНДИ · ЛИШЕ {quick_target}" if available
-            else f"ШВИДКІ КОМАНДИ · {quick_target} НЕДОСТУПНА"
+        self.argb_effect_target_hint.setText(
+            f"Налаштування вибраного каналу · {name}" if available
+            else f"{name} · канал недоступний на цій платі"
+        )
+        self.argb_quick_target.set_title(
+            f"ШВИДКІ КОМАНДИ · ЛИШЕ {name}" if available
+            else f"ШВИДКІ КОМАНДИ · {name} НЕДОСТУПНА"
         )
         online = self.is_connected and not self._demo
         self.argb_apply_button.setEnabled(online and bool(targets))
@@ -1351,15 +1497,115 @@ class DashboardShell(QWidget):
             if self._argb_colors.pop(ch, None) is not None:
                 self.fan_cards[ch]["rotor"].set_strip_preview(None)
 
+    def note_argb_readback(self, channel: int, source: str, active: bool) -> None:
+        if not self.is_connected or self._demo or not self.is_channel_available(channel):
+            return
+        if active:
+            self._argb_readback[channel] = (source, time.monotonic())
+            self._argb_request.pop(channel, None)
+            self.clear_argb_preview(channel)
+        elif self._argb_readback.get(channel, (None, 0))[0] == source:
+            self._argb_readback.pop(channel)
+        if channel == self.zone_box.currentData():
+            self._refresh_argb_owner()
+
+    def note_argb_request(self, channel: int, text: str, ttl: float = ARGB_EVIDENCE_TTL) -> None:
+        if not self.is_connected or self._demo or not self.is_channel_available(channel):
+            return
+        self._argb_readback.pop(channel, None)
+        self._argb_request[channel] = (text, time.monotonic(), ttl)
+        if channel == self.zone_box.currentData():
+            self._refresh_argb_owner()
+
+    def note_argb_frame(self, channel: int, source: str) -> None:
+        self.note_argb_request(channel, f"{source} · кадр у черзі", ARGB_FRAME_TTL)
+
+    def _refresh_argb_draft(self, now: float) -> None:
+        channel = self.zone_box.currentData()
+        key = self.scene_box.currentData() or ""
+        colors, brightness, animated = (), 255, False
+        caption = "Чернетка · локально"
+        if not self.is_channel_available(channel):
+            caption = "Чернетка · зона недоступна"
+        elif key.startswith("preset:"):
+            preset = RGB_SCENES.get(key.removeprefix("preset:"), {})
+            brightness = preset.get("brightness", 255)
+            if preset.get("mode") == "solid":
+                colors = (tuple(preset["rgb"]),)
+            elif preset.get("mode") == "rainbow":
+                colors, animated = ARGB_RAINBOW, True
+            elif preset.get("mode") == "off":
+                colors = ((0, 0, 0),)
+        elif key == "native":
+            panel = self.native_effects
+            # Five visual blade samples, not LED count or ESP32 pixel output.
+            primary, secondary = panel.colors
+            frame = render_effect(panel.mode.currentText(), 5, now, primary, secondary,
+                                  panel.brightness.value(), panel.speed.value() / 5)
+            colors = tuple(tuple(frame[i:i + 3]) for i in range(0, len(frame), 3))
+            if panel.direction.isChecked():
+                colors = colors[::-1]
+        elif key == "temperature":
+            color = self.temperature_argb.draft_color
+            if color is not None:
+                colors = (color,)
+        elif key in ("sensors", "audio"):
+            panel = self.argb_effect_panels[key]
+            colors, brightness = panel.colors, panel.brightness.value()
+            caption = "Чернетка · зразок палітри"
+        if self.argb_draft_caption.text() != caption:
+            self.argb_draft_caption.setText(caption)
+        shown = [tuple(round(value * brightness / 255) for value in rgb) for rgb in colors]
+        self.argb_draft_rotor.set_strip_preview(shown, animated=animated)
+
+    def _refresh_argb_owner(self) -> None:
+        channel = self.zone_box.currentData()
+        owner = "невідомий"
+        detail = ""
+        now = time.monotonic()
+        if not self.is_channel_available(channel):
+            detail = "канал недоступний"
+        elif not self.is_connected or self._demo:
+            detail = "немає зв’язку з ESP32"
+        else:
+            readback = self._argb_readback.get(channel)
+            request = self._argb_request.get(channel)
+            if readback and now - readback[1] <= ARGB_EVIDENCE_TTL:
+                owner = f"{readback[0]} · відповідь ESP32"
+            elif request and now - request[1] <= request[2]:
+                detail = request[0]
+            elif readback or request:
+                detail = "дані застаріли"
+        text = f"Керування ARGB {channel:02d}: {owner}" + (f" · {detail}" if detail else "")
+        if self.argb_owner.text() != text:
+            self.argb_owner.setText(text)
+        enabled = [label for active, label in (
+            (self.native_checkbox.isChecked(), "OpenRGB SDK"),
+            (self.controller.bridge_checkbox.isChecked(), "Міст E1.31"),
+            (self.controller.audio_capture.running, "Захоплення звуку"),
+        ) if active]
+        tooltip = (
+            "Відповідь ESP32 показує режим на момент зчитування, а не фактичне світло. "
+            "Команди, кадри в черзі та ввімкнені служби не підтверджують керування зоною."
+            + ("\nСлужби ПК: " + ", ".join(enabled) if enabled else "")
+        )
+        if tooltip != self.argb_owner.toolTip():
+            self.argb_owner.setToolTip(tooltip)
+
     def note_argb_command(self, message: str) -> None:
         """Preview supported local requests, never infer lighting from fan telemetry."""
         tokens = message.upper().split()
         if not tokens:
             return
         mode = tokens[0]
-        if mode in ("FX", "RFX", "AUDIOCFG", "TARGB", "TPAL") and len(tokens) > 1:
-            if tokens[1] in ("SET", "STOP", "OFF", "CLEAR", "COMMIT"):
-                self.clear_argb_preview()
+        if mode in ("FX", "RFX", "AUDIOCFG"):
+            if len(tokens) >= 3 and tokens[1] in ("SET", "STOP"):
+                try:
+                    channel = int(tokens[2])
+                except ValueError:
+                    return
+                self.clear_argb_preview(channel)
+                self.note_argb_request(channel, f"{mode} {tokens[1]} · команду надіслано")
             return
         if len(tokens) != {"LED": 5, "BRIGHT": 3, "RAINBOW": 2, "OFF": 2}.get(mode):
             return
@@ -1376,10 +1622,11 @@ class DashboardShell(QWidget):
         elif mode == "LED":
             self._argb_colors[channel] = ((values[0], values[1], values[2]),)
         elif mode == "RAINBOW":
-            self._argb_colors[channel] = ((255, 0, 0), (255, 170, 0), (0, 255, 80),
-                                          (0, 120, 255), (190, 0, 255))
+            self._argb_colors[channel] = ARGB_RAINBOW
         elif mode == "OFF":
             self._argb_colors[channel] = ((0, 0, 0),)
+        if mode != "BRIGHT":
+            self.note_argb_request(channel, f"{mode} · команду надіслано")
         colors = self._argb_colors.get(channel)
         if colors:
             brightness = self._argb_brightness.get(channel, 255)
@@ -1513,6 +1760,7 @@ class DashboardShell(QWidget):
         actions = self._service_group("Команди діагностики", diagnostic_row)
         check.addWidget(actions)
         self.diagnostics = DiagnosticPanel(self.controller)
+        self.diagnostics.health_observed.connect(self.observe_cooling_source)
         check.addWidget(self.diagnostics)
         check.addStretch(1)
         self.service_workspace_tabs.addTab(check_page, "Діагностика")
@@ -1612,6 +1860,12 @@ class DashboardShell(QWidget):
             self.controller.fan_box.setCurrentIndex(index)
             self._refresh_argb_zone_tiles()
 
+    def _argb_effect_changed(self) -> None:
+        key = self.scene_box.currentData()
+        if key is not None:
+            self.controller.settings.setValue(f"argb/editor/{self.zone_box.currentData()}", key)
+        self._show_argb_effect_panel()
+
     def _show_argb_effect_panel(self) -> None:
         family = self.scene_box.currentData()
         self.argb_effect_target_hint.setVisible(family in self.argb_effect_panels)
@@ -1619,13 +1873,15 @@ class DashboardShell(QWidget):
             panel.setVisible(family == key)
         for control in (self.scope_one, self.scope_all,
                         self.argb_scene_target, self.argb_apply_button):
-            control.setVisible(family is None)
+            control.setVisible(bool(family and family.startswith("preset:")))
+        self._refresh_argb_draft(time.monotonic())
 
     def _apply_scene(self) -> None:
-        if self.scene_box.currentData() is not None:
+        key = self.scene_box.currentData()
+        if not key or not key.startswith("preset:"):
             return
         self.controller.apply_argb_scene(
-            self.scene_box.currentText(), self.scope_all.isChecked()
+            key.removeprefix("preset:"), self.scope_all.isChecked()
         )
 
     def note_esp_response(self, dc_ready: bool | None = None) -> None:
@@ -1670,11 +1926,14 @@ class DashboardShell(QWidget):
         self._dc_ready = None
         self.clear_argb_preview()
         self._argb_brightness.clear()
+        self._argb_readback.clear()
+        self._argb_request.clear()
         self.temperature_argb.set_connected(connected)
         if connected:
             self.summary_esp.setText("Не підключено до обладнання" if demo else f"USB · {port_name}")
         else:
             self._fan_statuses.clear()
+            self._cooling_sources.clear()
             self._last_fan_update.clear()
             self._expired_fan_channels.clear()
             self.summary_esp.setText("USB · —")
@@ -1715,6 +1974,8 @@ class DashboardShell(QWidget):
         self._refresh_connection_text()
         self._update_preset_availability()
         self._refresh_argb_targets()
+        self._refresh_argb_owner()
+        self._refresh_argb_draft(time.monotonic())
         self._update_cooling_health()
         self._refresh_attention_count()
         self._reflow_fan_cards()
@@ -1736,7 +1997,12 @@ class DashboardShell(QWidget):
         now = time.monotonic()
         delta = min(.1, max(0.0, now - self._rotor_last))
         self._rotor_last = now
-        if not self.is_connected or not self.isVisible():
+        if not self.isVisible() or self.window().isMinimized():
+            return
+        if self.stack.currentIndex() == self.page_index["argb"]:
+            self._refresh_argb_draft(now)
+            return
+        if not self.is_connected:
             return
         if self.stack.currentIndex() != self.page_index["overview"]:
             return
@@ -1773,8 +2039,11 @@ class DashboardShell(QWidget):
             self._refresh_fan_channel_telemetry(channel)
             self.argb_channel_buttons[channel].setEnabled(enabled)
             if not enabled:
+                self._cooling_sources.pop(channel, None)
                 self.clear_argb_preview(channel)
                 self._argb_brightness.pop(channel, None)
+                self._argb_readback.pop(channel, None)
+                self._argb_request.pop(channel, None)
                 labels = self.fan_cards[channel]
                 labels["rpm"].setText("— RPM")
                 labels["metrics"].setText("Фізичний вихід вимкнено")
@@ -1837,6 +2106,8 @@ class DashboardShell(QWidget):
             return
         self.note_esp_response()
         self._fan_statuses[channel] = status
+        if not status.fresh:
+            self._cooling_sources.pop(channel, None)
         self._last_fan_update[channel] = time.monotonic()
         self._expired_fan_channels.discard(channel)
         self._refresh_fan_channel_telemetry(channel)

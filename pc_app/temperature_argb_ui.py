@@ -6,9 +6,11 @@ fresh controller readback. QSettings is deliberately not used for this config.
 from __future__ import annotations
 
 from collections import deque
+import math
 import time
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QRectF
+from PySide6.QtGui import QColor, QLinearGradient, QPainter
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QGridLayout, QGroupBox,
     QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox,
@@ -17,18 +19,22 @@ from PySide6.QtWidgets import (
 
 try:
     from .device_config_protocol import decode_value, encode_value, fields
+    from .monitor import resolve_temperature
     from .temperature_argb import (
         ASSIGNMENTS, OFF, ZoneTemperatureConfig, zone_color,
         MAX_ALL, MAX_CPU_GPU, GROUP_MAX, GROUP_AVG, GROUP_WEIGHTED,
+        TEMPERATURE_GRADIENT, TEMPERATURE_SAMPLE_TTL, temperature_color,
     )
     from .sacn_bridge import encode_rgb_frame
     from .temperature_palette import DEFAULT_PALETTE, Palette, make_palette_command, parse_palette_reply
     from .temperature_palette_ui import TemperaturePaletteDialog
 except ImportError:
     from device_config_protocol import decode_value, encode_value, fields
+    from monitor import resolve_temperature
     from temperature_argb import (
         ASSIGNMENTS, OFF, ZoneTemperatureConfig, zone_color,
         MAX_ALL, MAX_CPU_GPU, GROUP_MAX, GROUP_AVG, GROUP_WEIGHTED,
+        TEMPERATURE_GRADIENT, TEMPERATURE_SAMPLE_TTL, temperature_color,
     )
     from sacn_bridge import encode_rgb_frame
     from temperature_palette import DEFAULT_PALETTE, Palette, make_palette_command, parse_palette_reply
@@ -42,6 +48,34 @@ SOURCES = (
     (GROUP_AVG, "Середнє обраної групи"),
     (GROUP_WEIGHTED, "Зважене середнє групи (рівні ваги)"),
 )
+
+
+class TemperatureGradient(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setFixedHeight(16)
+        self.stops = ()
+        self.marker: float | None = None
+
+    def set_scale(self, stops, marker: float | None) -> None:
+        if (self.stops, self.marker) != (stops, marker):
+            self.stops, self.marker = stops, marker
+            self.update()
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        bar = QRectF(self.rect()).adjusted(3, 3, -3, -3)
+        if self.stops:
+            gradient = QLinearGradient(bar.left(), 0, bar.right(), 0)
+            for position, rgb in self.stops:
+                gradient.setColorAt(position, QColor(*rgb))
+            painter.fillRect(bar, gradient)
+        else:
+            painter.fillRect(bar, self.palette().mid())
+        if self.marker is not None:
+            x = bar.left() + self.marker * bar.width()
+            painter.fillRect(QRectF(x - 2, 0, 4, self.height()), QColor("black"))
+            painter.fillRect(QRectF(x - 1, 0, 2, self.height()), QColor("white"))
 
 
 class TemperatureArgbPanel(QGroupBox):
@@ -154,6 +188,13 @@ class TemperatureArgbPanel(QGroupBox):
             bright.valueChanged.connect(lambda _=0, channel=ch: self._mark_dirty(channel))
         grid.setColumnStretch(1, 2)
         root.addWidget(content)
+        self.gradient_status = QLabel()
+        self.gradient_status.setWordWrap(True)
+        root.addWidget(self.gradient_status)
+        self.gradient = TemperatureGradient()
+        self.gradient.setAccessibleName("Чернетка температурної шкали ARGB")
+        root.addWidget(self.gradient)
+        self.draft_color: tuple[int, int, int] | None = None
         actions = QHBoxLayout()
         self.refresh_button = QPushButton("↻ Зчитати вибрану зону")
         self.refresh_button.clicked.connect(self.refresh_selected)
@@ -183,6 +224,50 @@ class TemperatureArgbPanel(QGroupBox):
                 widget.setVisible(ch == channel)
             self._grid.itemAtPosition(ch, 2).widget().setEnabled(self._available(ch))
         self._update_buttons()
+        self.refresh_gradient()
+
+    def refresh_gradient(self) -> None:
+        ch = self._channel
+        self.draft_color = None
+        stops, marker = (), None
+        if not self._available(ch):
+            text = "Канал недоступний"
+        elif self.lows[ch].value() >= self.highs[ch].value():
+            text = "Нижній поріг має бути меншим за верхній"
+        else:
+            try:
+                cfg = self._edited_config(ch)
+            except ValueError:
+                self.gradient.set_scale((), None)
+                self.gradient_status.setText("Чернетка · некоректне джерело або група")
+                return
+            palette = self.palettes.get(ch) if self.palette_supported else None
+            low, high = (palette[0][0], palette[-1][0]) if palette else (cfg.low_c, cfg.high_c)
+            stops = tuple(((t - low) / (high - low), (r, g, b)) for t, r, g, b in palette) if palette else TEMPERATURE_GRADIENT
+            reading = None
+            source = self.sources[ch].currentText()
+            if cfg.source == OFF:
+                text = "Джерело вимкнено"
+            elif not self.connected:
+                text = f"ПК · {source} · ESP32 не підключено"
+            elif time.monotonic() - self.controller.last_temperature_sample_at > TEMPERATURE_SAMPLE_TTL:
+                text = f"ПК · {source} · дані відсутні або застаріли"
+            else:
+                reading = resolve_temperature(cfg.source, self.controller.temperatures, cfg.group_ids)
+                if reading is None or not math.isfinite(reading) or not 0 <= reading <= 125:
+                    reading = None
+                    text = f"ПК · {source} · немає температури"
+                else:
+                    marker = max(0.0, min(1.0, (reading - low) / (high - low)))
+                    text = f"ПК · {source} · {reading:.1f} °C"
+            if cfg.source != OFF and self.connected:
+                self.draft_color = temperature_color(reading, cfg, palette)
+            text = f"{low}–{high} °C · {text}"
+        self.gradient.set_scale(stops, marker)
+        text = "Шкала чернетки · " + text
+        if self.gradient_status.text() != text:
+            self.gradient_status.setText(text)
+            self.gradient.setAccessibleDescription(text)
 
     def _available(self, ch: int) -> bool:
         return bool(self._channel_mask & (1 << (ch - 1)))
@@ -230,6 +315,7 @@ class TemperatureArgbPanel(QGroupBox):
                 label.setText("Немає даних")
             self.status.setText("ESP32 відключено — налаштування залишаються у NVS.")
         self._update_buttons()
+        self.refresh_gradient()
 
     def set_version(self, serial_version: int) -> None:
         supported = serial_version >= 8
@@ -242,6 +328,7 @@ class TemperatureArgbPanel(QGroupBox):
 
     def set_palette_supported(self, enabled: bool) -> None:
         self.palette_supported = bool(enabled)
+        self.refresh_gradient()
         if self.palette_supported and self.connected:
             self._palette_queue = deque(range(1, 9))
             self._palette_read_next()
@@ -323,6 +410,8 @@ class TemperatureArgbPanel(QGroupBox):
             self._palette_failed()
             return True
         self.palettes[channel] = points
+        if channel == self._channel:
+            self.refresh_gradient()
         self._palette_timer.stop()
         self._palette_pending = None
         if self._palette_expected is not None:
@@ -349,6 +438,7 @@ class TemperatureArgbPanel(QGroupBox):
                 idx = box.count() - 1
             box.setCurrentIndex(max(idx, 0))
             box.blockSignals(False)
+        self.refresh_gradient()
 
     def refresh_selected(self) -> None:
         if not self.connected or not self.supported or not self._available(self._channel) or self._busy():
@@ -411,6 +501,8 @@ class TemperatureArgbPanel(QGroupBox):
         self._dirty.add(ch)
         self.labels[ch].setText("Змінено · не збережено")
         self._update_buttons()
+        if ch == self._channel:
+            self.refresh_gradient()
 
     def edit_group(self, ch: int) -> None:
         if not self._available(ch):
@@ -526,6 +618,8 @@ class TemperatureArgbPanel(QGroupBox):
         self._dirty.discard(ch)
         self.labels[ch].setText("✓ Збережено в ESP")
         self._update_buttons()
+        if ch == self._channel:
+            self.refresh_gradient()
 
     def handle_line(self, line: str) -> bool:
         if self._handle_palette(line):
@@ -648,7 +742,7 @@ class TemperatureArgbPanel(QGroupBox):
         ):
             self.stop()
             return
-        fresh = time.monotonic() - self.controller.last_temperature_sample_at <= 7.0
+        fresh = time.monotonic() - self.controller.last_temperature_sample_at <= TEMPERATURE_SAMPLE_TTL
         sent = 0
         for ch, cfg in self.configs.items():
             if not self._available(ch) or ch not in self._loaded or cfg.source == OFF:
@@ -660,7 +754,7 @@ class TemperatureArgbPanel(QGroupBox):
             num_leds = min(170, self.controller.led_counts[ch - 1])
             try:
                 if not self.controller.queue_rgb(
-                    ch, encode_rgb_frame(ch, bytes(color) * num_leds)
+                    ch, encode_rgb_frame(ch, bytes(color) * num_leds), source="Температура ПК"
                 ):
                     raise OSError("ARGB command queue unavailable")
             except (ValueError, OSError) as exc:

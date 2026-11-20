@@ -120,7 +120,7 @@ class ArgbStudioPanel(QGroupBox):
                 *self.colors, self.brightness.value(), self.speed.value() / 50.0,
             )
             packet = encode_rgb_frame(channel, frame)
-            if not self.controller.queue_rgb(channel, packet):
+            if not self.controller.queue_rgb(channel, packet, source="Студія ARGB"):
                 raise IOError("ARGB queue rejected frame")
         except (ValueError, OSError) as exc:
             self.stop()

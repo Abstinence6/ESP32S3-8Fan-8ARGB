@@ -6,14 +6,16 @@ from PySide6.QtGui import QColor, QPainter, QPainterPath, QPalette, QPen
 from PySide6.QtWidgets import QWidget
 
 _RPM_TOOLTIP = "Обертання пропорційне TACH RPM, але сповільнене для сприйняття."
+_DRAFT_TOOLTIP = "Локальна імітація кольорів чернетки. Не надсилається до ESP32."
 _BLADE_COUNT = 5
 _COLOR_CYCLE_FRAMES = 32
 
 class FanRotor(QWidget):
     """Symbolic (slowed down) rotation proportional to measured RPM."""
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, draft: bool = False):
         super().__init__(parent)
         self.rpm = 0
+        self._draft = draft
         self.angle = 0.0
         self._strip_colors: tuple[QColor, ...] = ()
         self._strip_animated = False
@@ -22,8 +24,8 @@ class FanRotor(QWidget):
         self._strip_timer.setInterval(50)
         self._strip_timer.timeout.connect(self._advance_strip)
         self.setFixedSize(44, 44)
-        self.setAccessibleName("Анімований індикатор RPM")
-        self.setToolTip(_RPM_TOOLTIP)
+        self.setAccessibleName("Чернетка підсвітки лопатей" if draft else "Анімований індикатор RPM")
+        self.setToolTip(_DRAFT_TOOLTIP if draft else _RPM_TOOLTIP)
 
     def set_strip_preview(self, colors, *, animated: bool = False) -> None:
         """Color the blades from QColor inputs or RGB(A) byte tuples/lists.
@@ -57,10 +59,11 @@ class FanRotor(QWidget):
         if not animated:
             self._strip_frame = 0
         self._watch_preview_visibility()
-        self.setToolTip(
-            _RPM_TOOLTIP + "\nКольори лопатей: попередній перегляд ARGB, не телеметрія."
-            if preview else _RPM_TOOLTIP
-        )
+        if not self._draft:
+            self.setToolTip(
+                _RPM_TOOLTIP + "\nКольори лопатей: попередній перегляд ARGB, не телеметрія."
+                if preview else _RPM_TOOLTIP
+            )
         self.update()
 
     def showEvent(self, event):

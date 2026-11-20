@@ -6,7 +6,7 @@ import json
 import math
 import re
 import urllib.request
-from typing import Any
+from typing import Any, Mapping
 
 
 @dataclass(frozen=True)
@@ -14,6 +14,13 @@ class TemperatureSensor:
     sensor_id: str
     name: str
     celsius: float
+
+
+@dataclass(frozen=True)
+class TemperatureResolution:
+    celsius: float | None = None
+    contributors: tuple[TemperatureSensor, ...] = ()
+    missing_ids: tuple[str, ...] = ()
 
 
 DEFAULT_LHM_URL = "http://127.0.0.1:8085/data.json"
@@ -92,38 +99,52 @@ def resolve_temperature(
     group_ids: list[str] | tuple[str, ...] = (),
     weights: dict[str, float] | None = None,
 ) -> float | None:
-    """Return one sensor, MAX(all), AVG(group) or MAX(group).
+    return resolve_temperature_evidence(assignment, sensors, group_ids, weights).celsius
+
+
+def resolve_temperature_evidence(
+    assignment: str,
+    sensors: list[TemperatureSensor],
+    group_ids: list[str] | tuple[str, ...] = (),
+    weights: Mapping[str, float] | None = None,
+) -> TemperatureResolution:
+    """Resolve a route and identify the sensor(s) behind its result.
 
     An empty group or any missing group member returns None. Do not silently
     average fewer sensors: on missing readings the ESP must time out to safe PWM.
     """
-    if assignment == MAX_ALL:
-        return max((sensor.celsius for sensor in sensors), default=None)
-    if assignment == MAX_CPU_GPU:
-        return max(
-            (sensor.celsius for sensor in sensors
-             if sensor.sensor_id.casefold().startswith(("nwinfo/cpu/", "nwinfo/gpu/"))
+    if assignment in (MAX_ALL, MAX_CPU_GPU):
+        winner = max(
+            (sensor for sensor in sensors
+             if assignment == MAX_ALL
+             or sensor.sensor_id.casefold().startswith(("nwinfo/cpu/", "nwinfo/gpu/"))
              or any(tag in sensor.name.casefold() for tag in
                     ("cpu", "gpu", "intel core", "amd radeon", "nvidia"))),
+            key=lambda sensor: sensor.celsius,
             default=None,
         )
+        return TemperatureResolution(winner.celsius, (winner,)) if winner else TemperatureResolution()
     if assignment in (GROUP_AVG, GROUP_MAX, GROUP_WEIGHTED):
         chosen = set(group_ids)
         if not chosen:
-            return None
-        by_id = {sensor.sensor_id: sensor.celsius for sensor in sensors}
-        if not chosen.issubset(by_id):
-            return None
-        values = [by_id[ident] for ident in chosen]
+            return TemperatureResolution()
+        by_id = {sensor.sensor_id: sensor for sensor in sensors}
+        missing = tuple(sorted(chosen - by_id.keys()))
+        if missing:
+            return TemperatureResolution(missing_ids=missing)
+        members = tuple(by_id[ident] for ident in chosen)
+        values = [sensor.celsius for sensor in members]
         if assignment == GROUP_AVG:
-            return sum(values) / len(values)
+            return TemperatureResolution(sum(values) / len(values), members)
         if assignment == GROUP_MAX:
-            return max(values)
+            winner = max(members, key=lambda sensor: sensor.celsius)
+            return TemperatureResolution(winner.celsius, (winner,))
         factors = [float((weights or {}).get(ident, 1.0)) for ident in chosen]
         if any(not math.isfinite(weight) or weight <= 0 for weight in factors):
-            return None
-        return sum(value * weight for value, weight in zip(values, factors)) / sum(factors)
+            return TemperatureResolution()
+        value = sum(value * weight for value, weight in zip(values, factors)) / sum(factors)
+        return TemperatureResolution(value, members)
     for sensor in sensors:
         if sensor.sensor_id == assignment:
-            return sensor.celsius
-    return None
+            return TemperatureResolution(sensor.celsius, (sensor,))
+    return TemperatureResolution(missing_ids=(assignment,))

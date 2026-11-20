@@ -205,6 +205,9 @@ class AudioReactivePanel(QGroupBox):
                 return True
         except (KeyError,TypeError,ValueError):
             return True
+        active = fields.get("ACTIVE")
+        if active in ("0", "1"):
+            self.controller.dashboard.note_argb_readback(ch, "AUDIOCFG", active == "1")
         visible=ch==self._channel
         if visible:
             self._remember_draft()

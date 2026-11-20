@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QSplitter, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
     QColorDialog, QCheckBox, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem,
     QFileDialog, QSystemTrayIcon, QMenu, QStyle,
-    QHeaderView, QAbstractItemView, QStackedWidget, QTabWidget,
+    QHeaderView, QAbstractItemView, QStackedWidget, QTabWidget, QGridLayout, QSpinBox,
 )
 
 from monitor import (
@@ -62,7 +62,7 @@ from application_profiles_ui import ApplicationProfilesDialog
 from pid_autotune_ui import PidAutotuneDialog
 from telemetry_store import TelemetryStore
 from sensor_pipeline import (
-    FanSensorRoute, plan_sensor_telemetry,
+    FanSensorRoute, plan_sensor_telemetry, resolve_route_temperature,
     choose_automatic_profile, automatic_profile_commands,
 )
 
@@ -378,6 +378,16 @@ class FanArgbWindow(QMainWindow):
         self.curve_plot.setMenuEnabled(False)
         self.curve_plot.hideButtons()
         self.curve_line = self.curve_plot.plot([], [], pen=pg.mkPen("#4ed2e4", width=3))
+        self.curve_live_point = self.curve_plot.plot(
+            [], [], pen=None, symbol="d", symbolSize=15,
+            symbolPen=chart_foreground, symbolBrush="#f2bb60",
+        )
+        self.curve_model_point = self.curve_plot.plot(
+            [], [], pen=None, symbol="s", symbolSize=9,
+            symbolPen=chart_foreground, symbolBrush="#4ed2e4",
+        )
+        self.curve_live_point.setZValue(20)
+        self.curve_model_point.setZValue(21)
         curve_layout.addWidget(self.curve_plot, 1)
         curve_actions = QHBoxLayout()
         self.save_button = QPushButton("Зберегти криву в ESP32 (NVS)")
@@ -813,12 +823,13 @@ class FanArgbWindow(QMainWindow):
             self.disconnect()
             return False
 
-    def queue_rgb(self, channel: int, packet: bytes) -> bool:
+    def queue_rgb(self, channel: int, packet: bytes, *, source: str = "USB RGB") -> bool:
         if not self.port or self.tx is None:
             return False
         try:
             self.tx.queue_rgb(channel, packet)
             self.dashboard.clear_argb_preview(channel)
+            self.dashboard.note_argb_frame(channel, source)
             return True
         except ValueError as exc:
             self.log(f"RGB: {exc}")
@@ -1011,7 +1022,9 @@ class FanArgbWindow(QMainWindow):
                     if "DUAL" in cfg:
                         self.fan_dual_enabled[channel] = bool(int(cfg["DUAL"]))
                         self.settings.setValue(f"dualEnabled{channel}", self.fan_dual_enabled[channel])
-                    if channel == self.current_fan: self._sync_mode_controls()
+                    if channel == self.current_fan:
+                        self._sync_mode_controls()
+                        self.dashboard._refresh_curve_operating_point()
                 except (KeyError, ValueError):
                     pass
             return
@@ -1571,12 +1584,51 @@ class FanArgbWindow(QMainWindow):
         curve_number = 2 if secondary else 1
         self.save_button.setText(f"Записати криву {curve_number} · FAN {ch:02d}")
         source = self.secondary_source_box if secondary else self.source_boxes[ch - 1]
-        self.dashboard.fan_curve_source.setText(f"Датчик Windows · крива {curve_number}: {source.currentText()}")
-        self.dashboard.fan_curve_source.setToolTip(source.currentText())
+        sensor_id = source.currentData()
+        source_name = next((sensor.name for sensor in self.temperatures if sensor.sensor_id == sensor_id),
+                           source.currentText())
+        self.dashboard.fan_curve_source.setText(f"Датчик Windows · крива {curve_number}: {source_name}")
+        self.dashboard.fan_curve_source.setToolTip(source_name)
+        self.dashboard.refresh_cooling_source()
+        self.refresh_pc_temperature_evidence()
         enabled = (self.dashboard.is_connected and not self.dashboard._demo
                    and self.dashboard.is_channel_available(ch) and key not in self._curve_pending)
         self.save_button.setEnabled(enabled)
         self.reread_curve_button.setEnabled(enabled)
+
+    def refresh_pc_temperature_evidence(self) -> None:
+        channel, secondary = self._active_curve_key()
+        box = self.secondary_source_box if secondary else self.source_boxes[channel - 1]
+        label = self.dashboard.fan_curve_pc_evidence
+        text = "ПК (локально): немає вимірів"
+        note = "Результат маршруту ПК до згладжування. Не підтверджує передачу або джерело ESP32."
+        if self.last_temperature_sample_at != float("-inf"):
+            if time.monotonic() - self.last_temperature_sample_at > 7.0:
+                text = "ПК (локально): дані застаріли"
+            else:
+                evidence = resolve_route_temperature(
+                    str(box.currentData()), self.temperatures,
+                    tuple(self.sensor_groups[channel]), self.sensor_weights[channel],
+                )
+                if evidence.celsius is not None:
+                    text = f"ПК (локально): {evidence.celsius:.1f} °C"
+                    if len(evidence.contributors) == 1:
+                        name = evidence.contributors[0].name
+                        text += " · " + label.fontMetrics().elidedText(name, Qt.TextElideMode.ElideRight, 175)
+                    else:
+                        text += f" · датчиків: {len(evidence.contributors)}"
+                    note += "\n" + "\n".join(
+                        f"{sensor.name}: {sensor.celsius:.1f} °C"
+                        for sensor in sorted(evidence.contributors, key=lambda sensor: sensor.name.casefold())
+                    )
+                elif evidence.missing_ids:
+                    text = "ПК (локально): неповна вибірка"
+                    note += "\nНедоступні: " + ", ".join(evidence.missing_ids)
+                else:
+                    text = "ПК (локально): немає результату"
+        label.setText(text)
+        label.setToolTip(note)
+        label.setAccessibleDescription(note)
 
     def reset_curve_feedback(self) -> None:
         self._curve_pending.clear()
@@ -1585,6 +1637,7 @@ class FanArgbWindow(QMainWindow):
     def _update_curve_line(self) -> None:
         points = self._active_curve()
         self.curve_line.setData([t for t, _ in points], [p for _, p in points])
+        self.dashboard._refresh_curve_operating_point()
         self.refresh_curve_feedback()
 
     def target_moved(self, index: int) -> None:
@@ -1606,6 +1659,11 @@ class FanArgbWindow(QMainWindow):
             self.updating_targets = False
             return
         points[index] = (temp, pwm)
+        self._set_curve_draft(points)
+        self._update_curve_line()
+        self.updating_targets = False
+
+    def _set_curve_draft(self, points: list[tuple[int, int]]) -> None:
         if self.secondary_checkbox.isChecked():
             self.secondary_curves[self.current_fan] = points
         else:
@@ -1614,8 +1672,66 @@ class FanArgbWindow(QMainWindow):
         self._curve_dirty.add(key)
         if key not in self._curve_pending:
             self._curve_feedback[key] = "Локальні зміни · не збережено в ESP32"
-        self._update_curve_line()
-        self.updating_targets = False
+
+    def edit_curve_numbers(self) -> None:
+        key = self._active_curve_key()
+        channel, secondary = key
+        dialog = QDialog(self)
+        dialog.setObjectName("curveNumericEditor")
+        dialog.setWindowTitle(f"FAN {channel:02d} · Крива {2 if secondary else 1}")
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("Редагування чернетки · без запису в ESP32"))
+        grid = QGridLayout()
+        layout.addLayout(grid)
+        for column, title in enumerate(("Точка", "Температура, °C", "PWM, %")):
+            grid.addWidget(QLabel(title), 0, column)
+        editors = []
+        for row, (temp, pwm) in enumerate(self._active_curve(), start=1):
+            grid.addWidget(QLabel(str(row)), row, 0)
+            pair = []
+            for column, (value, maximum, name) in enumerate(
+                ((temp, 125, "Температура"), (pwm, 100, "PWM")), start=1,
+            ):
+                spin = QSpinBox()
+                spin.setRange(0, maximum)
+                spin.setValue(value)
+                spin.setAccessibleName(f"Точка {row} · {name}")
+                grid.addWidget(spin, row, column)
+                pair.append(spin)
+            editors.append(tuple(pair))
+        rule = QLabel("Температура має зростати, PWM не може спадати.")
+        layout.addWidget(rule)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        apply = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        apply.setText("Оновити чернетку")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Скасувати")
+        layout.addWidget(buttons)
+
+        def points():
+            return [(temp.value(), pwm.value()) for temp, pwm in editors]
+
+        def validate():
+            valid = validate_curve(points())
+            apply.setEnabled(valid)
+            rule.setText(("" if valid else "Виправ порядок: ") +
+                         "температура має зростати, PWM не може спадати.")
+
+        def update_draft():
+            values = points()
+            if not validate_curve(values):
+                return
+            if key == self._active_curve_key() and values != self._active_curve():
+                self._set_curve_draft(values)
+                self._update_targets()
+            dialog.accept()
+
+        for pair in editors:
+            for spin in pair:
+                spin.valueChanged.connect(validate)
+        buttons.accepted.connect(update_draft)
+        buttons.rejected.connect(dialog.reject)
+        dialog.open()
 
     def _request_curve_readback(self, key: tuple[int, bool], expected: list[tuple[int, int]] | None = None) -> None:
         ch, secondary = key
@@ -2117,7 +2233,7 @@ class FanArgbWindow(QMainWindow):
         now = time.monotonic()
         try:
             self.rgb_stream.offer(frames, self.led_counts, now=now)
-            self.rgb_stream.dispatch(self.queue_rgb, now=now)
+            self.rgb_stream.dispatch(lambda ch, packet: self.queue_rgb(ch, packet, source="OpenRGB SDK"), now=now)
         except (ValueError, OSError, serial.SerialException) as exc:
             self.log(f"OpenRGB SDK кадр відхилено: {exc}")
             self.disconnect()
@@ -2160,7 +2276,7 @@ class FanArgbWindow(QMainWindow):
         now = time.monotonic()
         try:
             self.rgb_stream.offer(frames, self.led_counts, now=now)
-            queued = self.rgb_stream.dispatch(self.queue_rgb, now=now)
+            queued = self.rgb_stream.dispatch(lambda ch, packet: self.queue_rgb(ch, packet, source="Міст E1.31"), now=now)
         except (ValueError, serial.SerialException, OSError) as exc:
             self.log(f"ARGB E1.31 → USB ERROR: {exc}")
             self.disconnect()

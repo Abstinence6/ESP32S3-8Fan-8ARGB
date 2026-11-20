@@ -182,6 +182,7 @@ class NativeEffectsPanel(QGroupBox):
         if state is None: return False
         if not self.supported: return True
         ch = state.channel
+        self.controller.dashboard.note_argb_readback(ch, "FX", state.active)
         visible = ch == self._channel
         if visible:
             self._remember_draft()
