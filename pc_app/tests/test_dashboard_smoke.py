@@ -104,27 +104,67 @@ class DashboardSmokeTests(unittest.TestCase):
         shell = self.window.dashboard
         shell.set_connected(True, "COM5")
         shell.set_channel_mask(253)
-        self.assertFalse(shell.fan_preset_buttons[2]["Maximum"].isEnabled())
-        self.assertTrue(shell.fan_preset_buttons[3]["Silent"].isEnabled())
+        shell.open_fan(3)
+        self.assertTrue(shell.fan_preset_buttons["Silent"].isEnabled())
         self.window.port = object()
         with patch.object(self.window, "send", return_value=True) as send:
             with patch.object(
                 QMessageBox, "question",
                 return_value=QMessageBox.StandardButton.No
             ):
-                shell.fan_preset_buttons[3]["Default"].click()
+                shell.fan_preset_buttons["Default"].click()
             send.assert_not_called()
             with patch.object(
                 QMessageBox, "question",
                 return_value=QMessageBox.StandardButton.Yes
             ):
-                shell.fan_preset_buttons[3]["Default"].click()
+                shell.fan_preset_buttons["Default"].click()
             send.assert_any_call(make_curve_command(3, list(DEFAULT_CURVE)))
             send.assert_any_call("AUTO 3")
-            self.assertEqual(send.call_count, 2)
+            send.assert_any_call("CURVE? 3")
+            self.assertEqual(send.call_count, 3)
         self.window.port = None
         shell.set_connected(False)
-        self.assertFalse(shell.fan_preset_buttons[3]["Silent"].isEnabled())
+        self.assertFalse(shell.fan_preset_buttons["Silent"].isEnabled())
+
+    def test_compact_overview_keeps_all_eight_animated_cards_in_view(self):
+        from PySide6.QtCore import QPoint
+        shell = self.window.dashboard
+        self.window.resize(1080, 760)
+        self.window.show()
+        shell.set_connected(True, "COM5")
+        self.window.handle_line("FW VERSION=8 SERIAL=7 CHMASK=253 DC_READY=0")
+        for channel in range(1, 9):
+            self.window.handle_line(
+                f"CH {channel} FAN=55% RPM=1250 TEMP=440 MODE=auto SENSOR=ok TYPE=3 FAULT=0"
+            )
+        self.app.processEvents()
+        scroll = shell.stack.widget(shell.page_index["overview"])
+        for channel, frame in shell._fan_frames.items():
+            top_left = frame.mapTo(scroll.viewport(), QPoint(0, 0))
+            self.assertTrue(scroll.viewport().rect().contains(top_left + frame.rect().bottomRight()))
+            self.assertTrue(shell.fan_cards[channel]["rotor"].isVisible())
+        self.assertEqual(scroll.verticalScrollBar().maximum(), 0)
+        self.assertFalse(shell.fan_cards[2]["settings_button"].isEnabled())
+        shell.fan_cards[8]["settings_button"].click()
+        self.assertEqual(self.window.current_fan, 8)
+        self.assertEqual(shell.stack.currentIndex(), shell.page_index["fans"])
+
+    def test_connection_diagnostics_distinguish_port_reply_and_demo(self):
+        shell = self.window.dashboard
+        shell.set_connected(True, "COM5")
+        self.assertIn("очікуємо", shell.connection_text.text())
+        self.window.handle_line("PONG 123")
+        self.assertIn("відповіла", shell.connection_text.text())
+        self.assertNotIn("працює", shell.health_title.text())
+        self.window.handle_line("FW VERSION=8 SERIAL=7 CHMASK=1 DC_READY=0")
+        self.window.handle_line("CH 1 FAN=100% RPM=0 TEMP=440 MODE=auto SENSOR=stale TYPE=3 FAULT=0")
+        self.assertIn("температур", shell.health_title.toolTip())
+        self.assertIn("силов", shell.health_title.toolTip().lower())
+        shell.set_connected(False)
+        shell.set_connected(True, "DEMO", demo=True)
+        self.window.handle_line("PONG 123")
+        self.assertIn("DEMO", shell.connection_text.text())
 
     def test_fan_rotor_responds_to_rpm_and_stops_on_expiration(self):
         shell = self.window.dashboard
@@ -200,12 +240,39 @@ class DashboardSmokeTests(unittest.TestCase):
         self.app.processEvents()
         self.assertFalse(shell.studio.isVisible())
 
+    def test_argb_scene_targets_only_available_zones_and_labels_quick_target(self):
+        from unittest.mock import Mock
+        shell = self.window.dashboard
+        self.window.port = object()
+        self.window.tx = Mock()
+        try:
+            shell.set_connected(True, "COM5")
+            shell.set_channel_mask(0b101)
+            shell.argb_channel_buttons[3].click()
+            shell.scope_all.click()
+            self.assertIn("01, 03", shell.argb_scene_target.text())
+            self.assertIn("03", shell.argb_quick_target.text())
+            shell.scene_box.setCurrentText("Static warm")
+            shell._apply_scene()
+            self.assertEqual([call.args[0] for call in self.window.tx.send_command.call_args_list],
+                             ["BRIGHT 1 64", "LED 1 255 110 30", "BRIGHT 3 64", "LED 3 255 110 30"])
+            self.assertTrue(shell.fan_cards[1]["rotor"]._strip_colors)
+            self.assertFalse(shell.fan_cards[2]["rotor"]._strip_colors)
+            self.assertTrue(shell.fan_cards[3]["rotor"]._strip_colors)
+            self.assertIn("не телеметрія", shell.fan_cards[3]["rotor"].toolTip())
+            shell.set_channel_mask(1)
+            self.assertFalse(shell.fan_cards[3]["rotor"]._strip_colors)
+            shell.set_bridge_state(True)
+            self.assertFalse(shell.fan_cards[1]["rotor"]._strip_colors)
+        finally:
+            self.window.port = None
+            self.window.tx = None
+
     def test_render_preview(self):
         """Optional offscreen screenshots for visual QA of the actual Qt layout."""
         if os.environ.get("SAVE_DASHBOARD_PREVIEW") != "1":
             self.skipTest("Set SAVE_DASHBOARD_PREVIEW=1 to capture screenshots")
-        from protocol import parse_status
-        self.window.dashboard.set_connected(True, "DEMO")
+        self.window.dashboard.set_connected(True, "DEMO", demo=True)
         self.window.dashboard.set_sensor_count(7)
         for ch in range(1, 9):
             line = (
@@ -235,6 +302,10 @@ class DashboardSmokeTests(unittest.TestCase):
         self.window.handle_line("STRIPCFG CH=1 LEDS=30 REVERSE=0 BRIGHT=64")
         self.window.handle_line("ARGBSTATUS LIMIT_MA=2000 REQUESTED_MA=320")
         self.window.handle_line("CONFIG 1 TYPE=3 PPR=2 CRIT=90 STALL=0")
+        self.window.dashboard.set_bridge_state(False)
+        self.window.dashboard.note_argb_command("LED 1 255 110 30")
+        self.window.dashboard.note_argb_command("RAINBOW 3")
+        self.window.dashboard.note_argb_command("LED 8 60 130 255")
         self.window.show()
         self.app.processEvents()
         output = Path("dist/ui-preview")
@@ -282,7 +353,7 @@ class DashboardSmokeTests(unittest.TestCase):
             summary_widths = {card.width() for card in shell._summary_cards}
             self.assertLessEqual(max(summary_widths) - min(summary_widths), 3)
             if width == 1080:
-                self.assertEqual(shell._fan_grid_columns, 3)
+                self.assertIn(shell._fan_grid_columns, (3, 4))
                 self.assertEqual(shell._summary_grid_columns, 5)
             else:
                 self.assertEqual(shell._fan_grid_columns, 4)
@@ -325,6 +396,84 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertEqual(shell.fan_live_state.property("role"), "negative")
         shell.set_connected(False)
         self.assertIn("Немає", shell.fan_live_state.text())
+
+    def test_compact_curve_axes_are_visible_and_allow_125_c_and_100_pwm(self):
+        from PySide6.QtCore import QPoint
+        shell = self.window.dashboard
+        self.window.resize(1080, 760)
+        self.window.show()
+        shell.open_fan(1)
+        self.app.processEvents()
+        plot = self.window.curve_plot
+        scroll = shell.stack.currentWidget()
+        bottom_right = plot.mapTo(scroll.viewport(), QPoint(plot.width() - 1, plot.height() - 1))
+        self.assertTrue(scroll.viewport().rect().contains(bottom_right))
+        (x_min, x_max), (y_min, y_max) = plot.viewRange()
+        self.assertLess(x_min, 0)
+        self.assertGreater(x_max, 125)
+        self.assertLess(y_min, 0)
+        self.assertGreater(y_max, 100)
+
+    def test_curve_save_status_waits_for_matching_channel_and_curve(self):
+        from unittest.mock import patch
+        from protocol import make_curve_command
+        shell = self.window.dashboard
+        shell.set_connected(True, "COM5")
+        shell.set_channel_mask(253)
+        shell.open_fan(3)
+        startup_reply = make_curve_command(3, self.window.curves[3])
+        self.window.target_items[0].setPos(24, 24)
+        self.assertIn("не збережено", shell.fan_curve_status.text())
+        command = make_curve_command(3, self.window.curves[3])
+        with patch.object(self.window, "send", return_value=True) as send:
+            with patch.object(self.window, "port", object()):
+                self.window.read_device_state()
+            self.window.save_button.click()
+            curve_commands = [call.args[0] for call in send.call_args_list
+                              if call.args[0] in (command, "CURVE? 3")]
+            self.assertEqual(curve_commands, ["CURVE? 3", command, "CURVE? 3"])
+        self.window.handle_line("OK CURVE_SAVED")
+        self.window.handle_line(command.replace("CURVE 3", "CURVE2 3"))
+        self.window.handle_line(command.replace("CURVE 3", "CURVE 4"))
+        self.assertIn("Очікуємо", shell.fan_curve_status.text())
+        self.window.handle_line(startup_reply)
+        self.assertIn("Очікуємо", shell.fan_curve_status.text())
+        self.assertFalse(self.window.save_button.isEnabled())
+        self.assertFalse(self.window.reread_curve_button.isEnabled())
+        self.assertEqual(self.window.curves[3][0], (24, 24))
+        self.window.handle_line(command)
+        self.assertIn("крива збігається", shell.fan_curve_status.text())
+        self.assertTrue(self.window.save_button.isEnabled())
+        self.assertTrue(self.window.reread_curve_button.isEnabled())
+
+    def test_curve_save_reports_mismatch_at_timeout_and_keeps_edits(self):
+        from unittest.mock import patch
+        from protocol import make_curve_command
+        shell = self.window.dashboard
+        shell.set_connected(True, "COM5")
+        shell.open_fan(3)
+        self.window.secondary_checkbox.setChecked(True)
+        reply = make_curve_command(3, self.window.secondary_curves[3]).replace("CURVE", "CURVE2", 1)
+        self.window.target_items[0].setPos(24, 24)
+        with (
+            patch.object(self.window, "send", return_value=True) as send,
+            patch("main.QTimer.singleShot") as timeout,
+        ):
+            self.window.save_button.click()
+        send.assert_any_call("CURVE2? 3")
+        self.window.target_items[0].setPos(23, 23)
+        self.window.handle_line(reply)
+        self.assertIn("Очікуємо", shell.fan_curve_status.text())
+        self.assertFalse(self.window.save_button.isEnabled())
+        self.assertEqual(self.window.secondary_curves[3][0], (23, 23))
+
+        timeout.assert_called_once()
+        timeout.call_args.args[2]()
+        self.assertIn("не збігається", shell.fan_curve_status.text())
+        self.assertIn("запис не підтверджено", shell.fan_curve_status.text())
+        self.assertEqual(self.window.secondary_curves[3][0], (23, 23))
+        self.assertTrue(self.window.save_button.isEnabled())
+        self.assertTrue(self.window.reread_curve_button.isEnabled())
 
     def test_gpio_esp_nvs_save_requires_readback_and_reboot(self):
         from unittest.mock import patch
@@ -595,7 +744,7 @@ class DashboardSmokeTests(unittest.TestCase):
         shell = self.window.dashboard
         self.assertIn("не підключено", shell.health_title.text().lower())
         shell.set_connected(True, "COM7")
-        self.assertIn("Читаємо", shell.health_title.text())
+        self.assertIn("Очікуємо", shell.health_title.text())
         self.window.handle_line(
             "CH 1 FAN=100% RPM=1200 TEMP=450 MODE=auto SENSOR=stale TYPE=3 FAULT=0"
         )
@@ -610,7 +759,7 @@ class DashboardSmokeTests(unittest.TestCase):
                 f"CH {channel} FAN=55% RPM=1200 TEMP=450 "
                 "MODE=auto SENSOR=ok TYPE=3 FAULT=0"
             )
-        self.assertIn("працює", shell.health_title.text())
+        self.assertIn("Свіжа телеметрія", shell.health_title.text())
         self.window.handle_line(
             "CH 1 FAN=100% RPM=1200 TEMP=980 MODE=auto SENSOR=ok TYPE=3 FAULT=1"
         )
