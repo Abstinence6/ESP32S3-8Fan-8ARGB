@@ -432,13 +432,18 @@ class DashboardSmokeTests(unittest.TestCase):
         self.app.processEvents()
         scroll = shell.stack.currentWidget()
         self.assertIsNone(scroll.widget().findChild(QTabWidget, "fanWorkspaceTabs"))
+        viewport = scroll.viewport()
+        viewport_rect = viewport.rect()
         for widget in (shell.fan_channel_buttons[8], self.window.curve_plot,
                        self.window.save_button, self.window.reread_curve_button,
                        shell.temperature_source_button, shell.fan_list_toggle,
                        shell.fan_history_toggle):
-            origin = widget.mapTo(scroll.viewport(), QPoint())
-            self.assertTrue(scroll.viewport().rect().contains(widget.rect().translated(origin)),
-                            widget.objectName() or repr(widget))
+            widget_rect = widget.rect().translated(widget.mapTo(viewport, QPoint()))
+            name = widget.accessibleName() or widget.objectName()
+            if not name:
+                name = widget.text() if hasattr(widget, "text") else type(widget).__name__
+            self.assertTrue(viewport_rect.contains(widget_rect),
+                            f"{name}: {widget_rect.getRect()} outside {viewport_rect.getRect()}")
 
         self.assertTrue(shell.fan_list_panel.isHidden())
         self.assertTrue(shell.fan_history_panel.isHidden())
