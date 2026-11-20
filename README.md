@@ -74,14 +74,14 @@ ALLOFF
 
 Open the [NotOnlyFans Altium project](hardware/NotOnlyFans/NotOnlyFans.PrjPcb) in Altium Designer. The folder contains the two-layer PCB, both schematic sheets, and the project footprint libraries.
 
-Channel 2 uses GPIO35, GPIO36, and GPIO37 on the PCB. The N16R8-safe firmware profile disables this channel because those pins are reserved for octal PSRAM on that module.
+The original PCB routes channel 2 to GPIO35/36/37, which are internal Octal PSRAM lines on N16R8. The standard N16R8 native-USB firmware now enables FAN2 and ARGB2 on GPIO8/11/17. These are firmware assignments; the external signal traces must reach the corresponding new pins. Never use GPIO35/36/37 for peripherals on N16R8.
 
 ## Example pin map
 
 | # | PWM fan | TACH fan | ARGB data | Default LED count |
 |---|---:|---:|---:|---:|
 | 1 | GPIO21 | GPIO47 | GPIO48 | 30 |
-| 2 | GPIO35 | GPIO36 | GPIO37 | 30 |
+| 2 (N16R8) | GPIO8 | GPIO11 | GPIO17 | 30 |
 | 3 | GPIO39 | GPIO40 | GPIO41 | 30 |
 | 4 | GPIO42 | GPIO2  | GPIO1  | 30 |
 | 5 | GPIO6  | GPIO5  | GPIO4  | 30 |
@@ -89,7 +89,7 @@ Channel 2 uses GPIO35, GPIO36, and GPIO37 on the PCB. The N16R8-safe firmware pr
 | 7 | GPIO10 | GPIO9  | GPIO46 | 30 |
 | 8 | GPIO14 | GPIO13 | GPIO12 | 30 |
 
-**This is the user's wiring, not the old DevKitC reference pinout.** GPIO35/36/37 are occupied on ESP32-S3 variants with **Octal PSRAM/Flash**, so this binary is **not safe for those variants**; reassign these three signals to free pins on the physical PCB. GPIO46 for ARGB7 is a **strapping pin**: it can be an output after startup, but the connected ARGB driver must not assert a conflicting level during reset/firmware download. GPIO48 may be shared with an onboard RGB LED on specific DevKit boards. Check the actual module and reset/bootstrap circuitry. The default build leaves `PC_POWER_ENABLED=0` and `FAN_DC_PWM_VALIDATED=0` (DC fans held at 100%). Do not enable either feature without the required hardware checks.
+**This table shows the N16R8 firmware pins, not proof of a completed PCB modification.** GPIO35/36/37 are permanently occupied by Octal PSRAM on N16R8. GPIO46 for ARGB7 is a **strapping pin**: it can be an output after startup, but the connected ARGB driver must not assert a conflicting level during reset/firmware download. GPIO48 may be shared with an onboard RGB LED on specific DevKit boards. Check the actual module and reset/bootstrap circuitry. The default build leaves `PC_POWER_ENABLED=0` and `FAN_DC_PWM_VALIDATED=0` (DC fans held at 100%). Do not enable either feature without the required hardware checks.
 
 ## Hardware rules (required)
 
@@ -347,11 +347,7 @@ an externally qualified fail-ON 12 V power stage. Never enable below-100%
 
 ## Single-file operational ESP32-S3-N16R8 Native USB firmware
 
-The separate `esp32s3_n16r8_native_usb` build retains the **normal**
-8-channel application protocol and all its safety guards, but **disables
-hardware outputs for logical channel 2** (FAN2 PWM/TACH and ARGB2) because
-they map to Octal PSRAM GPIO35/36/37. The other seven channels remain
-available. GitHub Actions generates
+The standard `esp32s3_n16r8_native_usb` image runs all eight logical fan and ARGB channels with all existing safety mechanisms. FAN2 PWM/TACH and ARGB2 use GPIO8/11/17 instead of PSRAM GPIO35/36/37. `VERSION?` reports `CHMASK=255`. GitHub Actions generates
 `ESP32S3-N16R8-NativeUSB-FULL.bin` for one-file flashing at 0x0, including
 bootloader, partitions, OTA boot_app0 and application. **Important: merged
 flashing will erase NVS settings inside the padded flash gap.**
