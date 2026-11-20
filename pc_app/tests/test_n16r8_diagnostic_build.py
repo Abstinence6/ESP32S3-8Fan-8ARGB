@@ -36,9 +36,11 @@ class N16R8DiagnosticBuildTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden,source)
         board=(ROOT/"include/BoardConfig.h").read_text()
-        self.assertIn("{21, 35, 39, 42",board)
-        self.assertIn("{47, 36, 40, 2",board)
-        self.assertIn("{48, 37, 41, 1",board)
+        self.assertIn("kN16R8Fan2Rerouted ? 8 : 35", board)
+        self.assertIn("kN16R8Fan2Rerouted ? 11 : 36", board)
+        self.assertIn("kN16R8Fan2Rerouted ? 17 : 37", board)
+        self.assertIn("#define FANARGB_N16R8_FAN2_REROUTED 0", board)
+        self.assertIn("!kN16R8Safe || ch != 1U || kN16R8Fan2Rerouted", board)
         # Operational fan/ARGB firmware is NOT safe on Octal PSRAM modules.
 
 
@@ -53,9 +55,17 @@ class N16R8ValidatedDcBuildTests(unittest.TestCase):
             "${env:esp32s3_n16r8_native_usb.build_flags}",
             "-D FAN_DC_PWM_VALIDATED=1",
         ])
+        dc_opt_in_environments = {
+            name, "env:esp32s3_n16r8_native_usb_fan2_rerouted_dc_validated"
+        }
         for section in pio.sections():
-            if section != name:
-                self.assertNotIn("FAN_DC_PWM_VALIDATED", pio[section].get("build_flags", ""))
+            if section not in dc_opt_in_environments:
+                self.assertNotIn("FAN_DC_PWM_VALIDATED",
+                                 pio[section].get("build_flags", ""))
+        rerouted = pio["env:esp32s3_n16r8_native_usb_fan2_rerouted"]
+        self.assertEqual(rerouted["extends"].strip(),
+                         "env:esp32s3_n16r8_native_usb")
+        self.assertIn("FANARGB_N16R8_FAN2_REROUTED=1", rerouted["build_flags"])
         board = (ROOT / "include/BoardConfig.h").read_text()
         for setting in ("FAN_DC_PWM_VALIDATED", "PC_POWER_ENABLED", "HARDWARE_TEMP_ENABLED"):
             self.assertIn(f"#define {setting} 0", board)

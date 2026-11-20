@@ -175,3 +175,33 @@ jobs:
         run: |
           pio run -e esp32s3 -t clean
           pio run -e esp32s3
+
+      - name: Compile N16R8 physically rerouted FAN2/ARGB2 builds (opt-in only)
+        run: |
+          pio run -e esp32s3_n16r8_native_usb_fan2_rerouted
+          pio run -e esp32s3_n16r8_native_usb_fan2_rerouted_dc_validated
+          python -c "from pc_app.firmware_update import inspect_firmware; print('Rerouted N16R8 application:', inspect_firmware('.pio/build/esp32s3_n16r8_native_usb_fan2_rerouted_dc_validated/firmware.bin'))"
+      - name: Package one full BIN for opt-in physical FAN2 reroute
+        shell: bash
+        run: |
+          set -euo pipefail
+          build=".pio/build/esp32s3_n16r8_native_usb_fan2_rerouted_dc_validated"
+          dist="dist/esp32s3_n16r8_native_usb_fan2_rerouted_dc_validated"
+          mkdir -p "$dist"
+          cp "$build/firmware.bin" "$build/bootloader.bin" "$build/partitions.bin" "$dist/"
+          BOOT_APP0="$(find "$HOME/.platformio/packages/framework-arduinoespressif32" -name boot_app0.bin -print -quit)"
+          test -n "$BOOT_APP0"
+          cp "$BOOT_APP0" "$dist/boot_app0.bin"
+          python scripts/merge_flash_images.py --directory "$dist" \
+            --output "$dist/ESP32S3-N16R8-FAN2-REROUTED-DC-FULL.bin"
+          cp docs/N16R8_FAN2_REROUTE.md "$dist/INSTRUCTIONS.txt"
+          python scripts/build_manifest.py --component firmware \
+            --environment esp32s3_n16r8_native_usb_fan2_rerouted_dc_validated \
+            --directory "$dist" --commit "$GITHUB_SHA" \
+            --file bootloader.bin --file partitions.bin --file boot_app0.bin \
+            --file firmware.bin --file ESP32S3-N16R8-FAN2-REROUTED-DC-FULL.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ESP32S3-N16R8-FAN2-REROUTED-DC-FULL-OPT-IN
+          path: dist/esp32s3_n16r8_native_usb_fan2_rerouted_dc_validated/
+          if-no-files-found: error
