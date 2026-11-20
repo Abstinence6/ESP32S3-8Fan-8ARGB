@@ -265,23 +265,30 @@ class DashboardSmokeTests(unittest.TestCase):
         shell.scope_all.click()
         for panel in (shell.native_effects, shell.reactive_argb, shell.audio_reactive):
             panel.set_supported(True)
-            panel.channel.setCurrentIndex(4)
         capture_checked = shell.audio_reactive.capture.isChecked()
         with (
             patch.object(self.window, "port", object()),
             patch.object(self.window, "send") as send,
             patch.object(self.window, "set_audio_capture_enabled") as capture,
             patch.object(self.window, "apply_argb_scene") as apply_scene,
+            patch.object(self.window.settings, "setValue") as persist,
         ):
             for label, panel in panels:
                 with self.subTest(effect=label):
                     self.assertGreaterEqual(shell.scene_box.findText(label), 0)
                     shell.scene_box.setCurrentText(label)
-                    self.app.processEvents()
-                    self.assertEqual([item for _, item in panels if item.isVisible()], [panel])
-                    for control in (shell.scope_one, shell.scope_all,
-                                    shell.argb_scene_target, shell.argb_apply_button):
-                        self.assertFalse(control.isVisible())
+                    for ch in (5, 3, 8):
+                        shell.argb_channel_buttons[ch].click()
+                        self.app.processEvents()
+                        self.assertEqual([item for _, item in panels if item.isVisible()], [panel])
+                        self.assertIn(f"ARGB {ch:02d}", shell.argb_effect_target_hint.text())
+                        rows = shell.temperature_argb.sources
+                        if panel is shell.temperature_argb:
+                            self.assertEqual([zone for zone, source in rows.items()
+                                              if source.isVisible()], [ch])
+                        for control in (shell.scope_one, shell.scope_all,
+                                        shell.argb_scene_target, shell.argb_apply_button):
+                            self.assertFalse(control.isVisible())
                     shell._apply_scene()  # The manual handler must also reject family entries.
             shell.scene_box.setCurrentText("Static warm")
             self.app.processEvents()
@@ -291,11 +298,241 @@ class DashboardSmokeTests(unittest.TestCase):
             self.assertTrue(shell.scope_all.isChecked())
             self.assertEqual(shell.scene_box.findText("OpenRGB"), -1)
             self.assertEqual(shell.audio_reactive.capture.isChecked(), capture_checked)
-            for panel in (shell.native_effects, shell.reactive_argb, shell.audio_reactive):
-                self.assertEqual(panel.channel.currentData(), 5)
             send.assert_not_called()
             capture.assert_not_called()
             apply_scene.assert_not_called()
+            persist.assert_not_called()
+
+    def test_argb_advanced_serial_actions_follow_shared_channel(self):
+        from unittest.mock import call, patch
+
+        shell = self.window.dashboard
+        shell.set_connected(True, "COM5")
+        shell.scope_all.click()
+        for panel, buttons, prefix in (
+            (shell.native_effects, shell.native_effects.buttons, "FX"),
+            (shell.reactive_argb, shell.reactive_argb.actions, "RFX"),
+            (shell.audio_reactive, shell.audio_reactive.buttons, "AUDIOCFG"),
+        ):
+            with (
+                self.subTest(prefix=prefix),
+                patch.object(self.window, "port", object()),
+                patch.object(self.window, "send", return_value=True) as send,
+                patch.object(self.window.settings, "setValue"),
+            ):
+                panel.set_supported(True)
+                shell.open_fan(5)  # Selection through the shared fan state.
+                shell.argb_channel_buttons[7].click()
+                send.assert_not_called()
+                for button in buttons:
+                    button.click()
+                commands = [entry.args[0] for entry in send.call_args_list]
+                self.assertEqual(len(commands), 6)
+                self.assertTrue(commands[0].startswith(f"{prefix} SET 7 "), commands)
+                self.assertEqual(commands[1:3], [f"{prefix} STOP 7", f"{prefix}? 7"])
+                self.assertEqual(commands[3], commands[0])
+                self.assertEqual(commands[4:], [f"{prefix} BOOT 7 0", f"{prefix} SAVE"])
+                send.reset_mock()
+                shell.set_channel_mask(0b111111)
+                self.assertFalse(any(button.isEnabled() for button in buttons))
+                panel.preview()
+                panel.stop()
+                panel.readback()
+                panel.save()
+                send.assert_not_called()
+                shell.set_channel_mask(0xFF)
+                shell.open_fan(5)
+                buttons[2].click()
+                self.assertEqual(send.call_args_list, [call(f"{prefix}? 5")])
+
+    def test_argb_advanced_drafts_stay_with_their_channel(self):
+        shell = self.window.dashboard
+        shell.argb_channel_buttons[3].click()
+        controls = (shell.native_effects.speed, shell.reactive_argb.speed,
+                    shell.audio_reactive.gain, shell.temperature_argb.lows[3])
+        for widget, value in zip(controls, (8, 9, 180, 43)):
+            widget.setValue(value)
+        panel = shell.reactive_argb
+        panel.source.setCurrentIndex(panel.source.findData(27))
+        panel.host_sensor.addItem("CPU package", "temp:nwinfo/cpu/pkg")
+        panel.host_sensor.setCurrentIndex(panel.host_sensor.count() - 1)
+        shell.argb_channel_buttons[8].click()
+        self.assertEqual([widget.value() for widget in controls[:3]], [3, 3, 100])
+        self.assertNotEqual(panel.host_sensor.currentData(), "temp:nwinfo/cpu/pkg")
+        shell.argb_channel_buttons[3].click()
+        self.assertEqual([widget.value() for widget in controls], [8, 9, 180, 43])
+        self.assertEqual(panel.source.currentData(), 27)
+        self.assertEqual(panel.host_sensor.currentData(), "temp:nwinfo/cpu/pkg")
+
+    def _argb_readback_cases(self):
+        shell = self.window.dashboard
+        native, audio, reactive = shell.native_effects, shell.audio_reactive, shell.reactive_argb
+        return (
+            ("FX", native, native.speed, 7,
+             "FX CH={} MODE=2 R1=1,2,3 R2=4,5,6 SPEED=7 BRIGHT=90 DIR=1 BOOT=1 ACTIVE=1"),
+            ("AUDIOCFG", audio, audio.gain, 140,
+             "AUDIOCFG CH={} STYLE=2 GAIN=140 BRIGHT=90 R1=1,2,3 R2=4,5,6 BOOT=1 ACTIVE=1 FRESH=1"),
+            ("RFX", reactive, reactive.speed, 7,
+             "RFX CH={} SRC=27 FALL=1 STYLE=2 LOW=120 HIGH=910 PATTERN=2 "
+             "R1=1,2,3 R2=4,5,6 SPEED=7 BRIGHT=90 DIR=1 BOOT=1 ACTIVE=1 FRESH=1 VALUE=420"),
+        )
+
+    def test_argb_delayed_readback_loads_the_addressed_channel(self):
+        from unittest.mock import call, patch
+
+        shell = self.window.dashboard
+        shell.set_connected(True, "COM5")
+        for prefix, panel, field, value, reply in self._argb_readback_cases():
+            with (
+                self.subTest(prefix=prefix),
+                patch.object(self.window, "port", object()),
+                patch.object(self.window, "send", return_value=True) as send,
+                patch.object(self.window.settings, "setValue") as persist,
+                patch.object(self.window, "set_audio_capture_enabled") as capture,
+            ):
+                panel.set_supported(True)
+                shell.argb_channel_buttons[3].click()
+                original = field.value()
+                if prefix == "RFX":
+                    panel.host_sensor.addItem("CPU package", "temp:nwinfo/cpu/pkg")
+                    panel.host_sensor.setCurrentIndex(panel.host_sensor.count() - 1)
+                panel.readback()
+                shell.argb_channel_buttons[8].click()
+                field.setValue(9)
+                status = panel.status.text()
+                self.window.handle_line(reply.format(3))
+                self.assertEqual(field.value(), 9)
+                self.assertFalse(panel.boot.isChecked())
+                self.assertEqual(panel.status.text(), status)
+                shell.argb_channel_buttons[3].click()
+                self.assertNotEqual(original, value)
+                self.assertEqual(field.value(), value)
+                self.assertEqual(panel.colors, ((1, 2, 3), (4, 5, 6)))
+                self.assertTrue(panel.boot.isChecked())
+                if prefix == "RFX":
+                    self.assertEqual(panel.source.currentData(), 27)
+                    self.assertEqual((panel.low.value(), panel.high.value()), (12.0, 91.0))
+                    self.assertEqual(panel.host_sensor.currentData(), "temp:nwinfo/cpu/pkg")
+                self.assertEqual(send.call_args_list, [call(f"{prefix}? 3")])
+                persist.assert_not_called()
+                capture.assert_not_called()
+
+    def test_argb_delayed_readback_preserves_draft_until_explicit_reread(self):
+        from unittest.mock import call, patch
+
+        shell = self.window.dashboard
+        shell.set_connected(True, "COM5")
+        for prefix, panel, field, value, reply in self._argb_readback_cases():
+            buttons = panel.actions if prefix == "RFX" else panel.buttons
+            with (
+                self.subTest(prefix=prefix),
+                patch.object(self.window, "port", object()),
+                patch.object(self.window, "send", return_value=True) as send,
+                patch.object(self.window.settings, "setValue") as persist,
+            ):
+                panel.set_supported(True)
+                shell.argb_channel_buttons[3].click()
+                buttons[2].click()
+                field.setValue(8)  # Newer than the first request.
+                shell.argb_channel_buttons[8].click()
+                self.window.handle_line(reply.format(3))
+                shell.argb_channel_buttons[3].click()
+                self.assertEqual(field.value(), 8)
+                self.assertIn("чернетк", panel.status.text())
+
+                panel.readback()  # A background read into the visible editor cannot discard edits.
+                self.window.handle_line(reply.format(3))
+                self.assertEqual(field.value(), 8)
+
+                buttons[2].click()
+                shell.argb_channel_buttons[8].click()
+                self.window.handle_line(reply.format(3))
+                shell.argb_channel_buttons[3].click()
+                self.assertEqual(field.value(), value)
+                self.assertNotIn("чернетк", panel.status.text())
+                self.assertEqual(send.call_args_list, [call(f"{prefix}? 3")] * 3)
+                persist.assert_not_called()
+
+    def test_argb_delayed_readback_preserves_edit_back_to_cached_value(self):
+        from unittest.mock import call, patch
+
+        shell = self.window.dashboard
+        shell.set_connected(True, "COM5")
+        for prefix, panel, field, value, reply in self._argb_readback_cases():
+            buttons = panel.actions if prefix == "RFX" else panel.buttons
+            field_key = "GAIN" if prefix == "AUDIOCFG" else "SPEED"
+            newer_reply = reply.replace(f"{field_key}={value}", f"{field_key}={value - 1}").format(3)
+            for switch_channel in (False, True):
+                with (
+                    self.subTest(prefix=prefix, switch_channel=switch_channel),
+                    patch.object(self.window, "port", object()),
+                    patch.object(self.window, "send", return_value=True) as send,
+                    patch.object(self.window.settings, "setValue") as persist,
+                ):
+                    panel.set_supported(True)
+                    shell.argb_channel_buttons[3].click()
+                    self.window.handle_line(reply.format(3))
+                    self.assertEqual(field.value(), value)
+                    field.setValue(value + 1)
+                    buttons[2].click()
+                    field.setValue(value)  # Equals the old cache, but is newer than the request.
+                    if switch_channel:
+                        shell.argb_channel_buttons[8].click()
+                    self.window.handle_line(newer_reply)
+                    if switch_channel:
+                        shell.argb_channel_buttons[3].click()
+                    self.assertEqual(field.value(), value)
+                    self.assertIn("чернетк", panel.status.text())
+
+                    buttons[2].click()  # A fresh explicit read can replace the newer draft.
+                    self.window.handle_line(newer_reply)
+                    self.assertEqual(field.value(), value - 1)
+                    self.assertEqual(send.call_args_list, [call(f"{prefix}? 3")] * 2)
+                    persist.assert_not_called()
+
+    def test_argb_readback_cache_and_intent_reset_on_disconnect(self):
+        from unittest.mock import Mock, patch
+
+        shell = self.window.dashboard
+        # The old device's channel 8 differs from the editor defaults in just one field.
+        old_device = {
+            "FX": "FX CH=8 MODE=1 R1=20,160,255 R2=255,50,140 SPEED=7 BRIGHT=64 DIR=0 BOOT=0 ACTIVE=0",
+            "AUDIOCFG": "AUDIOCFG CH=8 STYLE=1 GAIN=140 BRIGHT=64 R1=0,150,255 R2=255,40,100 BOOT=0",
+            "RFX": "RFX CH=8 SRC=16 FALL=0 STYLE=1 LOW=300 HIGH=850 PATTERN=2 "
+                   "R1=0,100,255 R2=255,0,0 SPEED=7 BRIGHT=64 DIR=0 BOOT=0 ACTIVE=0 FRESH=0 VALUE=0",
+        }
+        for prefix, panel, field, value, reply in self._argb_readback_cases():
+            buttons = panel.actions if prefix == "RFX" else panel.buttons
+            with (
+                self.subTest(prefix=prefix),
+                patch.object(self.window, "port", Mock()),
+                patch.object(self.window, "send", return_value=True),
+            ):
+                shell.set_connected(True, "COM5")
+                panel.set_supported(True)
+                shell.argb_channel_buttons[3].click()
+                default = field.value()
+                panel.readback()
+                self.window.handle_line(reply.format(3))
+                self.assertEqual(field.value(), value)
+                shell.argb_channel_buttons[8].click()
+                panel.readback()
+                self.window.handle_line(old_device[prefix])
+                self.assertEqual(field.value(), value)
+                field.setValue(default)  # Deliberately returning to defaults is still a draft.
+                buttons[2].click()
+
+                self.window.disconnect()
+                self.window.handle_line(reply.format(8))
+                self.window.port = Mock()
+                shell.set_connected(True, "COM6")
+                panel.set_supported(True)
+                panel.readback()
+                self.window.handle_line(reply.format(8))
+                self.assertEqual(field.value(), default)
+                self.assertFalse(panel.boot.isChecked())
+                shell.argb_channel_buttons[3].click()
+                self.assertEqual(field.value(), default)
 
     def test_argb_effect_panels_fit_compact_scroll_viewport(self):
         from PySide6.QtCore import QPoint
@@ -337,6 +574,7 @@ class DashboardSmokeTests(unittest.TestCase):
         status = shell.temperature_argb.labels[8]
         save = shell.temperature_argb.save_buttons[8]
         shell.temperature_argb.lows[8].setValue(31)  # Show the longer dirty status.
+        shell.argb_channel_buttons[8].click()
         shell.scene_box.setCurrentText("За температурою")
         self.app.processEvents()
         self.assertLess(status.geometry().right(), save.geometry().left())
@@ -963,6 +1201,65 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertIn("підтвердив", panel.status.text())
         self.assertEqual(panel.configs[1].low_c, 35)
         self.assertNotIn(1, panel._dirty)
+
+    def test_temperature_argb_reads_and_saves_only_selected_row(self):
+        from unittest.mock import call, patch
+
+        shell = self.window.dashboard
+        panel = shell.temperature_argb
+        shell.set_connected(True, "COM5")
+        panel.supported = True
+        shell.argb_channel_buttons[6].click()
+        with patch.object(self.window, "send", return_value=True) as send:
+            panel.refresh_button.click()
+            self.assertEqual(send.call_args_list, [call("TARGB? 6")])
+            shell.argb_channel_buttons[8].click()
+            self.window.handle_line(
+                "TARGB CH=6 SOURCE_HEX=5F5F4F46465F5F LOW=36 HIGH=85 BRIGHT=64 COUNT=0"
+            )
+            self.window.handle_line("TARGB_END CH=6")
+            self.assertEqual(send.call_args_list, [call("TARGB? 6")])
+            self.assertEqual(panel.lows[6].value(), 36)
+            self.assertEqual(panel.lows[8].value(), 30)
+            shell.argb_channel_buttons[6].click()
+            panel.lows[6].setValue(37)
+            shell.set_channel_mask(0b11011111)
+            self.assertFalse(panel.refresh_button.isEnabled())
+            self.assertFalse(panel.save_buttons[6].isEnabled())
+            panel.refresh_selected()
+            panel.save_zone(6)
+            self.assertEqual(send.call_args_list, [call("TARGB? 6")])
+            shell.set_channel_mask(0xFF)
+            panel.save_buttons[6].click()
+            self.assertEqual(send.call_args_list[-1], call("TARGB BEGIN 6"))
+
+    def test_temperature_argb_global_run_survives_editor_selection(self):
+        from unittest.mock import patch
+        from temperature_argb import MAX_ALL, ZoneTemperatureConfig
+
+        shell = self.window.dashboard
+        panel = shell.temperature_argb
+        shell.set_connected(True, "COM5")
+        panel.supported = True
+        for ch in (3, 8):
+            panel._load_readback(ch, ZoneTemperatureConfig(source=MAX_ALL))
+        shell.argb_channel_buttons[3].click()
+        with (
+            patch.object(self.window, "port", object()),
+            patch.object(self.window, "led_counts", [10] * 8),
+            patch.object(self.window, "queue_rgb", return_value=True) as queue,
+        ):
+            panel.start_button.click()
+            self.assertEqual([entry.args[0] for entry in queue.call_args_list], [3, 8])
+            queue.reset_mock()
+            shell.argb_channel_buttons[8].click()
+            shell.scene_box.setCurrentText("За звуком")
+            self.assertTrue(panel.active)
+            queue.assert_not_called()
+            panel._tick()
+            self.assertEqual([entry.args[0] for entry in queue.call_args_list], [3, 8])
+            panel.stop_button.click()
+            self.assertFalse(panel.active)
 
     def test_v3_argb_zone_map_is_read_only_until_apply(self):
         shell = self.window.dashboard

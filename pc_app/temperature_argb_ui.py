@@ -12,7 +12,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QGridLayout, QGroupBox,
     QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox,
-    QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget,
+    QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
 
 try:
@@ -51,6 +51,8 @@ class TemperatureArgbPanel(QGroupBox):
         self.connected = False
         self.supported = False
         self.active = False
+        self._channel = 1
+        self._channel_mask = 0xFF
         self._loading = False
         self._loaded: set[int] = set()
         self._dirty: set[int] = set()
@@ -97,10 +99,9 @@ class TemperatureArgbPanel(QGroupBox):
         )
         help_label.setWordWrap(True)
         root.addWidget(help_label)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
         content = QWidget()
-        grid = QGridLayout(content)
+        self._grid = grid = QGridLayout(content)
+        grid.setContentsMargins(0, 0, 0, 0)
         headers = (
             "Зона", "Датчик / група", "Група", "Низ, °C", "Верх, °C",
             "Яскр.", "Стан", "NVS", "Кольори"
@@ -110,7 +111,8 @@ class TemperatureArgbPanel(QGroupBox):
         for ch in range(1, 9):
             grid.addWidget(QLabel(f"ARGB {ch:02d}"), ch, 0)
             source = QComboBox()
-            source.setMinimumWidth(185)
+            source.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            source.setMinimumWidth(130)
             self.sources[ch] = source
             grid.addWidget(source, ch, 1)
             group = QPushButton("Датчики…")
@@ -132,9 +134,13 @@ class TemperatureArgbPanel(QGroupBox):
             self.brightness[ch] = bright
             grid.addWidget(bright, ch, 5)
             status = QLabel("Немає відповіді ESP")
+            status.setWordWrap(True)
+            status.setMinimumWidth(80)
             self.labels[ch] = status
             grid.addWidget(status, ch, 6)
-            save = QPushButton("Зберегти в ESP")
+            save = QPushButton("Зберегти")
+            save.setToolTip("Зберегти в ESP")
+            save.setAccessibleName("Зберегти в ESP")
             save.clicked.connect(lambda _=False, channel=ch: self.save_zone(channel))
             self.save_buttons[ch] = save
             grid.addWidget(save, ch, 7)
@@ -147,16 +153,15 @@ class TemperatureArgbPanel(QGroupBox):
             high.valueChanged.connect(lambda _=0, channel=ch: self._mark_dirty(channel))
             bright.valueChanged.connect(lambda _=0, channel=ch: self._mark_dirty(channel))
         grid.setColumnStretch(1, 2)
-        scroll.setWidget(content)
-        root.addWidget(scroll)
+        root.addWidget(content)
         actions = QHBoxLayout()
-        self.refresh_button = QPushButton("↻ Прочитати конфігурацію ESP32")
-        self.refresh_button.clicked.connect(self.refresh_all)
+        self.refresh_button = QPushButton("↻ Зчитати вибрану зону")
+        self.refresh_button.clicked.connect(self.refresh_selected)
         actions.addWidget(self.refresh_button)
-        self.start_button = QPushButton("▶ Запустити термо-ARGB")
+        self.start_button = QPushButton("▶ Запустити всі налаштовані зони")
         self.start_button.clicked.connect(self.start)
         actions.addWidget(self.start_button)
-        self.stop_button = QPushButton("■ Зупинити")
+        self.stop_button = QPushButton("■ Зупинити всі термо-зони")
         self.stop_button.clicked.connect(self.stop)
         actions.addWidget(self.stop_button)
         root.addLayout(actions)
@@ -167,7 +172,20 @@ class TemperatureArgbPanel(QGroupBox):
         self.timer.setInterval(2000)
         self.timer.timeout.connect(self._tick)
         self.refresh_sensors()
+        self.set_channel(1, 0xFF)
+
+    def set_channel(self, channel: int, mask: int) -> None:
+        self._channel = channel
+        self._channel_mask = mask
+        for ch in self.sources:
+            for col in range(self._grid.columnCount()):
+                widget = self._grid.itemAtPosition(ch, col).widget()
+                widget.setVisible(ch == channel)
+            self._grid.itemAtPosition(ch, 2).widget().setEnabled(self._available(ch))
         self._update_buttons()
+
+    def _available(self, ch: int) -> bool:
+        return bool(self._channel_mask & (1 << (ch - 1)))
 
     def _busy(self) -> bool:
         return (self._reading_ch is not None or self._write_ch is not None or
@@ -175,14 +193,14 @@ class TemperatureArgbPanel(QGroupBox):
 
     def _update_buttons(self) -> None:
         ready = self.connected and self.supported
-        self.refresh_button.setEnabled(ready and not self._busy())
-        self.start_button.setEnabled(ready and bool(self._loaded) and not self._busy())
+        self.refresh_button.setEnabled(ready and self._available(self._channel) and not self._busy())
+        self.start_button.setEnabled(ready and any(map(self._available, self._loaded)) and not self._busy())
         for ch, palette_button in self.palette_buttons.items():
-            palette_button.setEnabled(ready and self.palette_supported and
+            palette_button.setEnabled(ready and self._available(ch) and self.palette_supported and
                                       ch in self.palettes and not self._busy())
         for ch, button in self.save_buttons.items():
             button.setEnabled(
-                ready and not self._busy() and ch in self._loaded and ch in self._dirty
+                ready and self._available(ch) and not self._busy() and ch in self._loaded and ch in self._dirty
             )
 
     def set_connected(self, connected: bool) -> None:
@@ -253,7 +271,8 @@ class TemperatureArgbPanel(QGroupBox):
         self._update_buttons()
 
     def edit_palette(self, ch: int) -> None:
-        if not self.connected or not self.palette_supported or ch not in self.palettes or self._busy():
+        if (not self.connected or not self._available(ch) or not self.palette_supported
+                or ch not in self.palettes or self._busy()):
             return
         editor = TemperaturePaletteDialog(ch, self.palettes[ch], self)
         if editor.exec() != QDialog.DialogCode.Accepted:
@@ -331,6 +350,12 @@ class TemperatureArgbPanel(QGroupBox):
             box.setCurrentIndex(max(idx, 0))
             box.blockSignals(False)
 
+    def refresh_selected(self) -> None:
+        if not self.connected or not self.supported or not self._available(self._channel) or self._busy():
+            return
+        self.status.setText(f"Читаю ARGB {self._channel:02d} із NVS ESP32…")
+        self._send_read(self._channel)
+
     def refresh_all(self) -> None:
         if not self.connected or not self.supported or self._busy():
             return
@@ -388,6 +413,8 @@ class TemperatureArgbPanel(QGroupBox):
         self._update_buttons()
 
     def edit_group(self, ch: int) -> None:
+        if not self._available(ch):
+            return
         dialog = QDialog(self)
         dialog.setWindowTitle(f"ARGB {ch} · група датчиків")
         layout = QVBoxLayout(dialog)
@@ -439,7 +466,7 @@ class TemperatureArgbPanel(QGroupBox):
         )
 
     def save_zone(self, ch: int) -> None:
-        if not (self.connected and self.supported and ch in self._loaded) or self._busy():
+        if not (self.connected and self.supported and self._available(ch) and ch in self._loaded) or self._busy():
             return
         try:
             cfg = self._edited_config(ch)
@@ -591,7 +618,7 @@ class TemperatureArgbPanel(QGroupBox):
             QMessageBox.warning(self, "ARGB температура",
                                 "Підключи ESP32 із firmware v9 та дочекайся LEDCOUNTS.")
             return
-        if not any(ch in self._loaded and cfg.source != OFF
+        if not any(self._available(ch) and ch in self._loaded and cfg.source != OFF
                    for ch, cfg in self.configs.items()):
             QMessageBox.warning(self, "ARGB температура",
                                 "Спочатку збережи джерело хоча б однієї зони в ESP32.")
@@ -624,7 +651,7 @@ class TemperatureArgbPanel(QGroupBox):
         fresh = time.monotonic() - self.controller.last_temperature_sample_at <= 7.0
         sent = 0
         for ch, cfg in self.configs.items():
-            if ch not in self._loaded or cfg.source == OFF:
+            if not self._available(ch) or ch not in self._loaded or cfg.source == OFF:
                 continue
             color = zone_color(cfg, self.controller.temperatures, fresh=fresh,
                                palette=self.palettes.get(ch) if self.palette_supported else None)

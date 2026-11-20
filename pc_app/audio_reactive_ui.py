@@ -15,7 +15,13 @@ class AudioReactivePanel(QGroupBox):
         super().__init__("Audio Reactive · обчислення ефектів на ESP32")
         self.controller=controller
         self.supported=False
+        self._channel=1
+        self._channel_available=True
+        self._drafts={}
+        self._configs={}
+        self._read_intent={}
         self.colors=((0,150,255),(255,40,100))
+        self._default=(0,100,64,self.colors,False)
         root=QVBoxLayout(self)
         intro=QLabel(
             "ESP32 сам рендерить анімації. Windows надсилає лише 4 числові "
@@ -24,11 +30,6 @@ class AudioReactivePanel(QGroupBox):
         intro.setWordWrap(True)
         root.addWidget(intro)
         row=QHBoxLayout()
-        row.addWidget(QLabel("ARGB"))
-        self.channel=QComboBox()
-        for i in range(1,9):
-            self.channel.addItem(str(i),i)
-        row.addWidget(self.channel)
         row.addWidget(QLabel("Ефект"))
         self.style=QComboBox()
         self.style.addItems(STYLES)
@@ -54,7 +55,7 @@ class AudioReactivePanel(QGroupBox):
         root.addLayout(row)
         self.boot=QCheckBox("Запускати аудіосцену після reset (на початку тихо)")
         root.addWidget(self.boot)
-        self.capture=QCheckBox("Зчитувати системний звук Windows (WASAPI loopback)")
+        self.capture=QCheckBox("Системний звук Windows (WASAPI) · спільне джерело для всіх зон")
         self.capture.setChecked(str(controller.settings.value(
             "audioCaptureEnabled","false")).lower() in ("true","1"))
         self.capture.toggled.connect(self._capture_changed)
@@ -62,24 +63,74 @@ class AudioReactivePanel(QGroupBox):
         btns=QHBoxLayout()
         self.buttons=[]
         for label,fn in (("▶ Перегляд",self.preview),("■ Вимкнути",self.stop),
-                         ("Зчитати",self.readback),("Зберегти в ESP32",self.save)):
+                         ("Зчитати",lambda: self.readback(replace_draft=True)),
+                         ("Зберегти в ESP32",self.save)):
             btn=QPushButton(label)
             btn.clicked.connect(fn)
             btns.addWidget(btn)
             self.buttons.append(btn)
+        self.buttons[-1].setToolTip("ESP32 зберігає всі поточні аудіосцени в NVS.")
         root.addLayout(btns)
         self.status=QLabel("Потрібна прошивка AUDIO=1")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
-        self.channel.currentIndexChanged.connect(lambda *_: self.readback())
         self.set_supported(False)
 
+    def set_channel(self, channel: int, available: bool):
+        if channel != self._channel:
+            self._remember_draft()
+            self._channel=channel
+            self._fill(*self._drafts.get(channel,self._configs.get(channel,self._default)))
+            self.set_supported(self.supported)
+        self._channel_available=available
+        self._update_buttons()
+
+    def _remember_draft(self):
+        ch=self._channel
+        values=(self.style.currentIndex(), self.gain.value(), self.brightness.value(),
+                self.colors, self.boot.isChecked())
+        # A known draft may match the defaults after a disconnect clears the cache.
+        if values==self._drafts.get(ch):
+            return values
+        requested=self._read_intent.get(ch)
+        # A post-request edit is a draft even when it matches the old cache.
+        if (values!=self._configs.get(ch,self._default)
+                or (requested is not None and values!=requested)):
+            self._drafts[ch]=values
+        else:
+            self._drafts.pop(ch,None)
+        return values
+
+    def _fill(self, style, gain, brightness, colors, boot):
+        self.style.setCurrentIndex(style)
+        self.gain.setValue(gain)
+        self.brightness.setValue(brightness)
+        self.colors=colors
+        self.boot.setChecked(boot)
+
     def set_supported(self, enabled: bool):
+        if self.supported and not enabled:
+            self._remember_draft()
+            self._configs.clear()
+            self._read_intent.clear()
+            self._fill(*self._drafts.get(self._channel,self._default))
         self.supported=enabled
-        for btn in self.buttons: btn.setEnabled(enabled)
+        self._update_buttons()
         self.capture.setEnabled(enabled)
-        self.status.setText("Готово до аудіоефектів" if enabled
-                            else "Потрібен ESP32 з AUDIO=1")
+        if enabled and self._channel in self._drafts and self._channel in self._configs:
+            self._show_draft_status()
+        elif enabled and self._channel in self._configs:
+            self.status.setText("Аудіосцена завантажена з ESP32")
+        else:
+            self.status.setText("Готово до аудіоефектів" if enabled
+                                else "Потрібен ESP32 з AUDIO=1")
+
+    def _show_draft_status(self):
+        self.status.setText("Незбережена чернетка · «Зчитати» замінить її даними ESP32")
+
+    def _update_buttons(self):
+        for btn in self.buttons:
+            btn.setEnabled(self.supported and self._channel_available)
 
     def _capture_changed(self,enabled: bool):
         self.controller.set_audio_capture_enabled(enabled)
@@ -91,11 +142,16 @@ class AudioReactivePanel(QGroupBox):
             palette[index]=(color.red(),color.green(),color.blue())
             self.colors=tuple(palette)
 
+    def _ready(self)->bool:
+        return self.supported and self._channel_available and self.controller.port is not None
+
     def _send(self,text: str)->bool:
-        return bool(self.supported and self.controller.port and self.controller.send(text))
+        return self._ready() and self.controller.send(text)
 
     def preview(self)->bool:
-        ch=self.channel.currentData()
+        if not self._ready():
+            return False
+        ch=self._channel
         parts=[ch,self.style.currentIndex()+1,self.gain.value(),self.brightness.value(),
                *self.colors[0],*self.colors[1]]
         shell=self.controller.dashboard
@@ -111,16 +167,19 @@ class AudioReactivePanel(QGroupBox):
 
     def save(self):
         if not self.preview(): return
-        ch=self.channel.currentData()
+        ch=self._channel
         if self._send(f"AUDIOCFG BOOT {ch} {int(self.boot.isChecked())}") and self._send("AUDIOCFG SAVE"):
             self.status.setText("Очікування підтвердження AUDIOCFG_SAVED")
 
     def stop(self):
-        if self._send(f"AUDIOCFG STOP {self.channel.currentData()}"):
+        if self._send(f"AUDIOCFG STOP {self._channel}"):
             self.status.setText("Аудіосцену вимкнено")
 
-    def readback(self):
-        self._send(f"AUDIOCFG? {self.channel.currentData()}")
+    def readback(self, *, replace_draft=False):
+        ch=self._channel
+        requested=self._remember_draft()
+        if self._send(f"AUDIOCFG? {ch}") and replace_draft:
+            self._read_intent[ch]=requested
 
     def handle_line(self,line: str)->bool:
         if line=="OK AUDIOCFG_SAVED":
@@ -130,6 +189,7 @@ class AudioReactivePanel(QGroupBox):
             self.status.setText("ESP32 відхилив аудіокоманду: "+line)
             return True
         if not line.startswith("AUDIOCFG CH="): return False
+        if not self.supported: return True
         try:
             fields=dict(x.split("=",1) for x in line.split()[1:] if "=" in x)
             ch=int(fields["CH"])
@@ -143,13 +203,21 @@ class AudioReactivePanel(QGroupBox):
                     0<=bright<=255 and len(primary)==3 and len(secondary)==3
                     and all(0<=c<=255 for c in (*primary,*secondary)) and boot in (0,1)):
                 return True
-            if ch==self.channel.currentData():
-                self.style.setCurrentIndex(style-1)
-                self.gain.setValue(gain)
-                self.brightness.setValue(bright)
-                self.colors=(primary,secondary)
-                self.boot.setChecked(bool(boot))
-                self.status.setText("Аудіосцена завантажена з ESP32")
         except (KeyError,TypeError,ValueError):
-            pass
+            return True
+        visible=ch==self._channel
+        if visible:
+            self._remember_draft()
+        values=(style-1,gain,bright,(primary,secondary),bool(boot))
+        self._configs[ch]=values
+        draft=self._drafts.get(ch)
+        expected=self._read_intent.pop(ch,None)
+        if draft is not None and draft!=expected and draft!=values:
+            if visible:
+                self._show_draft_status()
+            return True
+        self._drafts.pop(ch,None)
+        if visible:
+            self._fill(*values)
+            self.status.setText("Аудіосцена завантажена з ESP32")
         return True

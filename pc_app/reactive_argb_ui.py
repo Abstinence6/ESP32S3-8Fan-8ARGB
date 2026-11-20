@@ -5,6 +5,7 @@ Users can supply the same numeric slot through MQTT without a Windows process.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -48,10 +49,14 @@ class ReactiveArgbPanel(QGroupBox):
         super().__init__("RGB за навантаженням, RPM, потужністю та датчиками")
         self.controller=controller
         self.supported=False
-        self.current=1
+        self.current=0
+        self._channel_available=True
+        self._drafts={}
+        self._host_drafts={}
+        self._read_intent={}
         self.colors=((0,100,255),(255,0,0))
         self._loading=False
-        self.configs={ch:default_scene(ch) for ch in range(1,9)}
+        self._configs={}
         self._invalid_host_config=False
         try:
             self.host_slots=list(load_slots(str(controller.settings.value(MAPPING_KEY,""))))
@@ -66,14 +71,6 @@ class ReactiveArgbPanel(QGroupBox):
             "Той самий слот можна оновлювати через MQTT/Home Assistant.")
         help_text.setWordWrap(True)
         root.addWidget(help_text)
-        zone=QHBoxLayout()
-        zone.addWidget(QLabel("ARGB-зона"))
-        self.channel=QComboBox()
-        for ch in range(1,9):
-            self.channel.addItem(f"ARGB {ch}",ch)
-        zone.addWidget(self.channel)
-        zone.addStretch()
-        root.addLayout(zone)
 
         row=QHBoxLayout()
         row.addWidget(QLabel("Джерело"))
@@ -152,29 +149,44 @@ class ReactiveArgbPanel(QGroupBox):
         buttons=QHBoxLayout()
         self.actions=[]
         for text,fn in (("▶ Перегляд",self.preview),("■ Вимкнути",self.stop),
-                        ("Зчитати",self.readback),("Зберегти в ESP32",self.save)):
+                        ("Зчитати",lambda: self.readback(replace_draft=True)),
+                        ("Зберегти в ESP32",self.save)):
             button=QPushButton(text)
             button.clicked.connect(fn)
             buttons.addWidget(button)
             self.actions.append(button)
+        self.actions[-1].setToolTip("ESP32 зберігає всі поточні реактивні сцени в NVS.")
         root.addLayout(buttons)
         self.status=QLabel("")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
-        self.channel.currentIndexChanged.connect(self._select_channel)
         self.source.currentIndexChanged.connect(self._source_changed)
         self.host_sensor.currentIndexChanged.connect(self._host_changed)
-        self._select_channel()
-        self.set_supported(False)
+        self.set_channel(1, True)
 
     def set_supported(self, supported: bool):
+        if self.supported and not supported:
+            self._remember_draft()
+            self._configs.clear()
+            self._read_intent.clear()
+            self._load_editor(self._drafts.get(self.current,default_scene(self.current)))
         self.supported=supported
-        for button in self.actions:
-            button.setEnabled(supported)
+        self._update_buttons()
         if not supported:
             self.status.setText("Підключи ESP32 з підтримкою RFX=1")
+        elif self.current in self._drafts and self.current in self._configs:
+            self._show_draft_status()
+        elif self.current in self._configs:
+            self.status.setText("Налаштування зчитано з ESP32")
         else:
             self.status.setText("ESP32 сам розраховує ефекти; готово до налаштування")
+
+    def _show_draft_status(self):
+        self.status.setText("Незбережена чернетка · «Зчитати» замінить її даними ESP32")
+
+    def _update_buttons(self):
+        for button in self.actions:
+            button.setEnabled(self.supported and self._channel_available)
 
     def _sources(self,ch:int):
         self.source.blockSignals(True)
@@ -184,19 +196,41 @@ class ReactiveArgbPanel(QGroupBox):
         self.source.addItem(f"ПК або MQTT: слот {ch}",24+ch)
         self.source.blockSignals(False)
 
-    def _select_channel(self,*_):
-        self.current=self.channel.currentData() or 1
+    def set_channel(self, channel: int, available: bool):
+        self._channel_available=available
+        if channel==self.current:
+            self._update_buttons()
+            return
+        if self.current:
+            self._remember_draft()
+            self._host_drafts[self.current]=self.host_sensor.currentData()
+        self.current=channel
+        self._sources(channel)
+        scene=self._drafts.get(channel) or self._configs.get(channel) or default_scene(channel)
+        self._load_editor(scene,self._host_drafts.get(channel,self.host_slots[channel-1]))
+        self.set_supported(self.supported)
+
+    def _remember_draft(self):
+        scene=self._make_scene()
+        # A known draft may match the defaults after a disconnect clears the cache.
+        if scene==self._drafts.get(self.current):
+            return scene
+        requested=self._read_intent.get(self.current)
+        # A post-request edit is a draft even when it matches the old cache.
+        if (scene!=self._configs.get(self.current,default_scene(self.current))
+                or (requested is not None and scene!=requested)):
+            self._drafts[self.current]=scene
+        else:
+            self._drafts.pop(self.current,None)
+        return scene
+
+    def _load_editor(self, scene, host=None):
         self._loading=True
-        self._sources(self.current)
-        self._fill(self.configs[self.current])
-        # A zone change uses that zone's saved metric, never the previous zone's combo.
-        self.host_sensor.blockSignals(True)
-        self.host_sensor.clear()
-        self.host_sensor.blockSignals(False)
-        self.refresh_sensors()
-        self._loading=False
-        if self.supported and self.controller.port:
-            self.readback()
+        try:
+            self._fill(scene)
+            self.refresh_sensors(host)
+        finally:
+            self._loading=False
 
     def _fill(self,scene):
         index=self.source.findData(scene.source)
@@ -258,9 +292,10 @@ class ReactiveArgbPanel(QGroupBox):
             self.low.setValue(lo)
             self.high.setValue(hi)
 
-    def refresh_sensors(self):
-        current=self.host_sensor.currentData()
-        selected=current if isinstance(current,str) else self.host_slots[self.current-1]
+    def refresh_sensors(self, selected=None):
+        if selected is None:
+            current=self.host_sensor.currentData()
+            selected=current if isinstance(current,str) else self.host_slots[self.current-1]
         self.host_sensor.blockSignals(True)
         self.host_sensor.clear()
         self.host_sensor.addItem("MQTT / Home Assistant (без даних з ПК)","")
@@ -278,9 +313,8 @@ class ReactiveArgbPanel(QGroupBox):
         self.host_sensor.blockSignals(False)
 
     def _make_scene(self):
-        from dataclasses import replace
-        scene=replace(self.configs[self.current],
-            channel=self.current,source=int(self.source.currentData()),
+        scene=replace(default_scene(self.current),
+            source=int(self.source.currentData()),
             fallback=int(self.fallback.currentData()),style=self.style.currentIndex()+1,
             low=round(self.low.value()*10),high=round(self.high.value()*10),
             pattern=self.pattern.currentIndex()+1,primary=self.colors[0],
@@ -289,8 +323,11 @@ class ReactiveArgbPanel(QGroupBox):
             boot=self.boot.isChecked())
         return scene
 
+    def _ready(self):
+        return self.supported and self._channel_available and self.controller.port is not None
+
     def _send(self,text):
-        return bool(self.supported and self.controller.port and self.controller.send(text))
+        return self._ready() and self.controller.send(text)
 
     def _stop_external(self):
         shell=self.controller.dashboard
@@ -300,6 +337,8 @@ class ReactiveArgbPanel(QGroupBox):
         if self.controller.bridge_checkbox.isChecked(): self.controller.bridge_checkbox.setChecked(False)
 
     def preview(self):
+        if not self._ready():
+            return False
         try:
             scene=self._make_scene()
             command=make_set(scene)
@@ -310,7 +349,6 @@ class ReactiveArgbPanel(QGroupBox):
         if not self._send(command):
             self.status.setText("USB недоступний або ESP32 не підтримує RFX")
             return False
-        self.configs[self.current]=scene
         slots=self.host_slots.copy()
         slots[self.current-1]=(str(self.host_sensor.currentData() or "")
                                if scene.source==24+self.current else "")
@@ -345,8 +383,11 @@ class ReactiveArgbPanel(QGroupBox):
         if self._send(f"RFX STOP {self.current}"):
             self.status.setText("Реактивний ефект вимкнено")
 
-    def readback(self):
-        self._send(f"RFX? {self.current}")
+    def readback(self, *, replace_draft=False):
+        ch=self.current
+        requested=self._remember_draft()
+        if self._send(f"RFX? {ch}") and replace_draft:
+            self._read_intent[ch]=requested
 
     def handle_line(self,line):
         if line=="OK RFX_SAVED":
@@ -358,12 +399,25 @@ class ReactiveArgbPanel(QGroupBox):
         scene=parse_readback(line)
         if scene is None:
             return False
-        self.configs[scene.channel]=scene
-        if scene.channel==self.current:
-            self._loading=True
-            self._fill(scene)
-            self.refresh_sensors()
-            self._loading=False
+        if not self.supported:
+            return True
+        ch=scene.channel
+        visible=ch==self.current
+        if visible:
+            self._remember_draft()
+        # Match the editor's fallback for other zones' remote slots and omit telemetry.
+        source=1 if 25<=scene.source<=32 and scene.source!=24+ch else scene.source
+        config=replace(scene,source=source,active=False,fresh=False,value=0)
+        self._configs[ch]=config
+        draft=self._drafts.get(ch)
+        expected=self._read_intent.pop(ch,None)
+        if draft is not None and draft!=expected and draft!=config:
+            if visible:
+                self._show_draft_status()
+            return True
+        self._drafts.pop(ch,None)
+        if visible:
+            self._load_editor(config)
             source="актуальні" if scene.fresh else "відсутні"
             self.status.setText(
                 f"ARGB {scene.channel}: {'запущено' if scene.active else 'зупинено'} · "

@@ -1233,31 +1233,10 @@ class DashboardShell(QWidget):
         layout.addWidget(select)
         self.native_effects = NativeEffectsPanel(self.controller)
         self.temperature_argb = TemperatureArgbPanel(self.controller)
-        # Let the page, not the temperature grid, own vertical scrolling.
-        temperature_scroll = self.temperature_argb.findChild(QScrollArea)
-        temperature_grid = temperature_scroll.takeWidget()
-        temperature_grid.layout().setContentsMargins(0, 0, 0, 0)
-        for zone, source in self.temperature_argb.sources.items():
-            # A long live sensor name or status must not widen the page.
-            source.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-            source.setMinimumWidth(130)
-            status = self.temperature_argb.labels[zone]
-            status.setWordWrap(True)
-            status.setMinimumWidth(80)
-            save = self.temperature_argb.save_buttons[zone]
-            save.setToolTip(save.text())
-            save.setAccessibleName(save.text())
-            save.setText("Зберегти")
-        self.temperature_argb.layout().replaceWidget(temperature_scroll, temperature_grid)
-        temperature_scroll.hide()
-        temperature_scroll.deleteLater()
         self.reactive_argb = ReactiveArgbPanel(self.controller)
         self.audio_reactive = AudioReactivePanel(self.controller)
         self.argb_effect_panels: dict[str, QWidget] = {}
-        self.argb_effect_target_hint = _label(
-            "Зони для цього режиму налаштовуються нижче. Верхній вибір зони діє на швидкі команди та звичайні сцени.",
-            "minor", True,
-        )
+        self.argb_effect_target_hint = _label("", "minor", True)
         layout.addWidget(self.argb_effect_target_hint)
         self.scene_box.insertSeparator(self.scene_box.count())
         for key, title, panel in (
@@ -1324,8 +1303,9 @@ class DashboardShell(QWidget):
         self._add_page("argb", page)
 
     def _refresh_argb_zone_tiles(self) -> None:
+        selected = self.zone_box.currentData()
         for ch, (tile, strip) in self.argb_zone_tiles.items():
-            active = self.zone_box.currentData() == ch
+            active = selected == ch
             self.argb_channel_buttons[ch].setChecked(active)
             active = active and self.is_channel_available(ch)
             for widget in (tile, strip):
@@ -1334,6 +1314,14 @@ class DashboardShell(QWidget):
                     widget.style().unpolish(widget)
                     widget.style().polish(widget)
 
+        available = self.is_channel_available(selected)
+        self.argb_effect_target_hint.setText(
+            f"Налаштування вибраного каналу · ARGB {selected:02d}" if available
+            else f"ARGB {selected:02d} · канал недоступний на цій платі"
+        )
+        for panel in (self.native_effects, self.reactive_argb, self.audio_reactive):
+            panel.set_channel(selected, available)
+        self.temperature_argb.set_channel(selected, self.available_channel_mask)
         self._refresh_argb_targets()
 
     def argb_targets(self, all_zones: bool) -> list[int]:
