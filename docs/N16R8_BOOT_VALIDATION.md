@@ -15,7 +15,7 @@ before connecting native USB to a PC. Do not connect a board with a suspected
 short directly to a PC USB port. Check BOOT/EN and GPIO46 strapping loads.
 
 GPIO35/36/37 are wired to Octal PSRAM even with external traces removed.
-FAN2 PWM/TACH and ARGB2 **must remain disabled**. GPIO19/20 are native USB.
+FAN2 PWM/TACH and ARGB2 are enabled in the standard N16R8 firmware on GPIO8/11/17, not PSRAM GPIO35/36/37. Their external hardware signal lines must be rewired to match. GPIO19/20 are native USB.
 Do not use the opt-in `..._dc_validated` firmware for this baseline test;
 its compile-time DC unlock is not proof of qualified motor-power hardware.
 
@@ -40,7 +40,7 @@ packaged preflight script):
 py .\preflight_n16r8_image.py --image .\ESP32S3-N16R8-NativeUSB-FULL.bin --manifest .\manifest.json
 ```
 
-This checks offsets, SHA-256, target environment and disabled-channel metadata,
+This checks offsets, SHA-256, target environment and eight-channel GPIO metadata,
 and refuses application-only files and the opt-in DC-unlocked candidate. It
 **does not flash**. A matching manifest is unsigned and cannot independently
 establish authenticity. Compare its commit to the expected GitHub Actions run.
@@ -90,15 +90,15 @@ STATUS
 HEALTH 2
 ```
 
-Expected: repeated `PING` responses, `VERSION?` reporting `N16R8=1 CHMASK=253`,
-and channel 2 reported unavailable (`AVAILABLE=0`). Power-cycle and reset a few
+Expected: repeated `PING` responses, `VERSION?` reporting `N16R8=1 CHMASK=255`,
+and channel 2 reported available (`AVAILABLE=1`). Power-cycle and reset a few
 times, observing for `SHA-256 comparison failed`, `TG0WDT_SYS_RST`, unexpected
 ROM download mode, PSRAM errors, USB disconnects, or thermal fault behavior.
 A stable application needs more than one successful `PING` after boot.
 
 **Pass for this stage:** successful verified write, stable native USB startup,
 several normal cold and warm resets, and repeatable protocol responses with
-channel 2 disabled. Record the exact CI commit, binary SHA, boot/reset logs,
+the eight-channel firmware map active. Record the exact CI commit, binary SHA, boot/reset logs,
 measured rail voltages and reset reason. No fans or LEDs are qualified by this.
 
 **Fail:** if SHA mismatch or watchdog reset repeats on the full matched image,

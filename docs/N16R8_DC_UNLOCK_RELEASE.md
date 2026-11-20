@@ -1,4 +1,6 @@
-# N16R8 DC-unlocked candidate — release handoff
+# N16R8 DC-unlocked candidate — historical release handoff
+
+> This records an older seven-channel firmware artifact and its hashes. The current standard N16R8 image enables eight channels using GPIO8/11/17. See [current N16R8 instructions](N16R8_NATIVE_USB_WORKING.md).
 
 ## Status and limits
 
