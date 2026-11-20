@@ -212,33 +212,90 @@ class DashboardSmokeTests(unittest.TestCase):
             rows = {w.y() for w in shell._summary_cards}
             self.assertEqual(len(rows), 1)
 
-    def test_argb_reduced_to_three_visible_tabs_no_mode_dropdown(self):
+    def test_argb_page_scrolls_from_colors_to_openrgb_without_tabs_or_writes(self):
+        from unittest.mock import patch
+        from PySide6.QtCore import QPoint, Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QScrollArea, QTabWidget, QToolButton
+
         shell = self.window.dashboard
-        names = [shell.argb_workspace_tabs.tabText(i) for i in range(3)]
-        self.assertEqual(names, ["Кольори", "Автоефекти", "OpenRGB"])
-        self.assertFalse(shell.argb_workspace_tabs.tabBar().isHidden())
-        self.assertFalse(hasattr(shell, "argb_mode_selector"))
-        self.assertEqual(set(shell.argb_auto_sections),
-                         {"native", "temperature", "sensors", "audio"})
-        self.assertFalse(shell.argb_auto_sections["audio"].isChecked())
+        self.window.resize(1080, 760)
         self.window.show()
+        with patch.object(self.window, "send") as send:
+            shell.show_page("argb")
+            self.app.processEvents()
+            scroll = shell.stack.currentWidget()
+            self.assertIsInstance(scroll, QScrollArea)
+            self.assertFalse(scroll.findChildren(QTabWidget))
+            self.assertTrue(scroll.viewport().rect().contains(
+                shell.argb_channel_buttons[8].mapTo(scroll.viewport(), QPoint(0, 0))
+                + shell.argb_channel_buttons[8].rect().bottomRight()
+            ))
+            self.assertTrue(shell.argb_apply_button.isVisible())
+            self.assertGreater(scroll.verticalScrollBar().maximum(), 0)
+            openrgb = next(button for button in scroll.findChildren(QToolButton)
+                           if button.text() == "OpenRGB")
+            self.assertFalse(shell.native_checkbox.isVisible())
+            scroll.ensureWidgetVisible(openrgb)
+            self.assertTrue(scroll.viewport().rect().contains(
+                openrgb.mapTo(scroll.viewport(), openrgb.rect().center())
+            ))
+            self.assertNotEqual(openrgb.focusPolicy(), Qt.FocusPolicy.NoFocus)
+            QTest.keyClick(openrgb, Qt.Key.Key_Space)
+            self.app.processEvents()
+            self.assertTrue(shell.native_checkbox.isVisible())
+            self.assertTrue(self.window.bridge_checkbox.isVisible())
+            self.assertFalse(shell.native_checkbox.isChecked())
+            self.assertFalse(self.window.bridge_checkbox.isChecked())
+            send.assert_not_called()
+
+    def test_argb_expanded_sections_fit_compact_scroll_viewport(self):
+        from PySide6.QtCore import QPoint
+        from PySide6.QtWidgets import QScrollArea
+
+        shell = self.window.dashboard
+        self.window.show()
+        self.window.resize(1080, 760)  # Resize while the lighting page is hidden.
         shell.show_page("argb")
-        shell.argb_workspace_tabs.setCurrentIndex(1)
         self.app.processEvents()
-        shell.argb_auto_sections["audio"].setChecked(True)
+        scroll = shell.stack.currentWidget()
+        sections = (
+            (shell.argb_studio_toggle, shell.studio),
+            (shell.argb_auto_sections["native"], shell.native_effects),
+            (shell.argb_auto_sections["temperature"], shell.temperature_argb),
+            (shell.argb_auto_sections["sensors"], shell.reactive_argb),
+            (shell.argb_auto_sections["audio"], shell.audio_reactive),
+        )
+        for toggle, panel in sections:
+            with self.subTest(section=toggle.text()):
+                scroll.ensureWidgetVisible(toggle)
+                toggle.setChecked(True)
+                self.app.processEvents()
+                self.assertTrue(panel.isVisible())
+                self.assertEqual(scroll.horizontalScrollBar().maximum(), 0)
+                self.assertLess(
+                    panel.mapTo(scroll.viewport(), panel.rect().bottomRight()).x(),
+                    scroll.viewport().width(),
+                )
+                self.assertFalse(any(
+                    area.verticalScrollBar().isVisible()
+                    for area in panel.findChildren(QScrollArea)
+                ))
+                toggle.setChecked(False)
+                self.app.processEvents()
+                self.assertFalse(panel.isVisible())
+        last_palette = shell.temperature_argb.palette_buttons[8]
+        status = shell.temperature_argb.labels[8]
+        save = shell.temperature_argb.save_buttons[8]
+        shell.temperature_argb.lows[8].setValue(31)  # Show the longer dirty status.
+        shell.argb_auto_sections["temperature"].setChecked(True)
         self.app.processEvents()
-        self.assertTrue(shell.audio_reactive.isVisible())
-        shell.argb_auto_sections["audio"].setChecked(False)
-        self.app.processEvents()
-        self.assertFalse(shell.audio_reactive.isVisible())
-        shell.argb_workspace_tabs.setCurrentIndex(0)
-        self.app.processEvents()
-        shell.argb_studio_toggle.setChecked(True)
-        self.app.processEvents()
-        self.assertTrue(shell.studio.isVisible())
-        shell.argb_studio_toggle.setChecked(False)
-        self.app.processEvents()
-        self.assertFalse(shell.studio.isVisible())
+        self.assertLess(status.geometry().right(), save.geometry().left())
+        scroll.ensureWidgetVisible(last_palette)
+        self.assertTrue(scroll.viewport().rect().contains(
+            last_palette.mapTo(scroll.viewport(), QPoint(0, 0))
+            + last_palette.rect().bottomRight()
+        ))
 
     def test_argb_scene_targets_only_available_zones_and_labels_quick_target(self):
         from unittest.mock import Mock
@@ -337,9 +394,6 @@ class DashboardSmokeTests(unittest.TestCase):
 
     def test_workspaces_are_focused_and_responsive(self):
         shell = self.window.dashboard
-        self.assertEqual(shell.fan_workspace_tabs.count(), 3)
-        self.assertEqual(shell.sensor_workspace_tabs.count(), 3)
-        self.assertEqual(shell.argb_workspace_tabs.count(), 3)
         self.assertEqual(shell.service_workspace_tabs.count(), 5)
         self.window.show()
         for width in (1080, 1510):
@@ -366,6 +420,49 @@ class DashboardSmokeTests(unittest.TestCase):
                     scroll.widget().width(), scroll.viewport().width() + 3,
                     f"Horizontal clipping in {key} at {width}px",
                 )
+
+    def test_cooling_sections_scroll_and_home_returns_to_the_selected_editor(self):
+        from PySide6.QtCore import QPoint
+        from PySide6.QtWidgets import QTabWidget
+
+        shell = self.window.dashboard
+        self.window.resize(1080, 760)
+        self.window.show()
+        shell.show_page("fans")
+        self.app.processEvents()
+        scroll = shell.stack.currentWidget()
+        self.assertIsNone(scroll.widget().findChild(QTabWidget, "fanWorkspaceTabs"))
+        for widget in (shell.fan_channel_buttons[8], self.window.curve_plot,
+                       self.window.save_button, self.window.reread_curve_button,
+                       shell.temperature_source_button, shell.fan_list_toggle,
+                       shell.fan_history_toggle):
+            origin = widget.mapTo(scroll.viewport(), QPoint())
+            self.assertTrue(scroll.viewport().rect().contains(widget.rect().translated(origin)),
+                            widget.objectName() or repr(widget))
+
+        self.assertTrue(shell.fan_list_panel.isHidden())
+        self.assertTrue(shell.fan_history_panel.isHidden())
+        shell.fan_list_toggle.click()
+        self.app.processEvents()
+        self.assertTrue(self.window.fan_table.isVisible())
+        self.window.fan_table.selectRow(5)
+        self.assertEqual(self.window.current_fan, 6)
+        scroll.ensureWidgetVisible(shell.fan_history_toggle)
+        self.assertGreater(scroll.verticalScrollBar().value(), 0)
+        shell.fan_history_toggle.click()
+        self.app.processEvents()
+        self.assertTrue(self.window.history_tabs.isVisible())
+        self.assertTrue(self.window.fan_table.isVisible())
+        self.assertEqual(scroll.horizontalScrollBar().maximum(), 0)
+
+        shell.show_page("overview")
+        shell.fan_cards[3]["settings_button"].click()
+        self.app.processEvents()
+        self.assertEqual(self.window.current_fan, 3)
+        self.assertTrue(shell.fan_channel_buttons[3].isChecked())
+        self.assertIs(shell.stack.currentWidget(), scroll)
+        self.assertEqual(scroll.verticalScrollBar().value(), 0)
+        self.assertTrue(self.window.curve_plot.isVisible())
 
     def test_v3_fan_editor_has_balanced_curve_and_live_side_panel(self):
         shell = self.window.dashboard
@@ -413,6 +510,80 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertGreater(x_max, 125)
         self.assertLess(y_min, 0)
         self.assertGreater(y_max, 100)
+
+    def test_fan_list_distinguishes_profile_storage_and_mode_targets(self):
+        from unittest.mock import call, patch
+        from PySide6.QtWidgets import QGroupBox, QInputDialog, QLabel, QPushButton
+
+        shell = self.window.dashboard
+        fan_list = shell.fan_list_panel
+        groups = {box.title(): box for box in fan_list.findChildren(QGroupBox)}
+        self.assertIn("Усі вентилятори", groups)
+        all_fans = groups["Усі вентилятори"]
+        self.assertTrue(all_fans.isAncestorOf(self.window.profile_box))
+        all_actions = {button.text(): button for button in all_fans.findChildren(QPushButton)}
+        self.assertIn("NVS", all_actions["Записати в ESP32"].toolTip())
+        self.assertIn("основні криві", all_actions["Зберегти Custom на ПК"].toolTip())
+
+        selected = groups["Вибраний вентилятор · FAN 01"]
+        self.window.fan_table.selectRow(3)
+        self.assertEqual(selected.title(), "Вибраний вентилятор · FAN 04")
+        self.assertTrue(any(
+            "Середнє (AVG)" in label.text() and "максимум (MAX)" in label.text()
+            for label in selected.findChildren(QLabel)
+        ))
+        selected_actions = {button.text(): button for button in selected.findChildren(QPushButton)}
+        self.assertIn("Датчики для кривої…", selected_actions)
+        with (
+            patch.object(self.window, "send", return_value=True) as send,
+            patch.object(QInputDialog, "getInt", return_value=(42, True)),
+        ):
+            selected_actions["Ручний PWM…"].click()
+            selected_actions["Повернути в Авто"].click()
+            all_actions["Усі вентилятори → Авто"].click()
+            self.assertEqual(send.call_args_list, [call("FAN 4 42"), call("AUTO 4"), call("ALLAUTO")])
+
+    def test_fan_list_discloses_advanced_tools_without_horizontal_clipping(self):
+        from PySide6.QtCore import QPoint
+        from PySide6.QtWidgets import QPushButton, QToolButton
+
+        shell = self.window.dashboard
+        fan_list = shell.fan_list_panel
+        toggles = [button for button in fan_list.findChildren(QToolButton)
+                   if button.text() == "Додаткові інструменти"]
+        self.assertEqual(len(toggles), 1)
+        toggle = toggles[0]
+        actions = {button.text(): button for button in fan_list.findChildren(QPushButton)}
+        advanced = [actions[name] for name in (
+            "Профілі за програмами…", "Автономні профілі ESP32…", "Airflow Assistant…",
+        )]
+
+        self.window.show()
+        for width, height in ((1080, 760), (1510, 930)):
+            with self.subTest(width=width):
+                shell.show_page("overview")
+                self.window.resize(width, height)
+                shell.show_page("fans")
+                shell.fan_list_toggle.setChecked(True)
+                self.app.processEvents()
+                self.assertFalse(toggle.isChecked())
+                self.assertTrue(actions["Групи вентиляторів…"].isVisible())
+                self.assertTrue(all(not button.isVisible() for button in advanced))
+                toggle.click()
+                self.app.processEvents()
+                viewport = shell.stack.currentWidget().viewport()
+                for widget in (self.window.profile_box, toggle, *actions.values()):
+                    self.assertTrue(widget.isVisible())
+                    left = widget.mapTo(viewport, QPoint()).x()
+                    self.assertGreaterEqual(left, 0)
+                    self.assertLessEqual(left + widget.width(), viewport.width())
+                    self.assertGreaterEqual(widget.width(), widget.minimumSizeHint().width())
+                table = self.window.fan_table
+                header = table.horizontalHeader()
+                self.assertGreaterEqual(header.sectionSize(5), header.sectionSizeHint(5))
+                self.assertGreaterEqual(table.viewport().height(), table.verticalHeader().length())
+                toggle.click()
+                self.assertTrue(all(not button.isVisible() for button in advanced))
 
     def test_curve_save_status_waits_for_matching_channel_and_curve(self):
         from unittest.mock import patch
@@ -669,7 +840,6 @@ class DashboardSmokeTests(unittest.TestCase):
     def test_v3_argb_zone_map_is_read_only_until_apply(self):
         shell = self.window.dashboard
         self.assertEqual(len(shell.argb_zone_tiles), 8)
-        self.assertEqual(shell.argb_workspace_tabs.count(), 3)
         self.assertTrue(shell.argb_zone_tiles[1][0].property("selected"))
         shell.zone_box.setCurrentIndex(4)
         self.assertFalse(shell.argb_zone_tiles[1][0].property("selected"))
@@ -677,9 +847,6 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertEqual(self.window.fan_box.currentIndex(), 4)
         shell.sync_zone(7)
         self.assertTrue(shell.argb_zone_tiles[8][0].property("selected"))
-        shell.argb_workspace_tabs.setCurrentIndex(2)
-        self.assertTrue(shell.native_checkbox.isVisible() or
-                        not shell.isVisible())  # stored OpenRGB control still exists
 
     def test_v3_esp32_footer_and_responsive_help(self):
         shell = self.window.dashboard
@@ -946,6 +1113,52 @@ class DashboardSmokeTests(unittest.TestCase):
         logs = shell.stack.widget(shell.page_index["logs"]).widget()
         self.assertTrue(logs.isAncestorOf(self.window.log_text))
 
+    def test_temperature_page_stacks_readings_and_exposes_sources_by_keyboard(self):
+        from unittest.mock import patch
+        from PySide6.QtCore import QPoint, Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QTabWidget, QToolButton
+
+        window = self.window
+        shell = window.dashboard
+        window.resize(1080, 760)
+        window.show()
+        with patch.object(window, "send") as send:
+            shell.show_page("sensors")
+            self.app.processEvents()
+            scroller = shell.stack.currentWidget()
+            page = scroller.widget()
+            viewport = scroller.viewport()
+            self.assertEqual(page.findChildren(QTabWidget), [window.sensor_tabs])
+            self.assertEqual(window.sensor_tabs.count(), 2)
+            self.assertTrue(window.sensor_search.isVisible())
+            self.assertTrue(window.sensor_table.isVisible())
+            status = shell.hardware_sensor.status
+            self.assertTrue(status.isVisible())
+            self.assertTrue(viewport.rect().contains(
+                status.mapTo(viewport, status.rect().bottomRight())
+            ))
+
+            self.assertTrue(shell.sensor_manager.isHidden())
+            toggle, = [button for button in page.findChildren(QToolButton)
+                       if button.accessibleName() == "Джерела NWinfo"]
+            self.assertGreater(
+                toggle.mapTo(page, QPoint()).y(),
+                shell.hardware_sensor.mapTo(page, shell.hardware_sensor.rect().bottomLeft()).y(),
+            )
+            scroller.ensureWidgetVisible(toggle)
+            toggle.setFocus()
+            self.assertTrue(toggle.hasFocus())
+            QTest.keyClick(toggle, Qt.Key.Key_Space)
+            self.app.processEvents()
+            self.assertTrue(shell.sensor_manager.isVisible())
+            for widget in (window.sensor_tabs, shell.hardware_sensor, shell.sensor_manager):
+                self.assertLess(widget.mapTo(viewport, widget.rect().topRight()).x(), viewport.width())
+            self.assertEqual(scroller.horizontalScrollBar().maximum(), 0)
+            QTest.keyClick(toggle, Qt.Key.Key_Space)
+            self.assertTrue(shell.sensor_manager.isHidden())
+            send.assert_not_called()
+
     def test_nwinfo_local_sensors_reach_gui_and_fan_choices(self):
         from concurrent.futures import Future
         from nwinfo_sensors import parse_nwinfo_temperatures
@@ -1017,6 +1230,98 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertIn("частково", self.window.sensor_status.text())
         self.assertIn("CPU", self.window.sensor_status.toolTip())
 
+    def test_hardware_temperature_source_lives_in_selected_fan_curve_editor(self):
+        from PySide6.QtWidgets import QComboBox
+
+        shell = self.window.dashboard
+        self.window.resize(1080, 760)
+        shell.set_connected(True, "TEST")
+        self.window.show()
+        shell.show_page("sensors")
+        self.window.handle_line("HTEMP ENABLED=1 VALID=0")
+        self.app.processEvents()
+        self.assertFalse(shell.hardware_sensor.findChildren(QComboBox))
+        self.assertTrue(shell.hardware_sensor.rescan.isVisible())
+
+        shell.show_page("fans")
+        self.app.processEvents()
+        button = shell.temperature_source_button
+        curve_page = shell.fan_curve_editor
+        self.assertTrue(curve_page.isAncestorOf(button))
+        self.assertTrue(button.isVisible())
+        self.assertIn("Джерело температури", button.text())
+        self.assertTrue(button.visibleRegion().contains(button.rect()))
+        self.assertTrue(shell.fan_curve_source.text().startswith("Датчик Windows · крива 1:"))
+        self.window.secondary_checkbox.setChecked(True)
+        self.assertTrue(shell.fan_curve_source.text().startswith("Датчик Windows · крива 2:"))
+
+    def test_hardware_source_readback_and_writes_are_scoped_to_selected_fan(self):
+        from unittest.mock import patch
+        from PySide6.QtWidgets import QLabel, QMessageBox
+
+        shell = self.window.dashboard
+        shell.set_connected(True, "TEST")
+        shell.show_page("fans")
+        self.window.show()
+        rom, missing = "2800010203040506", "2800060504030201"
+        self.window.handle_line("HTEMP ENABLED=1 VALID=0")
+        self.window.handle_line(f"HTSENSOR 1 ROM={rom} VALID=1 TEMP=365")
+        self.window.handle_line("HTSENSOR_END COUNT=1")
+        dialog = shell.temperature_source_dialog
+        with patch.object(self.window, "send", return_value=True) as send:
+            shell.fan_channel_buttons[4].click()
+            shell.temperature_source_button.click()
+            self.assertIn("FAN 04", dialog.windowTitle())
+            self.assertEqual([c.args[0] for c in send.call_args_list], ["HTMODE? 4", "HTMAP? 4"])
+            self.window.handle_line("HTMODE 1 LOCAL")
+            self.assertFalse(dialog.save_mode.isEnabled())
+            self.window.handle_line("HTMODE 4 PC")
+            self.assertTrue(dialog.mapping.isHidden())
+            self.window.handle_line(f"HTMAP 4 ROM={missing}")
+            dialog.mode.setCurrentIndex(dialog.mode.findData("BACKUP"))
+            self.assertFalse(dialog.mapping.isHidden())
+            self.app.processEvents()
+            note = next(label for label in dialog.findChildren(QLabel) if label.wordWrap())
+            self.assertGreaterEqual(note.height(), note.heightForWidth(note.width()))
+            self.assertEqual(dialog.probe_box.currentData(), missing)
+            self.assertIn("датчик відсутній", dialog.probe_box.currentText())
+            send.reset_mock()
+            with patch.object(QMessageBox, "warning", return_value=QMessageBox.StandardButton.No):
+                dialog.save_mode.click()
+            send.assert_not_called()
+            with patch.object(QMessageBox, "warning", return_value=QMessageBox.StandardButton.Yes):
+                dialog.save_mode.click()
+            self.assertEqual([c.args[0] for c in send.call_args_list], ["HTMODE 4 BACKUP", "HTMODE? 4"])
+            self.window.handle_line("HTMODE 4 BACKUP")
+
+            for address in (rom, "AUTO"):
+                send.reset_mock()
+                dialog.probe_box.setCurrentIndex(dialog.probe_box.findData(address))
+                with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No):
+                    dialog.save_map.click()
+                send.assert_not_called()
+                with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+                    dialog.save_map.click()
+                self.assertEqual([c.args[0] for c in send.call_args_list], [f"HTMAP 4 {address}", "HTMAP? 4"])
+                self.window.handle_line(f"HTMAP 4 ROM={address}")
+                self.assertEqual(dialog.probe_box.currentData(), address)
+
+            self.window.fan_box.setCurrentIndex(6)
+            self.assertFalse(dialog.isVisible())
+            send.reset_mock()
+            shell.temperature_source_button.click()
+            self.assertIn("FAN 07", dialog.windowTitle())
+            self.assertEqual([c.args[0] for c in send.call_args_list], ["HTMODE? 7", "HTMAP? 7"])
+            self.window.handle_line("HTMODE 4 BACKUP")
+            self.window.handle_line(f"HTMAP 4 ROM={rom}")
+            self.assertFalse(dialog.save_mode.isEnabled())
+            self.window.handle_line("HTMODE 7 LOCAL")
+            self.assertFalse(dialog.save_map.isEnabled())
+            self.window.handle_line("HTMAP 7 ROM=AUTO")
+            self.assertEqual(dialog.mode.currentData(), "LOCAL")
+            self.assertEqual(dialog.probe_box.currentData(), "AUTO")
+            self.assertTrue(dialog.save_map.isEnabled())
+
     def test_v6_hardware_sensor_diagnostics_and_maintenance_panels(self):
         shell = self.window.dashboard
         self.assertIsNotNone(shell.hardware_sensor)
@@ -1028,8 +1333,6 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertIn("power", self.window.history_plots)
         self.window.handle_line("HTEMP ENABLED=1 VALID=1 TEMP=365 AGE_MS=4")
         self.assertIn("36.5", shell.hardware_sensor.status.text())
-        self.window.handle_line("HTMODE 1 BACKUP")
-        self.assertEqual(shell.hardware_sensor.current_modes[1], "BACKUP")
         self.window.handle_line("FW VERSION=6 SERIAL=4 DC_READY=0 DS18B20=1")
         self.assertIn("v6", shell.firmware_status.text())
         self.window.handle_line(
@@ -1037,6 +1340,41 @@ class DashboardSmokeTests(unittest.TestCase):
             "TACH=seen TACH_VALID=1 SENSOR=ok FAULT=0 DC_READY=0 MODE=auto"
         )
         self.assertIn("заблоковано", shell.diagnostics.table.item(0, 7).text())
+
+    def test_disconnect_clears_previous_controller_hardware_sensor_support(self):
+        shell = self.window.dashboard
+        panel = shell.hardware_sensor
+        button = shell.temperature_source_button
+        dialog = shell.temperature_source_dialog
+        shell.set_connected(True, "TEST")
+        self.assertFalse(button.isEnabled())
+        self.window.handle_line("HTEMP ENABLED=0 VALID=0")
+        self.assertFalse(button.isEnabled())
+        self.window.fan_box.setCurrentIndex(1)
+        self.window.handle_line("FW VERSION=8 SERIAL=7 N16R8=1 CHMASK=253 DC_READY=1")
+        self.window.handle_line("HTEMP ENABLED=1 VALID=0")
+        self.assertFalse(button.isEnabled())
+        shell.fan_channel_buttons[1].click()
+        self.assertTrue(button.isEnabled())
+        self.window.show()
+        shell.show_page("fans")
+        button.click()
+        self.window.handle_line("HTMODE 1 BACKUP")
+        self.window.handle_line("HTMAP 1 ROM=2800010203040506")
+        self.assertTrue(panel.available)
+        self.assertTrue(dialog.save_map.isEnabled())
+
+        self.window.disconnect()
+
+        self.assertFalse(panel.available)
+        self.assertIn("Не опитано", panel.status.text())
+        self.assertFalse(button.isEnabled())
+        self.assertFalse(dialog.isVisible())
+        shell.set_connected(True, "TEST")
+        self.window.handle_line("HTEMP ENABLED=1 VALID=0")
+        button.click()
+        self.assertFalse(dialog.save_mode.isEnabled())
+        self.assertIsNone(dialog.probe_box.currentData())
 
     def test_manual_curve_edits_disable_automatic_profiles(self):
         box = self.window.dashboard.settings_panel.auto_profiles

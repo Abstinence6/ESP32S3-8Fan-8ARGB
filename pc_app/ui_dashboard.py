@@ -11,7 +11,7 @@ import time
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from settings_widgets import DesktopSettingsPanel
-from hardware_sensor_ui import HardwareSensorPanel
+from hardware_sensor_ui import FanTemperatureSourceDialog, HardwareSensorPanel
 from argb_studio_ui import ArgbStudioPanel
 from native_effects_ui import NativeEffectsPanel
 from reactive_argb_ui import ReactiveArgbPanel
@@ -204,6 +204,7 @@ class DashboardShell(QWidget):
         right.addWidget(self.stack, 1)
         root.addWidget(workspace, 1)
 
+        self.hardware_sensor = HardwareSensorPanel(self.controller)
         self._create_overview()
         self._create_fans(table_box, choose_row, curve_box, history_box)
         self._create_sensors(sensors_box)
@@ -465,6 +466,7 @@ class DashboardShell(QWidget):
         toggle = QToolButton(frame)
         toggle.setText(title)
         toggle.setCheckable(True)
+        toggle.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         toggle.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
         toggle.setAccessibleName(title)
@@ -862,14 +864,9 @@ class DashboardShell(QWidget):
         self._refresh_fan_channel_buttons()
         self.controller.type_box.setMaximumWidth(220)
         layout.addWidget(toolbar)
-        self.fan_workspace_tabs = QTabWidget()
-        self.fan_workspace_tabs.setObjectName("fanWorkspaceTabs")
-        self.fan_workspace_tabs.setDocumentMode(True)
-        self.fan_workspace_tabs.tabBar().setDrawBase(False)
-
-        curve_page = QWidget()
-        curve_layout = QVBoxLayout(curve_page)
-        curve_layout.setContentsMargins(0, 8, 0, 0)
+        self.fan_curve_editor = QWidget()
+        curve_layout = QVBoxLayout(self.fan_curve_editor)
+        curve_layout.setContentsMargins(0, 0, 0, 0)
         curve_layout.setSpacing(6)
 
         # Retain all original Qt widgets and signals. Only move their layouts
@@ -912,6 +909,11 @@ class DashboardShell(QWidget):
         self.fan_curve_source = _label("Джерело: —", "minor", True)
         self.fan_curve_status = _label("Локальна крива", "minor", True)
         editor_layout.addWidget(self.fan_curve_source)
+        self.temperature_source_dialog = FanTemperatureSourceDialog(self.hardware_sensor, self)
+        self.temperature_source_button = QPushButton("Джерело температури…")
+        self.temperature_source_button.clicked.connect(self._open_temperature_source)
+        self.hardware_sensor.support_changed.connect(self._update_temperature_source)
+        editor_layout.addWidget(self.temperature_source_button)
         editor_layout.addWidget(self.fan_curve_status)
         _move_controls(curve_actions, editor_layout)
         editor_layout.addWidget(_label("ПРЕСЕТИ · ВИБРАНИЙ FAN", "sectionLabel"))
@@ -968,7 +970,7 @@ class DashboardShell(QWidget):
         self.fan_control_panel = QWidget()
         side = QVBoxLayout(self.fan_control_panel)
         side.setContentsMargins(0, 0, 0, 0)
-        side.setSpacing(10)
+        side.setSpacing(8)
         side.addWidget(self.fan_live_card)
         side.addWidget(editor)
         self.advanced_fan_toggle = QToolButton()
@@ -1000,41 +1002,31 @@ class DashboardShell(QWidget):
         split = QGridLayout()
         split.setContentsMargins(0, 0, 0, 0)
         split.setHorizontalSpacing(13)
-        split.setVerticalSpacing(13)
-        split.addWidget(curve_box, 0, 0, Qt.AlignmentFlag.AlignTop)
+        chart = QVBoxLayout()
+        chart.setSpacing(6)
+        chart.addWidget(curve_box)
+        chart.addWidget(_label(
+            "Перетягніть точки, а потім запишіть криву в ESP32. "
+            "Обмеження силового DC PWM не змінюються.", "minor", True,
+        ))
+        chart.addStretch(1)
+        split.addLayout(chart, 0, 0)
         split.addWidget(self.fan_control_panel, 0, 1)
         split.setColumnStretch(0, 7)
         split.setColumnStretch(1, 4)
         curve_layout.addLayout(split)
-        curve_layout.addWidget(_label(
-            "Крива змінюється перетягуванням точок. Вона записується в ESP32 "
-            "тільки після натискання «Зберегти». Обмеження силового DC PWM не змінюються.",
-            "minor", True,
-        ))
-        curve_layout.addStretch(1)
-        self.fan_workspace_tabs.addTab(curve_page, "Керування та криві")
+        layout.addWidget(self.fan_curve_editor)
 
-        list_page = QWidget()
-        list_layout = QVBoxLayout(list_page)
-        list_layout.setContentsMargins(0, 12, 0, 0)
-        list_layout.setSpacing(10)
         table_box.setTitle("8 каналів · PWM, RPM та джерела температури")
         table_box.setMinimumHeight(400)
         self.controller.fan_table.setMaximumHeight(16777215)
-        list_layout.addWidget(table_box)
-        list_layout.addStretch(1)
-        self.fan_workspace_tabs.addTab(list_page, "Список вентиляторів")
+        self.fan_list_panel = table_box
+        self.fan_list_toggle = self._expandable_panel(layout, "Список вентиляторів", table_box)
 
-        history_page = QWidget()
-        history_layout = QVBoxLayout(history_page)
-        history_layout.setContentsMargins(0, 12, 0, 0)
         history_box.setTitle("Історія вибраного вентилятора")
         history_box.setMinimumHeight(390)
-        history_layout.addWidget(history_box)
-        history_layout.addStretch(1)
-        self.fan_workspace_tabs.addTab(history_page, "Історія")
-
-        layout.addWidget(self.fan_workspace_tabs, 1)
+        self.fan_history_panel = history_box
+        self.fan_history_toggle = self._expandable_panel(layout, "Історія", history_box)
         layout.addStretch(1)
         self.controller.fan_box.currentIndexChanged.connect(
             lambda _index: self._refresh_fan_detail()
@@ -1047,8 +1039,26 @@ class DashboardShell(QWidget):
         for channel, button in self.fan_channel_buttons.items():
             button.setChecked(selected == channel)
 
+    def _open_temperature_source(self) -> None:
+        if self.temperature_source_button.isEnabled():
+            self.temperature_source_dialog.open_for_channel(self.controller.current_fan)
+
+    def _update_temperature_source(self) -> None:
+        channel = self.controller.current_fan
+        enabled = (self.is_connected and not self._demo and self.hardware_sensor.available
+                   and self.is_channel_available(channel))
+        self.temperature_source_button.setEnabled(enabled)
+        self.temperature_source_button.setToolTip(
+            "Джерело основної кривої ESP32: Windows, DS18B20 (основний або резервний)."
+            if enabled else "Потрібні доступний FAN і підтримка DS18B20 на підключеному ESP32."
+        )
+        dialog = self.temperature_source_dialog
+        if dialog.channel is not None and (not enabled or dialog.channel != channel):
+            dialog.reject()
+
     def _refresh_fan_detail(self) -> None:
         self._update_preset_availability()
+        self._update_temperature_source()
         channel = self.controller.fan_box.currentData()
         if channel is None:
             return
@@ -1093,17 +1103,9 @@ class DashboardShell(QWidget):
     def _create_argb(self, rgb_box, scenes: Iterable[str]) -> None:
         page, layout = self._content(
             "Підсвітка ARGB",
-            "Вибери зону й ефект. Розташування зон показано схематично.",
+            "Кольори, автоматичні ефекти та синхронізація з OpenRGB.",
         )
-        self.argb_workspace_tabs = QTabWidget()
-        self.argb_workspace_tabs.setObjectName("argbWorkspaceTabs")
-        self.argb_workspace_tabs.setDocumentMode(True)
-        self.argb_workspace_tabs.tabBar().setDrawBase(False)
-
-        scenes_page = QWidget()
-        scenes_layout = QVBoxLayout(scenes_page)
-        scenes_layout.setContentsMargins(0, 12, 0, 0)
-        scenes_layout.setSpacing(13)
+        layout.addWidget(_label("КОЛЬОРИ · ВИБІР ЗОНИ", "sectionLabel"))
 
         # One 8-button channel selector shared by all ARGB modes. The existing
         # hidden QComboBox remains the authoritative selection source for
@@ -1173,14 +1175,6 @@ class DashboardShell(QWidget):
         self.argb_apply_button.setProperty("role", "primary")
         self.argb_apply_button.clicked.connect(self._apply_scene)
         control.addWidget(self.argb_apply_button)
-        control.addStretch(1)
-
-        work = QGridLayout()
-        work.setContentsMargins(0, 0, 0, 0)
-        work.setHorizontalSpacing(13)
-        work.addWidget(select, 0, 0)
-        work.setColumnStretch(0, 1)
-        scenes_layout.addLayout(work)
 
         # All original manual controls remain wired to the controller;
         # move only their widgets out of the formerly sprawling rgb_box.
@@ -1200,19 +1194,57 @@ class DashboardShell(QWidget):
         _move_controls(manual_row, quick_actions)
         quick_layout.addLayout(quick_actions)
         self.argb_quick_buttons = quick.findChildren(QPushButton)
-        scenes_layout.addWidget(quick)
-        scenes_layout.addWidget(_label(
+        layout.addWidget(quick)
+        layout.addWidget(select)
+        layout.addWidget(_label(
             "Прев’ю ARGB на лопатях (Головна) моделює надіслані кольори, "
             "а не фактичну підсвітку. Без даних про колір лопаті показують лише RPM. "
             "Сірі канали недоступні на цій платі.",
             "minor", True,
         ))
-        scenes_layout.addStretch(1)
-        self.argb_workspace_tabs.addTab(scenes_page, "Ефекти")
+        self.studio = ArgbStudioPanel(self.controller)
+        self.argb_studio_toggle = self._expandable_panel(
+            layout, "Створити власний ефект", self.studio
+        )
 
-        openrgb_page = QWidget()
-        openrgb_layout = QVBoxLayout(openrgb_page)
-        openrgb_layout.setContentsMargins(0, 12, 0, 0)
+        layout.addWidget(_label("АВТОЕФЕКТИ", "sectionLabel"))
+        layout.addWidget(_label(
+            "Ефекти можуть працювати автономно на ESP32 або реагувати на ПК.",
+            "minor", True,
+        ))
+        self.native_effects = NativeEffectsPanel(self.controller)
+        self.temperature_argb = TemperatureArgbPanel(self.controller)
+        # Let the page, not the temperature grid, own vertical scrolling.
+        temperature_scroll = self.temperature_argb.findChild(QScrollArea)
+        temperature_grid = temperature_scroll.takeWidget()
+        temperature_grid.layout().setContentsMargins(0, 0, 0, 0)
+        for zone, source in self.temperature_argb.sources.items():
+            # A long live sensor name or status must not widen the page.
+            source.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            source.setMinimumWidth(130)
+            status = self.temperature_argb.labels[zone]
+            status.setWordWrap(True)
+            status.setMinimumWidth(80)
+            save = self.temperature_argb.save_buttons[zone]
+            save.setToolTip(save.text())
+            save.setAccessibleName(save.text())
+            save.setText("Зберегти")
+        self.temperature_argb.layout().replaceWidget(temperature_scroll, temperature_grid)
+        temperature_scroll.hide()
+        temperature_scroll.deleteLater()
+        self.reactive_argb = ReactiveArgbPanel(self.controller)
+        self.audio_reactive = AudioReactivePanel(self.controller)
+        self.argb_auto_sections = {
+            "native": self._expandable_panel(layout, "Автономні ефекти ESP32", self.native_effects),
+            "temperature": self._expandable_panel(layout, "За температурою", self.temperature_argb),
+            "sensors": self._expandable_panel(layout, "За показниками датчиків", self.reactive_argb),
+            "audio": self._expandable_panel(layout, "За звуком", self.audio_reactive),
+        }
+
+        layout.addWidget(_label("СИНХРОНІЗАЦІЯ", "sectionLabel"))
+        openrgb = QWidget()
+        openrgb_layout = QVBoxLayout(openrgb)
+        openrgb_layout.setContentsMargins(0, 0, 0, 0)
         openrgb_layout.setSpacing(12)
         native = QFrame()
         native.setObjectName("quietCard")
@@ -1243,92 +1275,7 @@ class DashboardShell(QWidget):
             "minor", True,
         ))
         openrgb_layout.addWidget(note)
-        openrgb_layout.addStretch(1)
-        self.argb_workspace_tabs.addTab(openrgb_page, "OpenRGB")
-
-        studio_page = QWidget()
-        studio_layout = QVBoxLayout(studio_page)
-        studio_layout.setContentsMargins(0, 12, 0, 0)
-        studio_layout.setSpacing(9)
-        self.studio = ArgbStudioPanel(self.controller)
-        studio_layout.addWidget(self.studio)
-        studio_layout.addStretch(1)
-        self.argb_workspace_tabs.addTab(studio_page, "Студія")
-
-        temperature_page = QWidget()
-        temperature_layout = QVBoxLayout(temperature_page)
-        temperature_layout.setContentsMargins(0, 12, 0, 0)
-        self.temperature_argb = TemperatureArgbPanel(self.controller)
-        temperature_layout.addWidget(self.temperature_argb)
-        self.argb_workspace_tabs.addTab(temperature_page, "Температура")
-        native_fx_page = QWidget()
-        native_fx_layout = QVBoxLayout(native_fx_page)
-        native_fx_layout.setContentsMargins(0, 12, 0, 0)
-        self.native_effects = NativeEffectsPanel(self.controller)
-        native_fx_layout.addWidget(self.native_effects)
-        native_fx_layout.addStretch(1)
-        self.argb_workspace_tabs.addTab(native_fx_page, "Ефекти ESP32")
-
-        reactive_page = QWidget()
-        reactive_layout = QVBoxLayout(reactive_page)
-        reactive_layout.setContentsMargins(0, 12, 0, 0)
-        self.reactive_argb = ReactiveArgbPanel(self.controller)
-        reactive_layout.addWidget(self.reactive_argb)
-        reactive_layout.addStretch(1)
-        self.argb_workspace_tabs.addTab(reactive_page, "Реактивні датчики")
-
-        audio_page = QWidget()
-        audio_layout = QVBoxLayout(audio_page)
-        audio_layout.setContentsMargins(0, 12, 0, 0)
-        self.audio_reactive = AudioReactivePanel(self.controller)
-        audio_layout.addWidget(self.audio_reactive)
-        audio_layout.addStretch(1)
-        self.argb_workspace_tabs.addTab(audio_page, "Звукова підсвітка")
-
-        # Seven legacy pages are preserved, but presented in three clear tasks.
-        # Expanded sections use the existing widgets and signal connections.
-        for index in reversed(range(self.argb_workspace_tabs.count())):
-            self.argb_workspace_tabs.removeTab(index)
-
-        # Basics: zones, quick color/scene commands, optional advanced editor.
-        trailing = scenes_layout.takeAt(scenes_layout.count() - 1)
-        if trailing is not None and trailing.widget() is not None:
-            scenes_layout.addWidget(trailing.widget())
-        self.argb_studio_toggle = self._expandable_panel(
-            scenes_layout, "Створити власний ефект", studio_page
-        )
-        scenes_layout.addStretch(1)
-        self.argb_workspace_tabs.addTab(scenes_page, "Кольори")
-
-        # Automatic effects: four related modes, not four separate tabs.
-        auto_page = QWidget()
-        auto_layout = QVBoxLayout(auto_page)
-        auto_layout.setContentsMargins(0, 12, 0, 0)
-        auto_layout.setSpacing(10)
-        auto_layout.addWidget(_label(
-            "Ефекти можуть працювати автономно на ESP32 або реагувати на ПК.",
-            "minor", True,
-        ))
-        self.argb_auto_sections = {
-            "native": self._expandable_panel(
-                auto_layout, "Автономні ефекти ESP32", native_fx_page, expanded=True
-            ),
-            "temperature": self._expandable_panel(
-                auto_layout, "За температурою", temperature_page
-            ),
-            "sensors": self._expandable_panel(
-                auto_layout, "За показниками датчиків", reactive_page
-            ),
-            "audio": self._expandable_panel(
-                auto_layout, "За звуком", audio_page
-            ),
-        }
-        auto_layout.addStretch(1)
-        self.argb_workspace_tabs.addTab(auto_page, "Автоефекти")
-
-        # External integrations remain in one dedicated, familiar tab.
-        self.argb_workspace_tabs.addTab(openrgb_page, "OpenRGB")
-        layout.addWidget(self.argb_workspace_tabs, 1)
+        self._expandable_panel(layout, "OpenRGB", openrgb)
         layout.addStretch(1)
         self.scope_all.toggled.connect(self._refresh_argb_targets)
         self._refresh_argb_zone_tiles()
@@ -1477,53 +1424,26 @@ class DashboardShell(QWidget):
             box.addLayout(grid)
         return group
 
-    def _create_sensors(self, sensors_box) -> None:
+    def _create_sensors(self, sensors_box: QGroupBox) -> None:
         page, layout = self._content(
-            "Датчики",
+            "Температури",
             "Температури NWinfo, фізичні DS18B20 та джерела для кривих вентиляторів.",
         )
-        self.sensor_workspace_tabs = QTabWidget()
-        self.sensor_workspace_tabs.setObjectName("sensorWorkspaceTabs")
-        self.sensor_workspace_tabs.setDocumentMode(True)
-        self.sensor_workspace_tabs.tabBar().setDrawBase(False)
-
-        system_page = QWidget()
-        system_layout = QVBoxLayout(system_page)
-        system_layout.setContentsMargins(0, 12, 0, 0)
-        system_layout.setSpacing(10)
-        sensors_box.setTitle("Сенсори Windows · NWinfo")
-        sensors_box.setMinimumHeight(440)
-        system_layout.addWidget(sensors_box)
-        endpoint = QFrame()
-        endpoint.setObjectName("quietCard")
-        ep = QHBoxLayout(endpoint)
-        ep.setContentsMargins(15, 12, 15, 12)
-        ep.addWidget(_label("CPU · GPU · SSD · RAM", "minor"), 1)
+        sensors_box.setTitle("Датчики ПК · NWinfo")
+        sensors_box.setMinimumHeight(360)
+        tools = QHBoxLayout()
+        tools.addWidget(_label("CPU · GPU · SSD · RAM", "minor"), 1)
         scan = QPushButton("Оновити")
         scan.clicked.connect(self.controller.refresh_temperatures)
-        ep.addWidget(scan)
-        ep.addWidget(self.controller.sensor_status)
-        system_layout.addWidget(endpoint)
-        system_layout.addStretch(1)
-        self.sensor_workspace_tabs.addTab(system_page, "Датчики ПК")
+        tools.addWidget(scan)
+        tools.addWidget(self.controller.sensor_status)
+        sensors_box.layout().insertLayout(0, tools)
+        layout.addWidget(sensors_box)
 
-        hw_page = QWidget()
-        hw_layout = QVBoxLayout(hw_page)
-        hw_layout.setContentsMargins(0, 12, 0, 0)
-        self.hardware_sensor = HardwareSensorPanel(self.controller)
-        hw_layout.addWidget(self.hardware_sensor)
-        hw_layout.addStretch(1)
-        self.sensor_workspace_tabs.addTab(hw_page, "DS18B20")
+        layout.addWidget(self.hardware_sensor)
 
-        source_page = QWidget()
-        source_layout = QVBoxLayout(source_page)
-        source_layout.setContentsMargins(0, 12, 0, 0)
         self.sensor_manager = SensorManagerPanel(self.controller)
-        source_layout.addWidget(self.sensor_manager)
-        source_layout.addStretch(1)
-        self.sensor_workspace_tabs.addTab(source_page, "Джерела")
-        layout.addWidget(self.sensor_workspace_tabs, 1)
-        layout.addStretch(1)
+        self._expandable_panel(layout, "Джерела NWinfo", self.sensor_manager)
         self._add_page("sensors", page)
 
     def _create_device_settings(self) -> None:
@@ -1707,7 +1627,6 @@ class DashboardShell(QWidget):
         if not self.is_channel_available(channel):
             return
         self.controller.fan_box.setCurrentIndex(channel - 1)
-        self.fan_workspace_tabs.setCurrentIndex(0)
         self.show_page("fans")
 
     def sync_zone(self, index: int) -> None:

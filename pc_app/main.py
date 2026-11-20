@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QSplitter, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
     QColorDialog, QCheckBox, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem,
     QFileDialog, QSystemTrayIcon, QMenu, QStyle,
-    QHeaderView, QAbstractItemView, QTabWidget,
+    QHeaderView, QAbstractItemView, QTabWidget, QToolButton,
 )
 
 from monitor import (
@@ -233,8 +233,10 @@ class FanArgbWindow(QMainWindow):
         self.fan_table = QTableWidget(8, 6)
         self.fan_table.setHorizontalHeaderLabels(["№", "PWM", "RPM", "Темп. °C", "Режим", "Датчик для кривої"])
         self.fan_table.verticalHeader().setVisible(False)
-        self.fan_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.fan_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        fan_header = self.fan_table.horizontalHeader()
+        fan_header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        fan_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        fan_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.fan_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.fan_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.fan_table.setMaximumHeight(335)
@@ -258,59 +260,99 @@ class FanArgbWindow(QMainWindow):
             box.currentIndexChanged.connect(lambda _=0, number=ch: self.source_changed(number))
             self.fan_table.setCellWidget(row, 5, box)
             self.source_boxes.append(box)
+        self.fan_table.setMinimumHeight(
+            self.fan_table.verticalHeader().length()
+            + fan_header.sizeHint().height() + 2 * self.fan_table.frameWidth()
+        )
         self.fan_table.itemSelectionChanged.connect(self.fan_row_selected)
         table_layout.addWidget(self.fan_table)
+        table_layout.addSpacing(10)
+
+        scopes = QHBoxLayout()
+        all_fans = QGroupBox("Усі вентилятори")
+        all_fans_layout = QVBoxLayout(all_fans)
         profile_row = QHBoxLayout()
-        profile_row.addWidget(QLabel("Профіль:"))
+        profile_label = QLabel("Профіль:")
+        profile_row.addWidget(profile_label)
         self.profile_box = QComboBox()
         self.profile_box.addItems(["Silent", "Balanced", "Performance", "Custom"])
-        profile_row.addWidget(self.profile_box)
-        apply_profile = QPushButton("Застосувати до 8 вентиляторів")
+        profile_label.setBuddy(self.profile_box)
+        profile_row.addWidget(self.profile_box, 1)
+        apply_profile = QPushButton("Записати в ESP32")
+        apply_profile.setToolTip("Замінює основні криві всіх 8 вентиляторів у пам’яті ESP32 (NVS) після підтвердження.")
         apply_profile.clicked.connect(self.apply_profile)
         profile_row.addWidget(apply_profile)
-        save_custom = QPushButton("Зберегти Custom")
+        all_fans_layout.addLayout(profile_row)
+        save_custom = QPushButton("Зберегти Custom на ПК")
+        save_custom.setToolTip("Копіює поточні основні криві всіх 8 вентиляторів у профіль Custom на ПК. Без запису в ESP32.")
         save_custom.clicked.connect(self.save_custom_profile)
-        profile_row.addWidget(save_custom)
-        table_layout.addLayout(profile_row)
+        all_fans_layout.addWidget(save_custom, alignment=Qt.AlignmentFlag.AlignLeft)
+        all_auto = QPushButton("Усі вентилятори → Авто")
+        all_auto.setToolTip("Повертає всі вентилятори в автоматичний режим, не замінюючи їхні криві.")
+        all_auto.clicked.connect(lambda: self.send("ALLAUTO"))
+        all_fans_layout.addWidget(all_auto, alignment=Qt.AlignmentFlag.AlignLeft)
+        all_fans_layout.addStretch(1)
+        scopes.addWidget(all_fans, 1)
+
+        selected_fan = QGroupBox(f"Вибраний вентилятор · FAN {self.current_fan:02d}")
+        selected_layout = QVBoxLayout(selected_fan)
         controls = QHBoxLayout()
-        override_button = QPushButton("PWM вручну…")
+        override_button = QPushButton("Ручний PWM…")
         override_button.clicked.connect(self.manual_override)
         controls.addWidget(override_button)
-        auto_button = QPushButton("Авто для вибраного")
+        auto_button = QPushButton("Повернути в Авто")
         auto_button.clicked.connect(lambda: self.send(f"AUTO {self.current_fan}"))
         controls.addWidget(auto_button)
-        all_auto = QPushButton("Всі → Авто")
-        all_auto.clicked.connect(lambda: self.send("ALLAUTO"))
-        controls.addWidget(all_auto)
-        table_layout.addLayout(controls)
+        controls.addStretch(1)
+        selected_layout.addLayout(controls)
+        group_edit = QPushButton("Датчики для кривої…")
+        group_edit.setToolTip("Вибрати, які датчики входять до групи температур цього вентилятора.")
+        group_edit.clicked.connect(self.edit_sensor_group)
+        selected_layout.addWidget(group_edit, alignment=Qt.AlignmentFlag.AlignLeft)
+        group_hint = QLabel("Середнє (AVG) або максимум (MAX) групи — у стовпці «Датчик для кривої».")
+        group_hint.setProperty("role", "minor")
+        group_hint.setWordWrap(True)
+        selected_layout.addWidget(group_hint)
+        selected_layout.addStretch(1)
+        scopes.addWidget(selected_fan, 1)
+        table_layout.addLayout(scopes)
+
         group_row = QHBoxLayout()
         fan_group_button = QPushButton("Групи вентиляторів…")
+        fan_group_button.setToolTip("Об’єднати кілька вентиляторів для спільного керування.")
         fan_group_button.clicked.connect(self.open_fan_groups)
         group_row.addWidget(fan_group_button)
-        group_edit = QPushButton("Датчики вибраного FAN…")
-        group_edit.clicked.connect(self.edit_sensor_group)
-        group_row.addWidget(group_edit)
-        group_hint = QLabel("Режим AVG/MAX — у таблиці вище")
-        group_hint.setWordWrap(True)
-        group_row.addWidget(group_hint)
+        advanced_toggle = QToolButton()
+        advanced_toggle.setText("Додаткові інструменти")
+        advanced_toggle.setCheckable(True)
+        advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        advanced_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        group_row.addWidget(advanced_toggle)
+        group_row.addStretch(1)
         table_layout.addLayout(group_row)
-        app_row = QHBoxLayout()
+
+        advanced_tools = QWidget()
+        tool_row = QHBoxLayout(advanced_tools)
+        tool_row.setContentsMargins(0, 0, 0, 0)
         app_profiles_button = QPushButton("Профілі за програмами…")
+        app_profiles_button.setToolTip("Правила на ПК; активні програми тимчасово змінюють криві ESP32 без запису в NVS.")
         app_profiles_button.clicked.connect(self.open_application_profiles)
-        app_row.addWidget(app_profiles_button)
-        app_row.addWidget(QLabel("Тимчасові криві ESP32 · без записів NVS"))
-        table_layout.addLayout(app_row)
-        # Keep narrow 1080px layouts responsive: additional device controls
-        # live on their own row rather than widening the original group row.
-        device_row = QHBoxLayout()
+        tool_row.addWidget(app_profiles_button)
         offline_button = QPushButton("Автономні профілі ESP32…")
+        offline_button.setToolTip("Профілі в пам’яті ESP32 для роботи без застосунку на ПК.")
         offline_button.clicked.connect(self.open_offline_profiles)
-        device_row.addWidget(offline_button)
+        tool_row.addWidget(offline_button)
         airflow_button = QPushButton("Airflow Assistant…")
+        airflow_button.setToolTip("Оцінка балансу припливу й витяжки, а не тиску в корпусі.")
         airflow_button.clicked.connect(self.open_airflow_assistant)
-        device_row.addWidget(airflow_button)
-        device_row.addStretch(1)
-        table_layout.addLayout(device_row)
+        tool_row.addWidget(airflow_button)
+        tool_row.addStretch(1)
+        table_layout.addWidget(advanced_tools)
+        advanced_tools.hide()
+        advanced_toggle.toggled.connect(advanced_tools.setVisible)
+        advanced_toggle.toggled.connect(lambda checked: advanced_toggle.setArrowType(
+            Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
+        ))
         left_layout.addWidget(table_box)
 
         sensors_box = QGroupBox("Усі доступні температурні датчики ПК")
@@ -347,6 +389,9 @@ class FanArgbWindow(QMainWindow):
         for ch in range(1, 9):
             self.fan_box.addItem(f"Вентилятор {ch}", ch)
         self.fan_box.currentIndexChanged.connect(self.fan_combo_selected)
+        self.fan_box.currentIndexChanged.connect(
+            lambda _index: selected_fan.setTitle(f"Вибраний вентилятор · FAN {self.current_fan:02d}")
+        )
         choose_row.addWidget(self.fan_box)
         choose_row.addWidget(QLabel("Тип:"))
         self.type_box = QComboBox()
@@ -708,10 +753,6 @@ class FanArgbWindow(QMainWindow):
         self.send("HTEMP?")
         self.send("HTLIST?")
         for ch in range(1, 9):
-            self.send(f"HTMAP? {ch}")
-        for ch in range(1, 9):
-            self.send(f"HTMODE? {ch}")
-        for ch in range(1, 9):
             self.send(f"CURVE? {ch}")
             self.send(f"CURVE2? {ch}")
             self.send(f"TYPE? {ch}")
@@ -785,6 +826,8 @@ class FanArgbWindow(QMainWindow):
         self.dashboard.native_effects.set_supported(False)
         self.dashboard.reactive_argb.set_supported(False)
         self.dashboard.audio_reactive.set_supported(False)
+        self._last_hwtemp_line = ""
+        self.dashboard.hardware_sensor.reset_status()
         self.offline_supported = False
         self.airflow_supported = False
         if self.dashboard.native_checkbox.isChecked():
@@ -989,14 +1032,14 @@ class FanArgbWindow(QMainWindow):
             self.dashboard.hardware_sensor.handle_sensor_line(line[9:])
             return
         if line.startswith("HTMAP "):
-            self.dashboard.hardware_sensor.handle_map(line[6:])
+            self.dashboard.temperature_source_dialog.handle_map(line[6:])
             return
         if line.startswith("HTEMP "):
             self._last_hwtemp_line = line
             self.dashboard.hardware_sensor.handle_status(line)
             return
         if line.startswith("HTMODE "):
-            self.dashboard.hardware_sensor.handle_mode(line[7:])
+            self.dashboard.temperature_source_dialog.handle_mode(line[7:])
             return
         if line.startswith("PC "):
             self.pc_power_status.setText("Стан ПК: " + line[3:])
@@ -1579,7 +1622,7 @@ class FanArgbWindow(QMainWindow):
         curve_number = 2 if secondary else 1
         self.save_button.setText(f"Записати FAN {ch:02d} · криву {curve_number} в ESP32")
         source = self.secondary_source_box if secondary else self.source_boxes[ch - 1]
-        self.dashboard.fan_curve_source.setText(f"Джерело: {source.currentText()}")
+        self.dashboard.fan_curve_source.setText(f"Датчик Windows · крива {curve_number}: {source.currentText()}")
         self.dashboard.fan_curve_source.setToolTip(source.currentText())
         enabled = (self.dashboard.is_connected and not self.dashboard._demo
                    and self.dashboard.is_channel_available(ch) and key not in self._curve_pending)
