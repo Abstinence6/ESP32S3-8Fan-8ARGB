@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QSplitter, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
     QColorDialog, QCheckBox, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem,
     QFileDialog, QSystemTrayIcon, QMenu, QStyle,
-    QHeaderView, QAbstractItemView, QTabWidget, QToolButton,
+    QHeaderView, QAbstractItemView, QStackedWidget, QTabWidget,
 )
 
 from monitor import (
@@ -228,23 +228,12 @@ class FanArgbWindow(QMainWindow):
         left = QWidget()
         left_layout = QVBoxLayout(left)
         splitter.addWidget(left)
-        table_box = QGroupBox("Вентилятори та джерела температури")
-        table_layout = QVBoxLayout(table_box)
-        self.fan_table = QTableWidget(8, 6)
-        self.fan_table.setHorizontalHeaderLabels(["№", "PWM", "RPM", "Темп. °C", "Режим", "Датчик для кривої"])
-        self.fan_table.verticalHeader().setVisible(False)
-        fan_header = self.fan_table.horizontalHeader()
-        fan_header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        fan_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        fan_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.fan_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.fan_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.fan_table.setMaximumHeight(335)
+        self.fan_source_stack = QStackedWidget()
         for ch in range(1, 9):
-            row = ch - 1
-            for col, value in enumerate([str(ch), "100%", "—", "—", "авто · без датчика"]):
-                self.fan_table.setItem(row, col, QTableWidgetItem(value))
             box = QComboBox()
+            box.setAccessibleName("Датчик Windows для кривої")
+            box.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            box.setMinimumContentsLength(10)
             box.addItem("MAX усіх температур", MAX_ALL)
             box.addItem("MAX(CPU, GPU) — для корпусних вентиляторів", MAX_CPU_GPU)
             box.addItem("AVG вибраної групи", GROUP_AVG)
@@ -257,20 +246,14 @@ class FanArgbWindow(QMainWindow):
             else:
                 box.addItem(f"Недоступний: {desired}", desired)
                 box.setCurrentIndex(box.count() - 1)
+            box.setToolTip(box.currentText())
             box.currentIndexChanged.connect(lambda _=0, number=ch: self.source_changed(number))
-            self.fan_table.setCellWidget(row, 5, box)
+            self.fan_source_stack.addWidget(box)
             self.source_boxes.append(box)
-        self.fan_table.setMinimumHeight(
-            self.fan_table.verticalHeader().length()
-            + fan_header.sizeHint().height() + 2 * self.fan_table.frameWidth()
-        )
-        self.fan_table.itemSelectionChanged.connect(self.fan_row_selected)
-        table_layout.addWidget(self.fan_table)
-        table_layout.addSpacing(10)
 
-        scopes = QHBoxLayout()
-        all_fans = QGroupBox("Усі вентилятори")
+        all_fans = QWidget()
         all_fans_layout = QVBoxLayout(all_fans)
+        all_fans_layout.setContentsMargins(0, 0, 0, 0)
         profile_row = QHBoxLayout()
         profile_label = QLabel("Профіль:")
         profile_row.addWidget(profile_label)
@@ -291,48 +274,31 @@ class FanArgbWindow(QMainWindow):
         all_auto.setToolTip("Повертає всі вентилятори в автоматичний режим, не замінюючи їхні криві.")
         all_auto.clicked.connect(lambda: self.send("ALLAUTO"))
         all_fans_layout.addWidget(all_auto, alignment=Qt.AlignmentFlag.AlignLeft)
-        all_fans_layout.addStretch(1)
-        scopes.addWidget(all_fans, 1)
+        fan_group_button = QPushButton("Групи вентиляторів…")
+        fan_group_button.setToolTip("Об’єднати кілька вентиляторів для спільного керування.")
+        fan_group_button.clicked.connect(self.open_fan_groups)
+        all_fans_layout.addWidget(fan_group_button, alignment=Qt.AlignmentFlag.AlignLeft)
 
-        selected_fan = QGroupBox(f"Вибраний вентилятор · FAN {self.current_fan:02d}")
-        selected_layout = QVBoxLayout(selected_fan)
-        controls = QHBoxLayout()
+        selected_controls = QWidget()
+        controls = QHBoxLayout(selected_controls)
+        controls.setContentsMargins(0, 0, 0, 0)
         override_button = QPushButton("Ручний PWM…")
         override_button.clicked.connect(self.manual_override)
         controls.addWidget(override_button)
         auto_button = QPushButton("Повернути в Авто")
         auto_button.clicked.connect(lambda: self.send(f"AUTO {self.current_fan}"))
         controls.addWidget(auto_button)
-        controls.addStretch(1)
-        selected_layout.addLayout(controls)
+        source_label = QLabel("Windows:")
+        source_label.setToolTip("Джерело температури для кривої, зокрема AVG або MAX групи.")
+        controls.addWidget(source_label)
+        controls.addWidget(self.fan_source_stack, 1)
         group_edit = QPushButton("Датчики для кривої…")
-        group_edit.setToolTip("Вибрати, які датчики входять до групи температур цього вентилятора.")
+        group_edit.setToolTip("Вибрати датчики групи цього вентилятора для AVG, MAX або зваженого AVG.")
         group_edit.clicked.connect(self.edit_sensor_group)
-        selected_layout.addWidget(group_edit, alignment=Qt.AlignmentFlag.AlignLeft)
-        group_hint = QLabel("Середнє (AVG) або максимум (MAX) групи — у стовпці «Датчик для кривої».")
-        group_hint.setProperty("role", "minor")
-        group_hint.setWordWrap(True)
-        selected_layout.addWidget(group_hint)
-        selected_layout.addStretch(1)
-        scopes.addWidget(selected_fan, 1)
-        table_layout.addLayout(scopes)
+        controls.addWidget(group_edit)
 
-        group_row = QHBoxLayout()
-        fan_group_button = QPushButton("Групи вентиляторів…")
-        fan_group_button.setToolTip("Об’єднати кілька вентиляторів для спільного керування.")
-        fan_group_button.clicked.connect(self.open_fan_groups)
-        group_row.addWidget(fan_group_button)
-        advanced_toggle = QToolButton()
-        advanced_toggle.setText("Додаткові інструменти")
-        advanced_toggle.setCheckable(True)
-        advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        advanced_toggle.setArrowType(Qt.ArrowType.RightArrow)
-        group_row.addWidget(advanced_toggle)
-        group_row.addStretch(1)
-        table_layout.addLayout(group_row)
-
-        advanced_tools = QWidget()
-        tool_row = QHBoxLayout(advanced_tools)
+        cooling_tools = QWidget()
+        tool_row = QHBoxLayout(cooling_tools)
         tool_row.setContentsMargins(0, 0, 0, 0)
         app_profiles_button = QPushButton("Профілі за програмами…")
         app_profiles_button.setToolTip("Правила на ПК; активні програми тимчасово змінюють криві ESP32 без запису в NVS.")
@@ -347,13 +313,6 @@ class FanArgbWindow(QMainWindow):
         airflow_button.clicked.connect(self.open_airflow_assistant)
         tool_row.addWidget(airflow_button)
         tool_row.addStretch(1)
-        table_layout.addWidget(advanced_tools)
-        advanced_tools.hide()
-        advanced_toggle.toggled.connect(advanced_tools.setVisible)
-        advanced_toggle.toggled.connect(lambda checked: advanced_toggle.setArrowType(
-            Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
-        ))
-        left_layout.addWidget(table_box)
 
         sensors_box = QGroupBox("Усі доступні температурні датчики ПК")
         sensors_layout = QVBoxLayout(sensors_box)
@@ -384,16 +343,11 @@ class FanArgbWindow(QMainWindow):
         splitter.addWidget(right)
         splitter.setSizes([740, 740])
         choose_row = QHBoxLayout()
-        choose_row.addWidget(QLabel("Редагувати криву вентилятора:"))
         self.fan_box = QComboBox()
         for ch in range(1, 9):
             self.fan_box.addItem(f"Вентилятор {ch}", ch)
         self.fan_box.currentIndexChanged.connect(self.fan_combo_selected)
-        self.fan_box.currentIndexChanged.connect(
-            lambda _index: selected_fan.setTitle(f"Вибраний вентилятор · FAN {self.current_fan:02d}")
-        )
         choose_row.addWidget(self.fan_box)
-        choose_row.addWidget(QLabel("Тип:"))
         self.type_box = QComboBox()
         for name, wire in (("2-pin / ключ", 2), ("3-pin / ключ+TACH", 3)):
             self.type_box.addItem(name, wire)
@@ -643,7 +597,9 @@ class FanArgbWindow(QMainWindow):
         self.dashboard = DashboardShell(
             self,
             refresh_ports=refresh_ports,
-            table_box=table_box,
+            all_fans=all_fans,
+            selected_controls=selected_controls,
+            cooling_tools=cooling_tools,
             choose_row=choose_row,
             curve_box=curve_box,
             history_box=history_box,
@@ -945,9 +901,7 @@ class FanArgbWindow(QMainWindow):
                     QSystemTrayIcon.MessageIcon.Warning, 6500,
                 )
             self._update_tray_tooltip()
-            row = status.channel - 1
-            self.fan_table.item(row, 1).setText(f"{status.pwm}%")
-            self.fan_table.item(row, 2).setText(str(status.rpm) if status.rpm_feedback else "—")
+
             self.history[status.channel].append((time.time(), status.pwm, status.rpm,
                                                   status.deci_c / 10 if status.fresh else float("nan")))
             self.telemetry.record_fan(
@@ -973,12 +927,6 @@ class FanArgbWindow(QMainWindow):
                     )
             if status.channel == self.current_fan:
                 self._refresh_history()
-            self.fan_table.item(row, 3).setText(f"{status.deci_c / 10:.1f}" if status.fresh else "—")
-            self.fan_table.item(row, 4).setText(
-                f"{status.mode} · {'OK' if status.fresh else 'fail-safe'}"
-                + (" · FAULT" if status.fault else "")
-                + (f" · {status.detected_type}-pin" if status.detected_type in (2, 3) else "")
-            )
             return
         if line.startswith("FW VERSION="):
             fields = dict(x.split("=", 1) for x in line.split() if "=" in x)
@@ -1410,10 +1358,12 @@ class FanArgbWindow(QMainWindow):
                 box.addItem("Недоступний датчик: " + saved_id, saved_id)
             box.setCurrentIndex(next(i for i in range(box.count()) if box.itemData(i) == saved_id))
             box.blockSignals(False)
+            box.setToolTip(box.currentText())
             self.dashboard.set_fan_source(ch, box.currentText())
 
     def source_changed(self, ch: int) -> None:
         box = self.source_boxes[ch - 1]
+        box.setToolTip(box.currentText())
         self.settings.setValue(f"source{ch}", box.currentData())
         self.dashboard.set_fan_source(ch, box.currentText())
 
@@ -1503,17 +1453,12 @@ class FanArgbWindow(QMainWindow):
                 self.source_boxes[ch - 1].setCurrentIndex(1)  # AVG group by default
             self._update_source_boxes()
 
-    def fan_row_selected(self) -> None:
-        row = self.fan_table.currentRow()
-        if 0 <= row < 8 and row + 1 != self.current_fan:
-            self.fan_box.setCurrentIndex(row)
-
     def fan_combo_selected(self, index: int) -> None:
         if not 0 <= index < 8:
             return
         self.current_fan = index + 1
         self.dashboard.sync_zone(index)
-        self.fan_table.selectRow(index)
+        self.fan_source_stack.setCurrentIndex(index)
         self._update_targets()
         self._update_rpm_plot()
         self.cal_progress.setValue(len(self.cal_points[self.current_fan]))
@@ -1581,6 +1526,10 @@ class FanArgbWindow(QMainWindow):
             self.history_pwm_curve.setData(times, [row[1] for row in hist])
             self.history_rpm_curve.setData(times, [row[2] for row in hist])
             self.history_temperature_curve.setData(times, [row[3] for row in hist])
+        else:
+            self.history_pwm_curve.clear()
+            self.history_rpm_curve.clear()
+            self.history_temperature_curve.clear()
         power = list(self.power_history)
         if power:
             origin = power[0][0]
@@ -1620,7 +1569,7 @@ class FanArgbWindow(QMainWindow):
         self.dashboard.fan_curve_status.setText(status)
         ch, secondary = key
         curve_number = 2 if secondary else 1
-        self.save_button.setText(f"Записати FAN {ch:02d} · криву {curve_number} в ESP32")
+        self.save_button.setText(f"Записати криву {curve_number} · FAN {ch:02d}")
         source = self.secondary_source_box if secondary else self.source_boxes[ch - 1]
         self.dashboard.fan_curve_source.setText(f"Датчик Windows · крива {curve_number}: {source.currentText()}")
         self.dashboard.fan_curve_source.setToolTip(source.currentText())

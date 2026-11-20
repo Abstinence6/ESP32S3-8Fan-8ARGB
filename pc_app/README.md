@@ -280,10 +280,9 @@ order:
   action does. The schematic does not pretend to read physical LED colors.
   E1.31 bridge and OpenRGB connection settings live together under OpenRGB;
   the Studio retains its own tab.
-- **ESP32 configuration:** Wi-Fi/MQTT/ARGB/TACH forms use consistent spacing,
-  with a single bottom action area that contains the current tab's Save/Reset
-  actions. Larger windows show a contextual guide beside the settings; the
-  guide hides automatically at 1080px to keep every input readable.
+- **ESP32 configuration:** Wi-Fi/MQTT/ARGB/TACH forms fill the page content
+  area, with a single bottom action area for the current tab's Save/Reset
+  actions.
 
 Native Windows CI includes tests for fan selection/telemetry, ARGB channel
 highlighting, all four settings action-footers, 1080/1510px layout clipping

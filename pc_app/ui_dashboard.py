@@ -22,6 +22,7 @@ from device_settings_ui import DeviceSettingsPanel
 from diagnostics_ui import DiagnosticPanel
 from sensor_manager_ui import SensorManagerPanel
 from fan_animation import FanRotor
+from protocol import FanStatus
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
     QLabel, QLayout, QPushButton, QProgressBar, QRadioButton, QScrollArea, QSplitter,
@@ -93,6 +94,21 @@ QPushButton[role="channelSelect"]:checked {
     border: 1px solid palette(highlight); font-weight: 700;
 }
 QPushButton[role="channelSelect"]:disabled { color: palette(mid); }
+QPushButton#coolingChannel {
+    border: 1px solid palette(mid); border-radius: 5px; padding: 4px 3px;
+    background-color: palette(button); color: palette(button-text);
+}
+QPushButton#coolingChannel:checked {
+    background-color: palette(highlight); color: palette(highlighted-text);
+    border-color: palette(highlight);
+}
+QPushButton#coolingChannel:disabled { color: palette(mid); }
+QPushButton#coolingChannel[telemetry="warning"]:!checked { border-color: #b68745; }
+QPushButton#coolingChannel[telemetry="critical"]:!checked { border-color: #bb5561; }
+QPushButton#coolingChannel:focus, QPushButton#coolingChannel:hover:enabled:!checked {
+    border-color: palette(highlight);
+}
+QPushButton#coolingChannel:checked:focus { border-color: palette(highlighted-text); }
 QPushButton[role="danger"] { border: 1px solid #bb5561; }
 QProgressBar#fanDuty { border: 0; background-color: palette(midlight); min-height: 7px; max-height: 7px; }
 QProgressBar#fanDuty::chunk { background-color: palette(highlight); }
@@ -148,7 +164,9 @@ class DashboardShell(QWidget):
         controller,
         *,
         refresh_ports: QPushButton,
-        table_box: QGroupBox,
+        all_fans: QWidget,
+        selected_controls: QWidget,
+        cooling_tools: QWidget,
         choose_row: QLayout,
         curve_box: QGroupBox,
         history_box: QGroupBox,
@@ -181,7 +199,7 @@ class DashboardShell(QWidget):
         self.current_pc_state = "unknown"
         self.current_pc_busy = False
         self.pc_state_updated_at = 0.0
-        self._fan_statuses: dict[int, object] = {}
+        self._fan_statuses: dict[int, FanStatus] = {}
         self.available_channel_mask = 0xFF  # unknown firmware -> legacy 8-channel behavior
         self._channel_mask_known = False
         self._last_fan_update: dict[int, float] = {}
@@ -206,7 +224,7 @@ class DashboardShell(QWidget):
 
         self.hardware_sensor = HardwareSensorPanel(self.controller)
         self._create_overview()
-        self._create_fans(table_box, choose_row, curve_box, history_box)
+        self._create_fans(all_fans, selected_controls, cooling_tools, choose_row, curve_box, history_box)
         self._create_sensors(sensors_box)
         self._create_argb(rgb_box, scenes)
         self._create_pc(pc_box)
@@ -675,6 +693,7 @@ class DashboardShell(QWidget):
             return
         self._expired_fan_channels.update(new_expired)
         for ch in new_expired:
+            self._refresh_fan_channel_telemetry(ch)
             labels = self.fan_cards.get(ch)
             if not labels or not self.is_channel_available(ch):
                 continue
@@ -756,7 +775,6 @@ class DashboardShell(QWidget):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._reflow_fan_cards()
-        self._reflow_device_settings()
 
     def _update_cooling_health(self) -> None:
         if not self.is_connected:
@@ -815,49 +833,41 @@ class DashboardShell(QWidget):
             self.system_banner.style().unpolish(self.system_banner)
             self.system_banner.style().polish(self.system_banner)
 
-    def _create_fans(self, table_box, choose_row, curve_box, history_box) -> None:
+    def _create_fans(self, all_fans, selected_controls, cooling_tools, choose_row, curve_box, history_box) -> None:
         page, layout = self._content(
             "Охолодження",
             "Обери FAN і налаштуй швидкість залежно від температури.",
         )
-        # Leave room for both disclosures below the editor with taller native controls.
         layout.setContentsMargins(7, 8, 7, 8)
         layout.setSpacing(6)
         toolbar = QFrame()
         toolbar.setObjectName("quietCard")
         bar = QHBoxLayout(toolbar)
-        bar.setContentsMargins(16, 7, 16, 7)
-        bar.setSpacing(10)
+        bar.setContentsMargins(8, 5, 8, 5)
+        bar.setSpacing(5)
         _move_controls(choose_row, bar)
-        for label in toolbar.findChildren(QLabel):
-            if label.text().startswith("Редагувати криву"):
-                label.setText("Канал")
         # Keep the original combo as the single protocol/state model. Replace
         # its visible editor with eight one-click, mutually exclusive buttons.
         bar.removeWidget(self.controller.fan_box)
         self.controller.fan_box.setParent(toolbar)
         self.controller.fan_box.hide()
-        for label in toolbar.findChildren(QLabel):
-            if label.text() == "Канал":
-                bar.removeWidget(label)
-                label.hide()
-        bar.addWidget(_label("FAN", "sectionLabel"))
+
         self.fan_channel_group = QButtonGroup(self)
         self.fan_channel_group.setExclusive(True)
         self.fan_channel_buttons: dict[int, QPushButton] = {}
         for ch in range(1, 9):
-            button = QPushButton(f"{ch:02d}")
-            button.setProperty("role", "channelSelect")
+            button = QPushButton()
+            button.setObjectName("coolingChannel")
             button.setCheckable(True)
             button.setAccessibleName(f"Вибрати вентилятор {ch}")
-            button.setToolTip(f"Канал FAN {ch} · змінює лише вибір у редакторі")
-            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             self.fan_channel_group.addButton(button, ch)
             button.clicked.connect(
                 lambda _checked=False, channel=ch:
                     self.controller.fan_box.setCurrentIndex(channel - 1)
             )
             self.fan_channel_buttons[ch] = button
+            self._refresh_fan_channel_telemetry(ch)
             bar.addWidget(button, 1)
         self.controller.fan_box.currentIndexChanged.connect(
             lambda _index: self._refresh_fan_channel_buttons()
@@ -918,12 +928,7 @@ class DashboardShell(QWidget):
         editor_layout.addWidget(self.fan_curve_status)
         _move_controls(curve_actions, editor_layout)
         editor_layout.addWidget(_label("ПРЕСЕТИ · ВИБРАНИЙ FAN", "sectionLabel"))
-        custom_save = QPushButton("Зберегти як Custom на ПК")
-        custom_save.setToolTip(
-            "Запам'ятати поточні криві для кнопки Custom. "
-            "Це не записує дані у flash ESP32."
-        )
-        custom_save.clicked.connect(self.controller.save_custom_profile)
+
         preset_row = QGridLayout()
         for index, name in enumerate(("Silent", "Default", "Maximum", "Custom")):
             button = QPushButton(name)
@@ -936,7 +941,7 @@ class DashboardShell(QWidget):
             preset_row.addWidget(button, index // 2, index % 2)
             self.fan_preset_buttons[name] = button
         editor_layout.addLayout(preset_row)
-        editor_layout.addWidget(custom_save)
+
         editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
 
         tuning = QFrame()
@@ -963,9 +968,7 @@ class DashboardShell(QWidget):
         pid_actions = original_layout.takeAt(1)
         if pid_actions is not None and pid_actions.layout() is not None:
             _move_controls(pid_actions.layout(), tuning_layout)
-        for label in toolbar.findChildren(QLabel):
-            if label.text() == "Тип:":
-                label.hide()
+
         tuning.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
 
         self.fan_control_panel = QWidget()
@@ -1016,18 +1019,19 @@ class DashboardShell(QWidget):
         split.setColumnStretch(0, 7)
         split.setColumnStretch(1, 4)
         curve_layout.addLayout(split)
+        self.fan_selected_controls = selected_controls
+        curve_layout.addWidget(selected_controls)
         layout.addWidget(self.fan_curve_editor)
-
-        table_box.setTitle("8 каналів · PWM, RPM та джерела температури")
-        table_box.setMinimumHeight(400)
-        self.controller.fan_table.setMaximumHeight(16777215)
-        self.fan_list_panel = table_box
-        self.fan_list_toggle = self._expandable_panel(layout, "Список вентиляторів", table_box)
 
         history_box.setTitle("Історія вибраного вентилятора")
         history_box.setMinimumHeight(390)
+        history_box.setMaximumHeight(440)
         self.fan_history_panel = history_box
-        self.fan_history_toggle = self._expandable_panel(layout, "Історія", history_box)
+        layout.addWidget(history_box)
+
+        self.fan_global_panel = all_fans
+        self.fan_global_toggle = self._expandable_panel(layout, "Усі вентилятори", all_fans)
+        layout.addWidget(cooling_tools)
         layout.addStretch(1)
         self.controller.fan_box.currentIndexChanged.connect(
             lambda _index: self._refresh_fan_detail()
@@ -1039,6 +1043,36 @@ class DashboardShell(QWidget):
         selected = self.controller.fan_box.currentData()
         for channel, button in self.fan_channel_buttons.items():
             button.setChecked(selected == channel)
+
+    def _refresh_fan_channel_telemetry(self, channel: int) -> None:
+        button = self.fan_channel_buttons[channel]
+        title = f"FAN {channel:02d}"
+        rpm, pwm, state = "— RPM", "PWM —", "idle"
+        status = self._fan_statuses.get(channel)
+        if not self.is_channel_available(channel):
+            detail = "Канал недоступний на цій платі"
+        elif not self.is_connected or status is None:
+            detail = "Немає актуальної телеметрії"
+        elif self._fan_telemetry_stale(channel):
+            detail, state = "Статус вентилятора застарів", "warning"
+        else:
+            if status.rpm_feedback:
+                rpm = f"{status.rpm:,} RPM".replace(",", " ")
+            pwm = f"PWM {status.pwm}%"
+            if status.fault:
+                detail, state = "Аварія вентилятора · перевір TACH", "critical"
+            elif not status.fresh:
+                detail, state = "Немає температури · захисне охолодження", "warning"
+            else:
+                mode = "Авто" if status.mode.lower() == "auto" else "Вручну"
+                detail = f"{mode} · {status.deci_c / 10:.1f} °C"
+        button.setText(f"{title}\n{rpm}\n{pwm}")
+        button.setToolTip(f"{title} · {rpm} · {pwm}\n{detail}")
+        button.setAccessibleDescription(f"{rpm}, {pwm}. {detail}")
+        if button.property("telemetry") != state:
+            button.setProperty("telemetry", state)
+            button.style().unpolish(button)
+            button.style().polish(button)
 
     def _open_temperature_source(self) -> None:
         if self.temperature_source_button.isEnabled():
@@ -1063,6 +1097,7 @@ class DashboardShell(QWidget):
         channel = self.controller.fan_box.currentData()
         if channel is None:
             return
+        self.fan_selected_controls.setEnabled(self.is_channel_available(channel))
         self.fan_live_title.setText(f"FAN {channel:02d}")
         if not self.is_channel_available(channel):
             self.fan_live_rpm.setText("— RPM")
@@ -1108,9 +1143,8 @@ class DashboardShell(QWidget):
         )
         layout.addWidget(_label("КОЛЬОРИ · ВИБІР ЗОНИ", "sectionLabel"))
 
-        # One 8-button channel selector shared by all ARGB modes. The existing
-        # hidden QComboBox remains the authoritative selection source for
-        # serial, OpenRGB and scene commands, avoiding protocol regressions.
+        # The hidden QComboBox keeps the shared quick-command and scene target.
+        # Automatic effect panels retain their own zone controls.
         zone_map = QFrame()
         zone_map.setObjectName("quietCard")
         map_layout = QHBoxLayout(zone_map)
@@ -1197,22 +1231,6 @@ class DashboardShell(QWidget):
         self.argb_quick_buttons = quick.findChildren(QPushButton)
         layout.addWidget(quick)
         layout.addWidget(select)
-        layout.addWidget(_label(
-            "Прев’ю ARGB на лопатях (Головна) моделює надіслані кольори, "
-            "а не фактичну підсвітку. Без даних про колір лопаті показують лише RPM. "
-            "Сірі канали недоступні на цій платі.",
-            "minor", True,
-        ))
-        self.studio = ArgbStudioPanel(self.controller)
-        self.argb_studio_toggle = self._expandable_panel(
-            layout, "Створити власний ефект", self.studio
-        )
-
-        layout.addWidget(_label("АВТОЕФЕКТИ", "sectionLabel"))
-        layout.addWidget(_label(
-            "Ефекти можуть працювати автономно на ESP32 або реагувати на ПК.",
-            "minor", True,
-        ))
         self.native_effects = NativeEffectsPanel(self.controller)
         self.temperature_argb = TemperatureArgbPanel(self.controller)
         # Let the page, not the temperature grid, own vertical scrolling.
@@ -1235,12 +1253,35 @@ class DashboardShell(QWidget):
         temperature_scroll.deleteLater()
         self.reactive_argb = ReactiveArgbPanel(self.controller)
         self.audio_reactive = AudioReactivePanel(self.controller)
-        self.argb_auto_sections = {
-            "native": self._expandable_panel(layout, "Автономні ефекти ESP32", self.native_effects),
-            "temperature": self._expandable_panel(layout, "За температурою", self.temperature_argb),
-            "sensors": self._expandable_panel(layout, "За показниками датчиків", self.reactive_argb),
-            "audio": self._expandable_panel(layout, "За звуком", self.audio_reactive),
-        }
+        self.argb_effect_panels: dict[str, QWidget] = {}
+        self.argb_effect_target_hint = _label(
+            "Зони для цього режиму налаштовуються нижче. Верхній вибір зони діє на швидкі команди та звичайні сцени.",
+            "minor", True,
+        )
+        layout.addWidget(self.argb_effect_target_hint)
+        self.scene_box.insertSeparator(self.scene_box.count())
+        for key, title, panel in (
+            ("native", "Автономні ефекти ESP32", self.native_effects),
+            ("temperature", "За температурою", self.temperature_argb),
+            ("sensors", "За показниками датчиків", self.reactive_argb),
+            ("audio", "За звуком", self.audio_reactive),
+        ):
+            self.scene_box.addItem(title, key)
+            self.argb_effect_panels[key] = panel
+            layout.addWidget(panel)
+        self.scene_box.currentIndexChanged.connect(self._show_argb_effect_panel)
+        self._show_argb_effect_panel()
+
+        layout.addWidget(_label(
+            "Прев’ю ARGB на лопатях (Головна) моделює надіслані кольори, "
+            "а не фактичну підсвітку. Без даних про колір лопаті показують лише RPM. "
+            "Сірі канали недоступні на цій платі.",
+            "minor", True,
+        ))
+        self.studio = ArgbStudioPanel(self.controller)
+        self.argb_studio_toggle = self._expandable_panel(
+            layout, "Створити власний ефект", self.studio
+        )
 
         layout.addWidget(_label("СИНХРОНІЗАЦІЯ", "sectionLabel"))
         openrgb = QWidget()
@@ -1444,7 +1485,7 @@ class DashboardShell(QWidget):
         layout.addWidget(self.hardware_sensor)
 
         self.sensor_manager = SensorManagerPanel(self.controller)
-        self._expandable_panel(layout, "Джерела NWinfo", self.sensor_manager)
+        layout.addWidget(self.sensor_manager)
         self._add_page("sensors", page)
 
     def _create_device_settings(self) -> None:
@@ -1458,68 +1499,9 @@ class DashboardShell(QWidget):
         self.device_settings.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
         )
-
-        self._esp_help_card = QFrame()
-        self._esp_help_card.setObjectName("quietCard")
-        self._esp_help_card.setMinimumWidth(250)
-        self._esp_help_card.setMaximumWidth(310)
-        self._esp_help_card.setSizePolicy(
-            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
-        )
-        guide = QVBoxLayout(self._esp_help_card)
-        guide.setContentsMargins(17, 17, 17, 17)
-        guide.setSpacing(11)
-        guide.addWidget(_label("ЯК ЦЕ ПРАЦЮЄ", "sectionLabel"))
-        guide.addWidget(_label("1. Зчитай стан", "labelTitle"))
-        guide.addWidget(_label(
-            "Параметри ESP32 читаються через USB. Поля блокуються, "
-            "доки відповідь не отримана.", "minor", True,
-        ))
-        guide.addWidget(_label("2. Зміни потрібне", "labelTitle"))
-        guide.addWidget(_label(
-            "Перемикай вкладки без застосування інших параметрів. "
-            "Зміни Wi-Fi та MQTT позначаються крапкою.", "minor", True,
-        ))
-        guide.addWidget(_label("3. Підтвердь запис", "labelTitle"))
-        guide.addWidget(_label(
-            "Кнопка збереження внизу застосовує лише поточну категорію. "
-            "Результат перевіряється повторним читанням.", "minor", True,
-        ))
-        guide.addSpacing(5)
-        guide.addWidget(_label("ВАЖЛИВО", "sectionLabel"))
-        guide.addWidget(_label(
-            "Паролі не записуються в налаштування Windows. "
-            "GPIO, MOSFET та апаратний fail-ON не змінюються звідси.",
-            "minor", True,
-        ))
-        diagnostics = QPushButton("Перевірити діагностику")
-        diagnostics.setProperty("role", "ghost")
-        diagnostics.clicked.connect(lambda: self.show_page("service"))
-        guide.addWidget(diagnostics)
-
-        self.esp_settings_columns = QHBoxLayout()
-        self.esp_settings_columns.setContentsMargins(0, 0, 0, 0)
-        self.esp_settings_columns.setSpacing(15)
-        self.esp_settings_columns.addWidget(
-            self.device_settings, 4, Qt.AlignmentFlag.AlignTop
-        )
-        self.esp_settings_columns.addWidget(
-            self._esp_help_card, 1, Qt.AlignmentFlag.AlignTop
-        )
-        layout.addLayout(self.esp_settings_columns)
+        layout.addWidget(self.device_settings)
         layout.addStretch(1)
         self._add_page("esp32", page)
-        self._reflow_device_settings()
-
-    def _reflow_device_settings(self) -> None:
-        if hasattr(self, "_esp_help_card"):
-            # The help rail is optional; never squeeze settings on 1080px screens.
-            show_help = self.width() >= 1260
-            if self._esp_help_card.isHidden() == show_help:
-                self._esp_help_card.setVisible(show_help)
-                # Hiding a rail on a non-current page otherwise leaves the scroll
-                # area with a cached minimum width until a later layout event.
-                self.esp_settings_columns.invalidate()
 
     def _create_service(
         self, calibration_box, hardware_rgb, config_files,
@@ -1642,7 +1624,18 @@ class DashboardShell(QWidget):
             self.controller.fan_box.setCurrentIndex(index)
             self._refresh_argb_zone_tiles()
 
+    def _show_argb_effect_panel(self) -> None:
+        family = self.scene_box.currentData()
+        self.argb_effect_target_hint.setVisible(family in self.argb_effect_panels)
+        for key, panel in self.argb_effect_panels.items():
+            panel.setVisible(family == key)
+        for control in (self.scope_one, self.scope_all,
+                        self.argb_scene_target, self.argb_apply_button):
+            control.setVisible(family is None)
+
     def _apply_scene(self) -> None:
+        if self.scene_box.currentData() is not None:
+            return
         self.controller.apply_argb_scene(
             self.scene_box.currentText(), self.scope_all.isChecked()
         )
@@ -1737,6 +1730,8 @@ class DashboardShell(QWidget):
         self._update_cooling_health()
         self._refresh_attention_count()
         self._reflow_fan_cards()
+        for channel in self.fan_channel_buttons:
+            self._refresh_fan_channel_telemetry(channel)
         self._refresh_fan_detail()
         if hasattr(self.controller, "dashboard"):
             self.controller.refresh_curve_feedback()
@@ -1787,6 +1782,7 @@ class DashboardShell(QWidget):
             )
             self.fan_cards[channel]["settings_button"].setEnabled(enabled)
             self.fan_channel_buttons[channel].setEnabled(enabled)
+            self._refresh_fan_channel_telemetry(channel)
             self.argb_channel_buttons[channel].setEnabled(enabled)
             if not enabled:
                 self.clear_argb_preview(channel)
@@ -1845,7 +1841,7 @@ class DashboardShell(QWidget):
             "Підключено" if online else "Налаштовано" if enabled else "Вимкнено"
         )
 
-    def update_fan(self, channel: int, status) -> None:
+    def update_fan(self, channel: int, status: FanStatus) -> None:
         labels = self.fan_cards.get(channel)
         if labels is None:
             return
@@ -1855,6 +1851,7 @@ class DashboardShell(QWidget):
         self._fan_statuses[channel] = status
         self._last_fan_update[channel] = time.monotonic()
         self._expired_fan_channels.discard(channel)
+        self._refresh_fan_channel_telemetry(channel)
         self._fan_frames[channel].setToolTip(
             f"FAN {channel:02d} · {status.pwm}% PWM · "
             + (f"{status.rpm} RPM" if status.rpm_feedback else "TACH недоступний")

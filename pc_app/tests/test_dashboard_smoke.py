@@ -249,7 +249,55 @@ class DashboardSmokeTests(unittest.TestCase):
             self.assertFalse(self.window.bridge_checkbox.isChecked())
             send.assert_not_called()
 
-    def test_argb_expanded_sections_fit_compact_scroll_viewport(self):
+    def test_argb_effect_chooser_switches_families_without_writes(self):
+        from unittest.mock import patch
+
+        shell = self.window.dashboard
+        panels = (
+            ("Автономні ефекти ESP32", shell.native_effects),
+            ("За температурою", shell.temperature_argb),
+            ("За показниками датчиків", shell.reactive_argb),
+            ("За звуком", shell.audio_reactive),
+        )
+        shell.show_page("argb")
+        self.window.show()
+        shell.set_connected(True, "COM5")
+        shell.scope_all.click()
+        for panel in (shell.native_effects, shell.reactive_argb, shell.audio_reactive):
+            panel.set_supported(True)
+            panel.channel.setCurrentIndex(4)
+        capture_checked = shell.audio_reactive.capture.isChecked()
+        with (
+            patch.object(self.window, "port", object()),
+            patch.object(self.window, "send") as send,
+            patch.object(self.window, "set_audio_capture_enabled") as capture,
+            patch.object(self.window, "apply_argb_scene") as apply_scene,
+        ):
+            for label, panel in panels:
+                with self.subTest(effect=label):
+                    self.assertGreaterEqual(shell.scene_box.findText(label), 0)
+                    shell.scene_box.setCurrentText(label)
+                    self.app.processEvents()
+                    self.assertEqual([item for _, item in panels if item.isVisible()], [panel])
+                    for control in (shell.scope_one, shell.scope_all,
+                                    shell.argb_scene_target, shell.argb_apply_button):
+                        self.assertFalse(control.isVisible())
+                    shell._apply_scene()  # The manual handler must also reject family entries.
+            shell.scene_box.setCurrentText("Static warm")
+            self.app.processEvents()
+            self.assertFalse(any(panel.isVisible() for _, panel in panels))
+            self.assertTrue(shell.argb_apply_button.isVisible())
+            self.assertTrue(shell.scope_all.isVisible())
+            self.assertTrue(shell.scope_all.isChecked())
+            self.assertEqual(shell.scene_box.findText("OpenRGB"), -1)
+            self.assertEqual(shell.audio_reactive.capture.isChecked(), capture_checked)
+            for panel in (shell.native_effects, shell.reactive_argb, shell.audio_reactive):
+                self.assertEqual(panel.channel.currentData(), 5)
+            send.assert_not_called()
+            capture.assert_not_called()
+            apply_scene.assert_not_called()
+
+    def test_argb_effect_panels_fit_compact_scroll_viewport(self):
         from PySide6.QtCore import QPoint
         from PySide6.QtWidgets import QScrollArea
 
@@ -259,17 +307,20 @@ class DashboardSmokeTests(unittest.TestCase):
         shell.show_page("argb")
         self.app.processEvents()
         scroll = shell.stack.currentWidget()
-        sections = (
-            (shell.argb_studio_toggle, shell.studio),
-            (shell.argb_auto_sections["native"], shell.native_effects),
-            (shell.argb_auto_sections["temperature"], shell.temperature_argb),
-            (shell.argb_auto_sections["sensors"], shell.reactive_argb),
-            (shell.argb_auto_sections["audio"], shell.audio_reactive),
+        shell.argb_studio_toggle.setChecked(True)
+        self.app.processEvents()
+        self.assertTrue(shell.studio.isVisible())
+        self.assertEqual(scroll.horizontalScrollBar().maximum(), 0)
+        shell.argb_studio_toggle.setChecked(False)
+        effects = (
+            ("Автономні ефекти ESP32", shell.native_effects),
+            ("За температурою", shell.temperature_argb),
+            ("За показниками датчиків", shell.reactive_argb),
+            ("За звуком", shell.audio_reactive),
         )
-        for toggle, panel in sections:
-            with self.subTest(section=toggle.text()):
-                scroll.ensureWidgetVisible(toggle)
-                toggle.setChecked(True)
+        for label, panel in effects:
+            with self.subTest(effect=label):
+                shell.scene_box.setCurrentText(label)
                 self.app.processEvents()
                 self.assertTrue(panel.isVisible())
                 self.assertEqual(scroll.horizontalScrollBar().maximum(), 0)
@@ -281,14 +332,12 @@ class DashboardSmokeTests(unittest.TestCase):
                     area.verticalScrollBar().isVisible()
                     for area in panel.findChildren(QScrollArea)
                 ))
-                toggle.setChecked(False)
-                self.app.processEvents()
-                self.assertFalse(panel.isVisible())
+
         last_palette = shell.temperature_argb.palette_buttons[8]
         status = shell.temperature_argb.labels[8]
         save = shell.temperature_argb.save_buttons[8]
         shell.temperature_argb.lows[8].setValue(31)  # Show the longer dirty status.
-        shell.argb_auto_sections["temperature"].setChecked(True)
+        shell.scene_box.setCurrentText("За температурою")
         self.app.processEvents()
         self.assertLess(status.geometry().right(), save.geometry().left())
         scroll.ensureWidgetVisible(last_palette)
@@ -310,7 +359,7 @@ class DashboardSmokeTests(unittest.TestCase):
             self.assertIn("01, 03", shell.argb_scene_target.text())
             self.assertIn("03", shell.argb_quick_target.text())
             shell.scene_box.setCurrentText("Static warm")
-            shell._apply_scene()
+            shell.argb_apply_button.click()
             self.assertEqual([call.args[0] for call in self.window.tx.send_command.call_args_list],
                              ["BRIGHT 1 64", "LED 1 255 110 30", "BRIGHT 3 64", "LED 3 255 110 30"])
             self.assertTrue(shell.fan_cards[1]["rotor"]._strip_colors)
@@ -381,10 +430,11 @@ class DashboardSmokeTests(unittest.TestCase):
             target = output / f"esp32-{tab_key}.png"
             self.assertTrue(self.window.grab().save(str(target), "PNG"))
             self.assertGreater(target.stat().st_size, 10_000)
+        self.assertTrue(panel.select_tab("wifi"))
         for width, height in ((1080, 760), (1510, 930)):
             self.window.resize(width, height)
             self.app.processEvents()
-            for key in ("overview", "fans", "argb", "service"):
+            for key in ("overview", "fans", "argb", "esp32", "service"):
                 self.window.dashboard.show_page(key)
                 self.app.processEvents()
                 file = output / f"{key}-{width}.png"
@@ -421,9 +471,80 @@ class DashboardSmokeTests(unittest.TestCase):
                     f"Horizontal clipping in {key} at {width}px",
                 )
 
+    def test_cooling_history_is_visible_without_disclosure(self):
+        from PySide6.QtCore import QPoint
+        from PySide6.QtWidgets import QToolButton
+
+        shell = self.window.dashboard
+        self.window.resize(1080, 760)
+        self.window.show()
+        shell.open_fan(1)
+        self.app.processEvents()
+        scroll = shell.stack.currentWidget()
+        tabs = self.window.history_tabs
+        self.assertTrue(tabs.isVisibleTo(scroll.widget()))
+        self.assertTrue(tabs.isVisible())
+        self.assertFalse(any("Історія" in button.text()
+                             for button in scroll.widget().findChildren(QToolButton)))
+        self.assertEqual([tabs.tabText(i) for i in range(tabs.count())],
+                         ["PWM", "RPM", "Температура", "Потужність"])
+        editor_bottom = shell.fan_curve_editor.mapTo(
+            scroll.widget(), QPoint(0, shell.fan_curve_editor.height())
+        ).y()
+        history_top = shell.fan_history_panel.mapTo(scroll.widget(), QPoint()).y()
+        self.assertLessEqual(editor_bottom, history_top)
+        self.assertLessEqual(history_top + shell.fan_history_panel.height(),
+                             shell.fan_global_toggle.mapTo(scroll.widget(), QPoint()).y())
+        scroll.ensureWidgetVisible(tabs)
+        self.assertGreater(scroll.verticalScrollBar().value(), 0)
+        self.assertTrue(scroll.viewport().rect().contains(
+            tabs.rect().translated(tabs.mapTo(scroll.viewport(), QPoint()))
+        ))
+
+    def test_cooling_history_follows_channel_even_without_samples(self):
+        shell = self.window.dashboard
+        shell.set_connected(True, "COM5")
+        self.window.handle_line("CH 1 FAN=41% RPM=1100 TEMP=420 MODE=auto SENSOR=ok TYPE=3 FAULT=0")
+        self.window.handle_line("CH 4 FAN=61% RPM=1800 TEMP=510 MODE=auto SENSOR=ok TYPE=3 FAULT=0")
+        curves = (self.window.history_pwm_curve, self.window.history_rpm_curve,
+                  self.window.history_temperature_curve)
+        for channel, values in ((1, (41, 1100, 42)), (4, (61, 1800, 51)), (8, None)):
+            shell.fan_channel_buttons[channel].click()
+            data = [curve.getData()[1] for curve in curves]
+            if values is None:
+                self.assertTrue(all(y is None or len(y) == 0 for y in data))
+            else:
+                self.assertEqual([y.tolist() for y in data], [[value] for value in values])
+
+    def test_cooling_selector_updates_telemetry_for_unselected_channels(self):
+        from ui_dashboard import FAN_TELEMETRY_TTL
+
+        shell = self.window.dashboard
+        button = shell.fan_channel_buttons[4]
+        self.assertIn("— RPM", button.text())
+        shell.set_connected(True, "COM5")
+        self.window.handle_line("CH 4 FAN=62% RPM=1870 TEMP=482 MODE=auto SENSOR=ok TYPE=3 FAULT=0")
+        self.assertFalse(button.isChecked())
+        self.assertIn("1 870 RPM", button.text())
+        self.assertIn("62%", button.text())
+        self.window.handle_line("CH 4 FAN=100% RPM=0 TEMP=482 MODE=auto SENSOR=stale TYPE=2 FAULT=0 RPM_OK=0")
+        self.assertIn("— RPM", button.text())
+        self.assertIn("100%", button.text())
+        shell._last_fan_update[4] -= FAN_TELEMETRY_TTL + 1
+        shell.refresh_telemetry_freshness()
+        self.assertNotIn("100%", button.text())
+        self.assertIn("застарів", button.toolTip())
+        shell.set_channel_mask(247)
+        self.assertFalse(button.isEnabled())
+        button.click()
+        self.assertEqual(self.window.current_fan, 1)
+        shell.set_connected(False)
+        self.assertTrue(button.isEnabled())
+        self.assertIn("— RPM", button.text())
+
     def test_cooling_sections_scroll_and_home_returns_to_the_selected_editor(self):
         from PySide6.QtCore import QPoint
-        from PySide6.QtWidgets import QTabWidget
+        from PySide6.QtWidgets import QTableWidget, QTabWidget
 
         shell = self.window.dashboard
         self.window.resize(1080, 760)
@@ -432,12 +553,14 @@ class DashboardSmokeTests(unittest.TestCase):
         self.app.processEvents()
         scroll = shell.stack.currentWidget()
         self.assertIsNone(scroll.widget().findChild(QTabWidget, "fanWorkspaceTabs"))
+        self.assertFalse(scroll.widget().findChildren(QTableWidget))
         viewport = scroll.viewport()
         viewport_rect = viewport.rect()
-        for widget in (shell.fan_channel_buttons[8], self.window.curve_plot,
+        buttons = tuple(shell.fan_channel_buttons.values())
+        self.assertEqual(len({button.height() for button in buttons}), 1)
+        for widget in (*buttons, self.window.curve_plot,
                        self.window.save_button, self.window.reread_curve_button,
-                       shell.temperature_source_button, shell.fan_list_toggle,
-                       shell.fan_history_toggle):
+                       shell.temperature_source_button, self.window.source_boxes[0]):
             widget_rect = widget.rect().translated(widget.mapTo(viewport, QPoint()))
             name = widget.accessibleName() or widget.objectName()
             if not name:
@@ -445,19 +568,14 @@ class DashboardSmokeTests(unittest.TestCase):
             self.assertTrue(viewport_rect.contains(widget_rect),
                             f"{name}: {widget_rect.getRect()} outside {viewport_rect.getRect()}")
 
-        self.assertTrue(shell.fan_list_panel.isHidden())
-        self.assertTrue(shell.fan_history_panel.isHidden())
-        shell.fan_list_toggle.click()
-        self.app.processEvents()
-        self.assertTrue(self.window.fan_table.isVisible())
-        self.window.fan_table.selectRow(5)
+        self.assertTrue(shell.fan_global_panel.isHidden())
+        shell.fan_channel_buttons[6].click()
         self.assertEqual(self.window.current_fan, 6)
-        scroll.ensureWidgetVisible(shell.fan_history_toggle)
+        scroll.ensureWidgetVisible(shell.fan_global_toggle)
         self.assertGreater(scroll.verticalScrollBar().value(), 0)
-        shell.fan_history_toggle.click()
+        shell.fan_global_toggle.click()
         self.app.processEvents()
-        self.assertTrue(self.window.history_tabs.isVisible())
-        self.assertTrue(self.window.fan_table.isVisible())
+        self.assertTrue(shell.fan_global_panel.isVisible())
         self.assertEqual(scroll.horizontalScrollBar().maximum(), 0)
 
         shell.show_page("overview")
@@ -516,28 +634,20 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertLess(y_min, 0)
         self.assertGreater(y_max, 100)
 
-    def test_fan_list_distinguishes_profile_storage_and_mode_targets(self):
+    def test_cooling_distinguishes_global_profile_storage_and_selected_mode_targets(self):
         from unittest.mock import call, patch
-        from PySide6.QtWidgets import QGroupBox, QInputDialog, QLabel, QPushButton
+        from PySide6.QtWidgets import QInputDialog, QPushButton
 
         shell = self.window.dashboard
-        fan_list = shell.fan_list_panel
-        groups = {box.title(): box for box in fan_list.findChildren(QGroupBox)}
-        self.assertIn("Усі вентилятори", groups)
-        all_fans = groups["Усі вентилятори"]
+        all_fans = shell.fan_global_panel
         self.assertTrue(all_fans.isAncestorOf(self.window.profile_box))
         all_actions = {button.text(): button for button in all_fans.findChildren(QPushButton)}
         self.assertIn("NVS", all_actions["Записати в ESP32"].toolTip())
         self.assertIn("основні криві", all_actions["Зберегти Custom на ПК"].toolTip())
 
-        selected = groups["Вибраний вентилятор · FAN 01"]
-        self.window.fan_table.selectRow(3)
-        self.assertEqual(selected.title(), "Вибраний вентилятор · FAN 04")
-        self.assertTrue(any(
-            "Середнє (AVG)" in label.text() and "максимум (MAX)" in label.text()
-            for label in selected.findChildren(QLabel)
-        ))
-        selected_actions = {button.text(): button for button in selected.findChildren(QPushButton)}
+        shell.fan_channel_buttons[4].click()
+        self.assertEqual(shell.fan_live_title.text(), "FAN 04")
+        selected_actions = {button.text(): button for button in shell.fan_curve_editor.findChildren(QPushButton)}
         self.assertIn("Датчики для кривої…", selected_actions)
         with (
             patch.object(self.window, "send", return_value=True) as send,
@@ -548,47 +658,59 @@ class DashboardSmokeTests(unittest.TestCase):
             all_actions["Усі вентилятори → Авто"].click()
             self.assertEqual(send.call_args_list, [call("FAN 4 42"), call("AUTO 4"), call("ALLAUTO")])
 
-    def test_fan_list_discloses_advanced_tools_without_horizontal_clipping(self):
+    def test_cooling_tools_are_visible_without_disclosure_at_1080(self):
         from PySide6.QtCore import QPoint
         from PySide6.QtWidgets import QPushButton, QToolButton
 
         shell = self.window.dashboard
-        fan_list = shell.fan_list_panel
-        toggles = [button for button in fan_list.findChildren(QToolButton)
-                   if button.text() == "Додаткові інструменти"]
-        self.assertEqual(len(toggles), 1)
-        toggle = toggles[0]
-        actions = {button.text(): button for button in fan_list.findChildren(QPushButton)}
-        advanced = [actions[name] for name in (
-            "Профілі за програмами…", "Автономні профілі ESP32…", "Airflow Assistant…",
-        )]
-
         self.window.show()
-        for width, height in ((1080, 760), (1510, 930)):
-            with self.subTest(width=width):
-                shell.show_page("overview")
-                self.window.resize(width, height)
-                shell.show_page("fans")
-                shell.fan_list_toggle.setChecked(True)
-                self.app.processEvents()
-                self.assertFalse(toggle.isChecked())
-                self.assertTrue(actions["Групи вентиляторів…"].isVisible())
-                self.assertTrue(all(not button.isVisible() for button in advanced))
-                toggle.click()
-                self.app.processEvents()
-                viewport = shell.stack.currentWidget().viewport()
-                for widget in (self.window.profile_box, toggle, *actions.values()):
-                    self.assertTrue(widget.isVisible())
-                    left = widget.mapTo(viewport, QPoint()).x()
-                    self.assertGreaterEqual(left, 0)
-                    self.assertLessEqual(left + widget.width(), viewport.width())
-                    self.assertGreaterEqual(widget.width(), widget.minimumSizeHint().width())
-                table = self.window.fan_table
-                header = table.horizontalHeader()
-                self.assertGreaterEqual(header.sectionSize(5), header.sectionSizeHint(5))
-                self.assertGreaterEqual(table.viewport().height(), table.verticalHeader().length())
-                toggle.click()
-                self.assertTrue(all(not button.isVisible() for button in advanced))
+        self.window.resize(1080, 760)
+        shell.show_page("fans")
+        self.app.processEvents()
+        scroll = shell.stack.currentWidget()
+        page = scroll.widget()
+        self.assertFalse(any(button.text() == "Додаткові інструменти"
+                             for button in page.findChildren(QToolButton)))
+        self.assertTrue(shell.fan_global_panel.isHidden())
+        for name in (
+            "Профілі за програмами…", "Автономні профілі ESP32…", "Airflow Assistant…",
+        ):
+            button, = [button for button in page.findChildren(QPushButton) if button.text() == name]
+            self.assertTrue(button.isVisible())
+            self.assertTrue(button.toolTip())
+            scroll.ensureWidgetVisible(button)
+            viewport = scroll.viewport()
+            self.assertTrue(viewport.rect().contains(button.rect().translated(button.mapTo(viewport, QPoint()))))
+            self.assertGreaterEqual(button.width(), button.minimumSizeHint().width())
+        self.assertGreater(scroll.verticalScrollBar().value(), 0)
+        self.assertEqual(scroll.horizontalScrollBar().maximum(), 0)
+
+    def test_cooling_windows_source_editor_targets_only_selected_channel(self):
+        from unittest.mock import patch
+        from monitor import GROUP_AVG, GROUP_MAX, MAX_ALL
+
+        shell = self.window.dashboard
+        self.window.show()
+        shell.open_fan(1)
+        box1, box4 = self.window.source_boxes[0], self.window.source_boxes[3]
+        self.assertTrue(box1.isVisible())
+        self.assertFalse(box4.isVisible())
+        with patch.object(self.window.settings, "setValue") as save, patch.object(self.window, "send") as send:
+            box1.setCurrentIndex(box1.findData(MAX_ALL))
+            box4.setCurrentIndex(box4.findData(MAX_ALL))
+            save.reset_mock()
+            shell.fan_channel_buttons[4].click()
+            self.assertFalse(box1.isVisible())
+            self.assertTrue(box4.isVisible())
+            save.assert_not_called()
+            box4.setCurrentIndex(box4.findData(GROUP_MAX))
+            shell.fan_channel_buttons[1].click()
+            self.assertEqual(box1.currentData(), MAX_ALL)
+            box1.setCurrentIndex(box1.findData(GROUP_AVG))
+            self.assertEqual([entry.args for entry in save.call_args_list],
+                             [("source4", GROUP_MAX), ("source1", GROUP_AVG)])
+            send.assert_not_called()
+        self.assertEqual(box4.currentData(), GROUP_MAX)
 
     def test_curve_save_status_waits_for_matching_channel_and_curve(self):
         from unittest.mock import patch
@@ -853,25 +975,47 @@ class DashboardSmokeTests(unittest.TestCase):
         shell.sync_zone(7)
         self.assertTrue(shell.argb_zone_tiles[8][0].property("selected"))
 
-    def test_v3_esp32_footer_and_responsive_help(self):
+    def test_esp32_settings_fill_canvas_and_keep_tab_actions(self):
+        from PySide6.QtCore import QPoint
+        from PySide6.QtWidgets import QLabel, QPushButton
+
         shell = self.window.dashboard
         panel = shell.device_settings
-        self.assertEqual(panel.action_stack.count(), 4)
-        for tab_name, button in (
-            ("wifi", panel.wifi_save), ("mqtt", panel.mqtt_save),
-            ("argb", panel.rgb_save), ("fan", panel.fan_save),
-        ):
-            self.assertTrue(panel.select_tab(tab_name))
-            self.assertTrue(panel.action_stack.currentWidget().isAncestorOf(button))
         self.window.show()
-        shell.show_page("esp32")
-        self.window.resize(1510, 930)
-        self.app.processEvents()
-        self.assertFalse(shell._esp_help_card.isHidden())
-        self.window.resize(1080, 760)
-        self.app.processEvents()
-        self.assertTrue(shell._esp_help_card.isHidden())
-        self.assertTrue(panel.action_footer.isAncestorOf(panel.fan_save))
+        self.assertEqual(panel.action_stack.count(), 4)
+        for width, height in ((1510, 930), (1080, 760)):
+            with self.subTest(width=width):
+                shell.show_page("overview")
+                self.window.resize(width, height)
+                shell.show_page("esp32")
+                self.app.processEvents()
+                scroll = shell.stack.currentWidget()
+                canvas = panel.parentWidget()
+                available = canvas.rect().marginsRemoved(canvas.layout().contentsMargins())
+                self.assertEqual(panel.x(), available.x())
+                self.assertEqual(panel.width(), available.width())
+                self.assertEqual(scroll.horizontalScrollBar().maximum(), 0)
+                self.assertNotIn("ЯК ЦЕ ПРАЦЮЄ", [
+                    label.text() for label in scroll.widget().findChildren(QLabel)
+                ])
+                self.assertNotIn("Перевірити діагностику", [
+                    button.text() for button in scroll.widget().findChildren(QPushButton)
+                ])
+                for tab_name, button in (
+                    ("wifi", panel.wifi_save), ("mqtt", panel.mqtt_save),
+                    ("argb", panel.rgb_save), ("fan", panel.fan_save),
+                ):
+                    with self.subTest(tab=tab_name):
+                        self.assertTrue(panel.select_tab(tab_name))
+                        self.app.processEvents()
+                        self.assertTrue(panel.action_stack.currentWidget().isAncestorOf(button))
+                        self.assertTrue(panel.action_footer.isAncestorOf(button))
+                        self.assertTrue(button.isVisible())
+                        scroll.ensureWidgetVisible(button)
+                        viewport = scroll.viewport()
+                        self.assertTrue(viewport.rect().contains(
+                            button.rect().translated(button.mapTo(viewport, QPoint()))
+                        ))
 
     def test_quick_navigation_and_search_palette(self):
         shell = self.window.dashboard
@@ -1118,10 +1262,9 @@ class DashboardSmokeTests(unittest.TestCase):
         logs = shell.stack.widget(shell.page_index["logs"]).widget()
         self.assertTrue(logs.isAncestorOf(self.window.log_text))
 
-    def test_temperature_page_stacks_readings_and_exposes_sources_by_keyboard(self):
+    def test_temperature_page_stacks_readings_and_always_shows_nwinfo_manager(self):
         from unittest.mock import patch
-        from PySide6.QtCore import QPoint, Qt
-        from PySide6.QtTest import QTest
+        from PySide6.QtCore import QPoint
         from PySide6.QtWidgets import QTabWidget, QToolButton
 
         window = self.window
@@ -1144,24 +1287,20 @@ class DashboardSmokeTests(unittest.TestCase):
                 status.mapTo(viewport, status.rect().bottomRight())
             ))
 
-            self.assertTrue(shell.sensor_manager.isHidden())
-            toggle, = [button for button in page.findChildren(QToolButton)
-                       if button.accessibleName() == "Джерела NWinfo"]
+            self.assertTrue(shell.sensor_manager.isVisible())
+            self.assertIs(shell.sensor_manager.parentWidget(), shell.hardware_sensor.parentWidget())
+            self.assertFalse(any(button.text() == "Джерела NWinfo"
+                                 for button in page.findChildren(QToolButton)))
             self.assertGreater(
-                toggle.mapTo(page, QPoint()).y(),
+                shell.sensor_manager.mapTo(page, QPoint()).y(),
                 shell.hardware_sensor.mapTo(page, shell.hardware_sensor.rect().bottomLeft()).y(),
             )
-            scroller.ensureWidgetVisible(toggle)
-            toggle.setFocus()
-            self.assertTrue(toggle.hasFocus())
-            QTest.keyClick(toggle, Qt.Key.Key_Space)
-            self.app.processEvents()
-            self.assertTrue(shell.sensor_manager.isVisible())
+            scroller.ensureWidgetVisible(shell.sensor_manager)
+            self.assertGreater(scroller.verticalScrollBar().value(), 0)
+            self.assertTrue(viewport.rect().contains(shell.sensor_manager.mapTo(viewport, QPoint())))
             for widget in (window.sensor_tabs, shell.hardware_sensor, shell.sensor_manager):
                 self.assertLess(widget.mapTo(viewport, widget.rect().topRight()).x(), viewport.width())
             self.assertEqual(scroller.horizontalScrollBar().maximum(), 0)
-            QTest.keyClick(toggle, Qt.Key.Key_Space)
-            self.assertTrue(shell.sensor_manager.isHidden())
             send.assert_not_called()
 
     def test_nwinfo_local_sensors_reach_gui_and_fan_choices(self):
