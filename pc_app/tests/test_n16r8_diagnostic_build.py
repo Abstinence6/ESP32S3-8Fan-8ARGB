@@ -71,6 +71,10 @@ class N16R8ValidatedDcBuildTests(unittest.TestCase):
             self.assertIn(f"#define {setting} 0", board)
         self.assertIn("FANARGB_N16R8_SAFE=1",
                       pio["env:esp32s3_n16r8_native_usb"]["build_flags"])
+        self.assertIn("FANARGB_N16R8_FAN2_REROUTED=1",
+                      pio["env:esp32s3_n16r8_native_usb"]["build_flags"])
+        self.assertNotIn("FAN_DC_PWM_VALIDATED",
+                         pio["env:esp32s3_n16r8_native_usb"]["build_flags"])
 
 
 if __name__ == "__main__":

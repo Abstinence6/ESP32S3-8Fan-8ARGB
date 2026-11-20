@@ -55,7 +55,7 @@ class ManifestTests(unittest.TestCase):
             self.assertTrue(target["diagnostic_only"])
             self.assertTrue(target["fan_argb_gpio_outputs_disabled"])
 
-    def test_operating_n16r8_manifest_identifies_merged_image_and_disabled_channel(self):
+    def test_operating_n16r8_manifest_identifies_merged_image_and_eight_channels(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             names=list(FLASH_OFFSETS)+["ESP32S3-N16R8-NativeUSB-FULL.bin"]
@@ -66,7 +66,11 @@ class ManifestTests(unittest.TestCase):
                 environment="esp32s3_n16r8_native_usb")
             target=manifest["target"]
             self.assertFalse(target["diagnostic_only"])
-            self.assertEqual(target["disabled_channels"],[2])
+            self.assertEqual(target["disabled_channels"], [])
+            self.assertEqual(target["channel_mask"], 255)
+            self.assertEqual(target["fan2_gpio_reroute"],
+                             {"pwm": 8, "tach": 11, "argb": 17})
+            self.assertTrue(target["physical_reroute_required"])
             self.assertTrue(target["nvs_reset_when_merged_flashing"])
             self.assertEqual(target["merged_flash_offset"],"0x0")
             (root/names[-1]).unlink()
@@ -96,8 +100,10 @@ class ManifestTests(unittest.TestCase):
                 "psram": "8MB octal (OPI)",
                 "diagnostic_only": False,
                 "fan_argb_gpio_outputs_disabled": False,
-                "disabled_channels": [2],
-                "channel_mask": 253,
+                "disabled_channels": [],
+                "channel_mask": 255,
+                "fan2_gpio_reroute": {"pwm": 8, "tach": 11, "argb": 17},
+                "physical_reroute_required": True,
                 "merged_image": merged,
                 "merged_flash_offset": "0x0",
                 "nvs_reset_when_merged_flashing": True,
@@ -186,7 +192,9 @@ class ManifestTests(unittest.TestCase):
             "esp32s3_n16r8_native_usb": {
                 **basic, **n16r8, "diagnostic_only": False,
                 "fan_argb_gpio_outputs_disabled": False,
-                "disabled_channels": [2], "channel_mask": 253,
+                "disabled_channels": [], "channel_mask": 255,
+                "fan2_gpio_reroute": {"pwm": 8, "tach": 11, "argb": 17},
+                "physical_reroute_required": True,
                 "merged_image": "ESP32S3-N16R8-NativeUSB-FULL.bin",
                 "merged_flash_offset": "0x0",
                 "nvs_reset_when_merged_flashing": True,

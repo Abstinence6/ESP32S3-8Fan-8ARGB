@@ -110,7 +110,7 @@ jobs:
           name: ESP32-S3-N16R8-USB-DIAGNOSTIC
           path: dist/esp32s3_n16r8_usb_diag/
           if-no-files-found: error
-      - name: Compile operational ESP32-S3 N16R8 with native USB and 7 safe channels
+      - name: Compile operational ESP32-S3 N16R8 with native USB and 8 remapped channels
         run: |
           pio run -e esp32s3_n16r8_native_usb
           python -c "from pc_app.firmware_update import inspect_firmware; print('N16R8 operational application:', inspect_firmware('.pio/build/esp32s3_n16r8_native_usb/firmware.bin'))"

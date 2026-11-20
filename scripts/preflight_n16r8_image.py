@@ -82,8 +82,10 @@ def verify_full_image(
             or target.get("flash_size") != "16MB"
             or target.get("merged_image") != IMAGE_NAME
             or target.get("merged_flash_offset") != "0x0"
-            or target.get("channel_mask") != 253
-            or target.get("disabled_channels") != [2]
+            or target.get("channel_mask") != 255
+            or target.get("disabled_channels") != []
+            or target.get("fan2_gpio_reroute") != {"pwm": 8, "tach": 11, "argb": 17}
+            or target.get("physical_reroute_required") is not True
             or target.get("diagnostic_only") is not False
             or target.get("dc_pwm_unlocked") is True
             or target.get("nvs_reset_when_merged_flashing") is not True

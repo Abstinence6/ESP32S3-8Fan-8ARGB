@@ -99,22 +99,14 @@ def generate_manifest(
             })
         if environment in merged_images:
             manifest["target"].update({
-                "disabled_channels": [2],
-                "channel_mask": 253,
-                "merged_image": merged_images[environment],
-                "merged_flash_offset": "0x0",
-                "nvs_reset_when_merged_flashing": True,
-                "hardware_validation": "required before powering any fans or LEDs",
-            })
-        if environment in ("esp32s3_n16r8_native_usb_fan2_rerouted",
-                           "esp32s3_n16r8_native_usb_fan2_rerouted_dc_validated"):
-            manifest["target"].update({
                 "disabled_channels": [],
                 "channel_mask": 255,
                 "fan2_gpio_reroute": {"pwm": 8, "tach": 11, "argb": 17},
                 "physical_reroute_required": True,
-                "hardware_validation": "physical wiring must be confirmed; "
-                                       "software build does not verify hardware",
+                "merged_image": merged_images[environment],
+                "merged_flash_offset": "0x0",
+                "nvs_reset_when_merged_flashing": True,
+                "hardware_validation": "required before powering any fans or LEDs",
             })
         if environment in ("esp32s3_n16r8_native_usb_dc_validated",
                            "esp32s3_n16r8_native_usb_fan2_rerouted_dc_validated"):
